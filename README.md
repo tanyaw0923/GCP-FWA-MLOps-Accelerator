@@ -11,9 +11,8 @@ a reusable ML product that data scientists can plug in a new dataset, target, fe
 The pipeline is designed for a team of talented and innovative data scientists who may experiment with different:
 
 ### Key Design Principles
-1. Shared MLOps Framework
 
-The central/shared platform manages:
+The Shared MLOps Framework manages:
 - data ingestion
 - data validation
 - shared feature generation
