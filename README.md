@@ -69,6 +69,7 @@ while sharing a common framework for:
                                                 v
                                             Monitoring
 
+```text
 
 ## When new dataset becomes available(CI):
 
@@ -109,6 +110,8 @@ Then Data scientists customize:
 - hyperparameters
 - preprocessing
 - training logic
+
+```text
 
 ## Key Design Principles
 ```text 
@@ -151,3 +154,5 @@ fwa-provider-ml/
 ├── cloudbuild.yaml
 ├── Dockerfile
 └── README.md
+
+```text
