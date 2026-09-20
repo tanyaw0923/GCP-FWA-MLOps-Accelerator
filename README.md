@@ -1,27 +1,39 @@
-# GCP-Binary-MLOps-Accelerator
+# GCP-FWA-MLOps-Accelerator
 
 ## Overview
 
 This project demonstrates a reusable MLOps architecture for detecting potentially fraudulent healthcare providers/claims using Google Cloud Platform.
 
-Business goal: a reusable ML product that data scientists can plug in a new dataset, target, features, model techniques, and the same pipeline handles validation, training, evaluation, registration, deployment, monitoring, and retraining. Eventually support rapid experimentation without allowing each data scientist to build a separate production workflow.
+### Business goal: 
+a reusable ML product that data scientists can plug in a new dataset, target, features, model techniques, and the same pipeline handles validation, training, evaluation, registration, deployment, monitoring, and retraining. Eventually support rapid experimentation without allowing each data scientist to build a separate production workflow.
 
-Users: The pipeline is designed for a team of talented and innovative data scientists who may experiment with different:
+### Users: 
+The pipeline is designed for a team of talented and innovative data scientists who may experiment with different:
 
+### Key Design Principles
+1. Shared MLOps Framework
+
+The central/shared platform manages:
+- data ingestion
+- data validation
+- shared feature generation
+- pipeline orchestration CI/CD, ex. retrain using more recent data
+- experiment tracking
+- standardized model evaluation
+- model registration
+- production approval with manual approval
+- deployment
+- model monitoring & governance
+
+Then Data scientists customize:
+- model-specific feature engineering
+- algorithm selection
+- hyperparameters
+- preprocessing
+- training logic
 - feature engineering strategies
 - modeling techniques
 - hyperparameters
-
-while sharing a common framework for:
-
-- data validation
-- model evaluation
-- CI/CD, ex. retrain using more recent data
-- model registration
-- manual approval
-- deployment
-- model monitoring
-- governance
 
 ---
 
@@ -90,28 +102,6 @@ New File in Cloud Storage
  Vertex AI Pipeline
 
 ```
----
-## Key Design Principles
-1. Shared MLOps Framework
-
-The central/shared platform manages:
-- data ingestion
-- data validation
-- shared feature generation
-- pipeline orchestration
-- experiment tracking
-- standardized evaluation
-- model registration
-- production approval
-- deployment
-- monitoring
-
-Then Data scientists customize:
-- model-specific feature engineering
-- algorithm selection
-- hyperparameters
-- preprocessing
-- training logic
 
 ---
 
