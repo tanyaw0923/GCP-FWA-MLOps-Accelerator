@@ -53,23 +53,24 @@ while sharing a common framework for:
                                             Evaluate
                                                 |
                                                 v
-                                    Champion Comparison
+                                      Candidate Model Comparison
                                                 |
                                                 v
-                                      Register Candidate
+                                        Register Candidate
                                                 |
                                                 v
-                                      Vertex Model Registry
+                                       Vertex Model Registry
                                                 |
+                                                v
                                         Manual Approval
                                                 |
                                                 v
-                                       Production Deployment
+                                     Production Deployment
                                                 |
                                                 v
                                             Monitoring
 
-```text
+```
 
 ## When new dataset becomes available(CI):
 
