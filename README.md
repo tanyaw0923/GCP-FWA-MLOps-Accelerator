@@ -25,9 +25,8 @@ while sharing a common framework for:
 
 ---
 
-## Architecture
-
-```text (CD)
+## Architecture (CD)
+```text
                          Git Repository
                               |
                     push / merge to branch
@@ -70,7 +69,10 @@ while sharing a common framework for:
                                                 v
                                             Monitoring
 
-When new dataset becomes available, to trigger CI:
+
+## When new dataset becomes available(CI):
+
+```text 
 
 New File in Cloud Storage
           |
@@ -86,7 +88,7 @@ New File in Cloud Storage
  Vertex AI Pipeline
 
 
-Key Design Principles
+## Key Design Principles
 1. Shared MLOps Framework
 
 The central/shared platform manages:
@@ -108,7 +110,8 @@ Then Data scientists customize:
 - preprocessing
 - training logic
 
-Repo Structure:
+## Key Design Principles
+```text 
 fwa-provider-ml/
 |
 ├── common/
