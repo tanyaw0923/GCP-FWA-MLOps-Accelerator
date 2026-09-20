@@ -71,7 +71,7 @@ while sharing a common framework for:
                                             Monitoring
 
 ```
-
+---
 ## When new dataset becomes available(CI):
 
 ```text 
@@ -89,7 +89,8 @@ New File in Cloud Storage
           v
  Vertex AI Pipeline
 
-
+```
+---
 ## Key Design Principles
 1. Shared MLOps Framework
 
@@ -112,9 +113,9 @@ Then Data scientists customize:
 - preprocessing
 - training logic
 
-```text
+---
 
-## Key Design Principles
+## Project Structure
 ```text 
 fwa-provider-ml/
 |
@@ -156,4 +157,4 @@ fwa-provider-ml/
 ├── Dockerfile
 └── README.md
 
-```text
+```
