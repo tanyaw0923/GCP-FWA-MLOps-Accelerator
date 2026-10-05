@@ -12,6 +12,11 @@ A reusable ML product that data scientists can plug in a new dataset, target, fe
 ### Users: 
 The pipeline is designed for a team of talented and innovative data scientists who may experiment with different:
 
+---
+
+### Pipeline:
+<img width="351" height="731" alt="image" src="https://github.com/user-attachments/assets/e99e3f8c-3f44-4319-865f-eaf9b9b5e67c" />
+
 ### Key Design Principles
 
 The Shared MLOps Framework manages:
@@ -35,8 +40,6 @@ Then Data scientists customize:
 - feature engineering strategies
 - modeling techniques
 - hyperparameters
-
----
 
 ## Project Structure
 ```text 
