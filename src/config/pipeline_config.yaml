@@ -1,0 +1,51 @@
+project_id: fwa-mlops-accelerator-demo
+region: us-central1
+bucket: fwa-mlops-accelerator-demo-folder
+
+model:
+  model_type: random_forest
+  model_name: random_forest
+  experiment_name: provider_eye_fraud_random_forest
+  positive_class: 1
+  normal_class: 0
+
+  parameters:
+    n_estimators: 300
+    max_depth: 5
+    min_samples_leaf: 2
+    class_weight: balanced
+    random_state: 42
+    n_jobs: -1
+
+data:
+  
+  current_data_month: "2026-09-01"  
+
+  feature_table: fwa-mlops-accelerator-demo.fraud_features.provider_eye_features
+  feedback_table: fwa-mlops-accelerator-demo.fraud_feedback.investigation_results
+
+  experiment_runs_table: fwa-mlops-accelerator-demo.fraud_experiments.experiment_runs
+  experiment_metrics_table: fwa-mlops-accelerator-demo.fraud_experiments.experiment_metrics
+
+  batch_input_table: fwa-mlops-accelerator-demo.fraud_features.random_forest_batch_input
+  provider_prediction_table: fwa-mlops-accelerator-demo.fraud_experiments.random_forest_provider_predictions
+  retraining_table: fwa-mlops-accelerator-demo.fraud_features.random_forest_retraining_dataset
+
+features:
+  - high_acuity_pct
+  - pct_99214
+  - pct_99215
+  - referral_rate
+  - eye_procedure_pct
+  - avg_paid_per_claim
+  - high_acuity_oe_ratio
+
+monitoring:
+  feature_shift_threshold: 0.10
+  prediction_shift_threshold: 0.10
+  baseline_positive_rate: 0.10
+
+  data_quality_table: fwa-mlops-accelerator-demo.fraud_monitoring.random_forest_data_quality
+  feature_drift_table: fwa-mlops-accelerator-demo.fraud_monitoring.feature_drift_summary
+  prediction_drift_table: fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift
+  training_state_table: fwa-mlops-accelerator-demo.fraud_monitoring.random_forest_training_state

@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local model artifacts
+model_artifacts/
+src/models/model_artifacts/
+*.joblib
+*.bst
+*.pkl
+
+# Generated datasets/results
+src/data/*.csv
+*.parquet
+
+# Generated Vertex/KFP pipeline specs
+src/config/random_forest_training_pipeline.yaml
+src/config/random_forest_downstream_qa_pipeline.yaml
+
+# Logs/temp
+*.log
+*.tmp
+*.bak
+
+# Credentials / secrets
+*.json
+.env
+.env.*
+!package.json
+!tsconfig.json

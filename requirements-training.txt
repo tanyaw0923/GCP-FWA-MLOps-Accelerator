@@ -1,0 +1,7 @@
+google-cloud-bigquery
+google-cloud-storage
+pandas
+scikit-learn==1.6.1
+joblib
+db-dtypes
+pyyaml
