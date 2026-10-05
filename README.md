@@ -1,5 +1,3 @@
-# GCP-FWA-MLOps-Accelerator
-
 ## Overview
 
 This project demonstrates a reusable MLOps architecture for detecting potentially fraudulent healthcare providers/claims using Google Cloud Platform.
