@@ -10,22 +10,6 @@ A reusable ML product that data scientists can plug in a new dataset, target, fe
 ### Users: 
 The pipeline is designed for a team of talented and innovative data scientists who can utilize this tool then focus on exciting new things to try
 
----
-#### Use Case 1
-<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/50f09ab9-9262-433c-a01a-e1489529a467" />
-
-Data Updated from 2026-09 to 2026-10
-→ retraining triggered
-→ TRAIN window [6 MONTH] = 2026-02-01 to 2026-07-31
-→ TEST window [3 MONTH] = 2026-08-01 to 2026-10-31
-→ provider features rebuilt
-→ Random Forest candidate trained
-→ candidate evaluated
-→ candidate registered
-→ candidate_status = PENDING_APPROVAL
-→ production remains unchanged
-
-
 ### Key Design Principles
 
 The Shared MLOps Framework manages:
