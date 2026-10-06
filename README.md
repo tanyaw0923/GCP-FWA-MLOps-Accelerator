@@ -11,8 +11,6 @@ A reusable ML product that data scientists can plug in a new dataset, target, fe
 The pipeline is designed for a team of talented and innovative data scientists who can utilize this tool then focus on exciting new things to try
 
 ---
-
----
 #### Use Case 1
 <img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/50f09ab9-9262-433c-a01a-e1489529a467" />
 
