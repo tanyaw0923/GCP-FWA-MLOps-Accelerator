@@ -12,8 +12,20 @@ The pipeline is designed for a team of talented and innovative data scientists w
 
 ---
 
-### Pipeline:
-<img width="351" height="731" alt="image" src="https://github.com/user-attachments/assets/e99e3f8c-3f44-4319-865f-eaf9b9b5e67c" />
+---
+#### Use Case 1
+<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/44fc006d-9fc8-453d-bd13-1d4abe37e41e" />
+Data Updated from 2026-09 to 2026-10
+→ retraining triggered
+→ TRAIN window [6 MONTH] = 2026-02-01 to 2026-07-31
+→ TEST window [3 MONTH] = 2026-08-01 to 2026-10-31
+→ provider features rebuilt
+→ Random Forest candidate trained
+→ candidate evaluated
+→ candidate registered
+→ candidate_status = PENDING_APPROVAL
+→ production remains unchanged
+
 
 ### Key Design Principles
 
@@ -94,5 +106,4 @@ fwa-fraud-mlops-accelerator/
     │       └── update_training_state_component.py
     └── scoring/
         └── run_batch_prediction.py
-
 ```
