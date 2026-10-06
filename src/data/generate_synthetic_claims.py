@@ -1,29 +1,170 @@
-import numpy as np
-import pandas as pd
+```python
+import calendar
 from datetime import datetime, timedelta
 
+import numpy as np
+import pandas as pd
+
+from src.config.load_config import load_config
+
 
 # ============================================================
-# 1. CONFIGURATION
+# 1. LOAD PIPELINE CONFIGURATION
+#
+# The synthetic data generator uses the same YAML configuration
+# as the Vertex AI pipeline.
+#
+# Example:
+#
+# data:
+#   current_data_month: "2026-10-01"
+#
+#   rolling_window:
+#     training_months: 6
+#     testing_months: 3
+#
+# No TRAIN / TEST dates are hard coded in this script.
 # ============================================================
 
-np.random.seed(42)
+config = load_config()
+DATA_CONFIG = config["data"]
+
+CURRENT_DATA_MONTH = str(DATA_CONFIG["current_data_month"])
+ROLLING_WINDOW_CONFIG = DATA_CONFIG["rolling_window"]
+
+TRAINING_MONTHS = int(
+    ROLLING_WINDOW_CONFIG["training_months"]
+)
+
+TESTING_MONTHS = int(
+    ROLLING_WINDOW_CONFIG["testing_months"]
+)
+
+
+# ============================================================
+# 2. SYNTHETIC DATA CONFIGURATION
+# ============================================================
+
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
 
 N_CLAIMS = 100_000
 N_PROVIDERS = 200
 N_MEMBERS = 20_000
+
+# 10% of providers are synthetically suspicious.
 N_SUSPICIOUS_PROVIDERS = 20
 
 OUTPUT_FILE = "synthetic_claims.csv"
 
-START_DATE = datetime(2026, 1, 1)
-END_DATE = datetime(2026, 9, 30)
 
-TRAIN_END_DATE = datetime(2026, 6, 30)
+# ============================================================
+# 3. DATE UTILITIES
+# ============================================================
+
+def add_months(year: int, month: int, offset: int):
+    """
+    Move a year/month pair forward or backward.
+
+    Example:
+    add_months(2026, 10, -8)
+    returns:
+    (2026, 2)
+    """
+    month_index = year * 12 + month - 1 + offset
+
+    new_year = month_index // 12
+    new_month = month_index % 12 + 1
+
+    return new_year, new_month
+
+
+def get_month_end(year: int, month: int):
+    """
+    Return the final datetime of a month.
+    """
+    final_day = calendar.monthrange(
+        year,
+        month,
+    )[1]
+
+    return datetime(
+        year,
+        month,
+        final_day,
+    )
+
+
+def calculate_raw_data_window():
+    """
+    Calculate the minimum raw-data window required by the
+    configured rolling training/testing strategy.
+
+    Example:
+
+    current_data_month = 2026-09-01
+    training_months = 6
+    testing_months = 3
+
+    Raw claims:
+        2026-01-01 -> 2026-09-30
+
+    Pipeline later creates:
+
+        TRAIN:
+        2026-01-01 -> 2026-06-30
+
+        TEST:
+        2026-07-01 -> 2026-09-30
+
+    If current_data_month changes to:
+
+        2026-10-01
+
+    Raw claims become:
+
+        2026-02-01 -> 2026-10-31
+
+    Pipeline later creates:
+
+        TRAIN:
+        2026-02-01 -> 2026-07-31
+
+        TEST:
+        2026-08-01 -> 2026-10-31
+    """
+    current_month = datetime.strptime(
+        CURRENT_DATA_MONTH,
+        "%Y-%m-%d",
+    )
+
+    total_months = TRAINING_MONTHS + TESTING_MONTHS
+
+    start_year, start_month = add_months(
+        current_month.year,
+        current_month.month,
+        -(total_months - 1),
+    )
+
+    start_date = datetime(
+        start_year,
+        start_month,
+        1,
+    )
+
+    end_date = get_month_end(
+        current_month.year,
+        current_month.month,
+    )
+
+    return start_date, end_date
+
+
+START_DATE, END_DATE = calculate_raw_data_window()
 
 
 # ============================================================
-# 2. TEXAS GEOGRAPHY
+# 4. TEXAS GEOGRAPHY
 # ============================================================
 
 texas_cities = [
@@ -32,7 +173,7 @@ texas_cities = [
     "Austin",
     "San Antonio",
     "Fort Worth",
-    "El Paso"
+    "El Paso",
 ]
 
 city_probabilities = [
@@ -41,46 +182,53 @@ city_probabilities = [
     0.15,
     0.18,
     0.15,
-    0.07
+    0.07,
 ]
 
 
 # ============================================================
-# 3. CREATE PRIMARY CARE PROVIDERS
+# 5. CREATE PRIMARY CARE PROVIDERS
 # ============================================================
 
-providers = pd.DataFrame({
-    "provider_id": [
-        f"P{str(i).zfill(5)}"
-        for i in range(1, N_PROVIDERS + 1)
-    ],
-
-    "provider_name": [
-        f"Primary_Care_Provider_{i}"
-        for i in range(1, N_PROVIDERS + 1)
-    ],
-
-    "provider_specialty": "Primary Care",
-
-    "provider_state": "TX",
-
-    "provider_city": np.random.choice(
-        texas_cities,
-        size=N_PROVIDERS,
-        p=city_probabilities
-    )
-})
+providers = pd.DataFrame(
+    {
+        "provider_id": [
+            f"P{str(i).zfill(5)}"
+            for i in range(1, N_PROVIDERS + 1)
+        ],
+        "provider_name": [
+            f"Primary_Care_Provider_{i}"
+            for i in range(1, N_PROVIDERS + 1)
+        ],
+        "provider_specialty": "Primary Care",
+        "provider_state": "TX",
+        "provider_city": np.random.choice(
+            texas_cities,
+            size=N_PROVIDERS,
+            p=city_probabilities,
+        ),
+    }
+)
 
 
 # ============================================================
-# 4. SELECT SYNTHETIC SUSPICIOUS PROVIDERS
+# 6. SELECT SYNTHETIC SUSPICIOUS PROVIDERS
+#
+# This is synthetic ground truth used for the demo.
+#
+# Use Case 1:
+# The label allows Random Forest to train on the rolling
+# TRAIN dataset and evaluate on the rolling TEST dataset.
+#
+# In a real FWA system, labels would come from confirmed
+# investigation outcomes rather than synthetic truth.
 # ============================================================
 
 suspicious_provider_ids = set(
     np.random.choice(
         providers["provider_id"],
         size=N_SUSPICIOUS_PROVIDERS,
-        replace=False
+        replace=False,
     )
 )
 
@@ -92,10 +240,11 @@ providers["fraud_provider_label"] = (
 
 
 # ============================================================
-# 5. PROVIDER BEHAVIOR PARAMETERS
+# 7. PROVIDER BEHAVIOR PARAMETERS
 #
-# These are used only to generate synthetic behavior.
-# They will be dropped before saving the final claim file.
+# These parameters exist ONLY to generate synthetic patterns.
+#
+# They are removed from the final claim-level data.
 # ============================================================
 
 providers["high_acuity_rate_param"] = 0.0
@@ -103,89 +252,142 @@ providers["referral_rate_param"] = 0.0
 providers["eye_procedure_rate_param"] = 0.0
 providers["pct_99215_given_high_acuity_param"] = 0.0
 
+# ------------------------------------------------------------
+# USE CASE 2
+#
+# New claim-level field:
+#
+# member_provider_distance
+#
+# Suspicious providers tend to attract members from farther
+# away.
+#
+# We intentionally retain overlap between normal and suspicious
+# providers so the feature is informative but does NOT become
+# a perfect fraud identifier.
+# ------------------------------------------------------------
+
+providers["member_provider_distance_mean_param"] = 0.0
 
 for idx, row in providers.iterrows():
-
-    suspicious = (
-        row["provider_id"]
-        in suspicious_provider_ids
-    )
+    provider_id = row["provider_id"]
+    suspicious = provider_id in suspicious_provider_ids
 
     if suspicious:
-
-        # Main anomaly signal
+        # ----------------------------------------------------
+        # Strongest existing anomaly:
+        # high use of higher-acuity E/M services
+        # ----------------------------------------------------
         providers.at[
             idx,
-            "high_acuity_rate_param"
+            "high_acuity_rate_param",
         ] = np.random.uniform(
             0.65,
-            0.80
+            0.80,
         )
 
-        # Moderately higher referral rate
+        # ----------------------------------------------------
+        # Moderately elevated referral behavior
+        # ----------------------------------------------------
         providers.at[
             idx,
-            "referral_rate_param"
+            "referral_rate_param",
         ] = np.random.uniform(
             0.38,
-            0.45
+            0.45,
         )
 
-        # Similar eye procedure utilization
+        # ----------------------------------------------------
+        # Similar eye-procedure utilization
+        # ----------------------------------------------------
         providers.at[
             idx,
-            "eye_procedure_rate_param"
+            "eye_procedure_rate_param",
         ] = np.random.uniform(
             0.08,
-            0.12
+            0.12,
         )
 
-        # More 99215 usage within high-acuity claims
+        # ----------------------------------------------------
+        # Higher 99215 utilization
+        # ----------------------------------------------------
         providers.at[
             idx,
-            "pct_99215_given_high_acuity_param"
+            "pct_99215_given_high_acuity_param",
         ] = np.random.uniform(
             0.35,
-            0.50
+            0.50,
+        )
+
+        # ----------------------------------------------------
+        # USE CASE 2 FEATURE
+        #
+        # Suspicious providers tend to serve members who live
+        # farther away.
+        #
+        # Approximate provider-level mean distance:
+        # 40–70 miles.
+        # ----------------------------------------------------
+        providers.at[
+            idx,
+            "member_provider_distance_mean_param",
+        ] = np.random.uniform(
+            40,
+            70,
         )
 
     else:
-
         providers.at[
             idx,
-            "high_acuity_rate_param"
+            "high_acuity_rate_param",
         ] = np.random.uniform(
             0.18,
-            0.25
+            0.25,
         )
 
         providers.at[
             idx,
-            "referral_rate_param"
+            "referral_rate_param",
         ] = np.random.uniform(
             0.27,
-            0.33
+            0.33,
         )
 
         providers.at[
             idx,
-            "eye_procedure_rate_param"
+            "eye_procedure_rate_param",
         ] = np.random.uniform(
             0.08,
-            0.12
+            0.12,
         )
 
         providers.at[
             idx,
-            "pct_99215_given_high_acuity_param"
+            "pct_99215_given_high_acuity_param",
         ] = np.random.uniform(
             0.08,
-            0.15
+            0.15,
+        )
+
+        # ----------------------------------------------------
+        # Normal provider/member distance.
+        #
+        # Approximate provider-level mean:
+        # 10–30 miles.
+        #
+        # There will still be long-distance normal claims.
+        # ----------------------------------------------------
+        providers.at[
+            idx,
+            "member_provider_distance_mean_param",
+        ] = np.random.uniform(
+            10,
+            30,
         )
 
 
 # ============================================================
-# 6. MEMBERS
+# 8. CREATE MEMBERS
 # ============================================================
 
 members = [
@@ -195,7 +397,9 @@ members = [
 
 
 # ============================================================
-# 7. ALL DIAGNOSES ARE EYE / ADNEXA RELATED
+# 9. DIAGNOSIS CODES
+#
+# All claims remain eye/adnexa related for the synthetic demo.
 # ============================================================
 
 eye_icd_codes = [
@@ -204,29 +408,29 @@ eye_icd_codes = [
     "H40.9",
     "H35.30",
     "H53.8",
-    "H57.9"
+    "H57.9",
 ]
 
 
 # ============================================================
-# 8. CPT CODES
+# 10. CPT CODES
 # ============================================================
 
 routine_em_codes = [
     "99211",
     "99212",
-    "99213"
+    "99213",
 ]
 
 routine_em_probs = [
     0.10,
     0.20,
-    0.70
+    0.70,
 ]
 
 high_acuity_em_codes = [
     "99214",
-    "99215"
+    "99215",
 ]
 
 eye_procedure_codes = [
@@ -237,33 +441,32 @@ eye_procedure_codes = [
     "92083",
     "92133",
     "92134",
-    "92250"
+    "92250",
 ]
 
 
 # ============================================================
-# 9. PLACE OF SERVICE
+# 11. PLACE OF SERVICE
 # ============================================================
 
 place_of_service_codes = [
     "11",
     "21",
     "22",
-    "23"
+    "23",
 ]
 
 
 # ============================================================
-# 10. CLAIM VOLUME
+# 12. CLAIM VOLUME
 #
-# Uniform provider weights so suspicious providers
-# are not detectable merely by claim volume.
+# Provider volume is intentionally approximately uniform.
+#
+# Fraud should be detected from behavioral patterns rather
+# than simply from claim volume.
 # ============================================================
 
-provider_choices = (
-    providers["provider_id"]
-    .values
-)
+provider_choices = providers["provider_id"].values
 
 provider_weights = np.ones(
     N_PROVIDERS
@@ -277,454 +480,45 @@ provider_weights = (
 chosen_providers = np.random.choice(
     provider_choices,
     size=N_CLAIMS,
-    p=provider_weights
+    p=provider_weights,
 )
 
 
 # ============================================================
-# 11. BASE CLAIM DATA
+# 13. GENERATE SERVICE DATES
+#
+# There is intentionally NO TRAIN / TEST assignment here.
+#
+# The Vertex pipeline dynamically determines dataset_split
+# from the rolling window.
 # ============================================================
 
 date_range_days = (
-    END_DATE - START_DATE
+    END_DATE
+    - START_DATE
 ).days + 1
 
-
-df = pd.DataFrame({
-
-    "claim_id": [
-        f"C{str(i).zfill(8)}"
-        for i in range(1, N_CLAIMS + 1)
-    ],
-
-    "provider_id": chosen_providers,
-
-    "member_id": np.random.choice(
-        members,
-        N_CLAIMS
-    ),
-
-    "service_date": [
-        START_DATE + timedelta(days=int(x))
-        for x in np.random.randint(
-            0,
-            date_range_days,
-            N_CLAIMS
-        )
-    ],
-
-    "place_of_service": np.random.choice(
-        place_of_service_codes,
-        N_CLAIMS
-    )
-})
-
-
-# ============================================================
-# 12. ADD PROVIDER PROFILE
-# ============================================================
-
-df = df.merge(
-    providers,
-    on="provider_id",
-    how="left"
-)
-
-df["service_city"] = (
-    df["provider_city"]
-)
-
-df["service_state"] = (
-    df["provider_state"]
+service_date_offsets = np.random.randint(
+    0,
+    date_range_days,
+    N_CLAIMS,
 )
 
 
 # ============================================================
-# 13. GENERATE ICD + CPT
+# 14. BASE CLAIM DATA
 # ============================================================
 
-def generate_claim_codes(row):
-
-    # Every claim is eye/adnexa related
-    icd_code = np.random.choice(
-        eye_icd_codes
-    )
-
-    high_acuity_rate = (
-        row["high_acuity_rate_param"]
-    )
-
-    eye_procedure_rate = (
-        row["eye_procedure_rate_param"]
-    )
-
-    pct_99215 = (
-        row[
-            "pct_99215_given_high_acuity_param"
-        ]
-    )
-
-    r = np.random.rand()
-
-    # Eye procedure
-    if r < eye_procedure_rate:
-
-        cpt_code = np.random.choice(
-            eye_procedure_codes
-        )
-
-    # High-acuity E/M
-    elif r < (
-        eye_procedure_rate
-        + high_acuity_rate
-    ):
-
-        cpt_code = np.random.choice(
-            high_acuity_em_codes,
-            p=[
-                1 - pct_99215,
-                pct_99215
-            ]
-        )
-
-    # Routine E/M
-    else:
-
-        cpt_code = np.random.choice(
-            routine_em_codes,
-            p=routine_em_probs
-        )
-
-    return cpt_code, icd_code
-
-
-codes = df.apply(
-    generate_claim_codes,
-    axis=1
-)
-
-df["cpt_code"] = [
-    x[0]
-    for x in codes
-]
-
-df["icd_code"] = [
-    x[1]
-    for x in codes
-]
-
-df["diagnoses_code"] = (
-    df["icd_code"]
-)
-
-
-# ============================================================
-# 14. CLAIM-LEVEL FLAGS
-# ============================================================
-
-df["is_eye_diagnosis"] = 1
-
-
-df["is_high_acuity_em"] = (
-    df["cpt_code"]
-    .isin(high_acuity_em_codes)
-    .astype(int)
-)
-
-
-df["is_99214"] = (
-    df["cpt_code"]
-    .eq("99214")
-    .astype(int)
-)
-
-
-df["is_99215"] = (
-    df["cpt_code"]
-    .eq("99215")
-    .astype(int)
-)
-
-
-df["is_eye_procedure"] = (
-    df["cpt_code"]
-    .isin(eye_procedure_codes)
-    .astype(int)
-)
-
-
-# ============================================================
-# 15. REFERRAL BEHAVIOR
-# ============================================================
-
-df["is_referral"] = (
-    np.random.rand(
-        len(df)
-    )
-    <
-    df["referral_rate_param"]
-).astype(int)
-
-
-df["referral_specialty"] = (
-    np.where(
-        df["is_referral"] == 1,
-        "Ophthalmology",
-        None
-    )
-)
-
-
-# ============================================================
-# 16. FINANCIAL AMOUNTS
-#
-# Amount depends on CPT, not directly on fraud label.
-# ============================================================
-
-base_billed = (
-    np.random.gamma(
-        shape=2.5,
-        scale=100,
-        size=len(df)
-    )
-    + 40
-)
-
-df["total_billed_amt"] = (
-    base_billed
-)
-
-
-df.loc[
-    df["cpt_code"] == "99214",
-    "total_billed_amt"
-] *= 1.30
-
-
-df.loc[
-    df["cpt_code"] == "99215",
-    "total_billed_amt"
-] *= 1.55
-
-
-df.loc[
-    df["is_eye_procedure"] == 1,
-    "total_billed_amt"
-] *= 1.40
-
-
-df["total_allowed_amt"] = (
-    df["total_billed_amt"]
-    *
-    np.random.uniform(
-        0.60,
-        0.90,
-        len(df)
-    )
-)
-
-
-df["total_paid_amount"] = (
-    df["total_allowed_amt"]
-    *
-    np.random.uniform(
-        0.85,
-        1.00,
-        len(df)
-    )
-)
-
-
-# ============================================================
-# 17. CLAIM DATE + TEMPORAL TRAIN / TEST
-# ============================================================
-
-df["service_date"] = (
-    pd.to_datetime(
-        df["service_date"]
-    )
-)
-
-
-df["claim_date"] = (
-    df["service_date"]
-    +
-    pd.to_timedelta(
-        np.random.randint(
-            0,
-            15,
-            len(df)
+df = pd.DataFrame(
+    {
+        "claim_id": [
+            f"C{str(i).zfill(8)}"
+            for i in range(1, N_CLAIMS + 1)
+        ],
+        "provider_id": chosen_providers,
+        "member_id": np.random.choice(
+            members,
+            size=N_CLAIMS,
         ),
-        unit="D"
-    )
-)
-
-
-df["dataset_split"] = (
-    np.where(
-        df["service_date"]
-        <= pd.Timestamp(
-            TRAIN_END_DATE
-        ),
-        "TRAIN",
-        "TEST"
-    )
-)
-
-
-# ============================================================
-# 18. ROUND FINANCIAL FIELDS
-# ============================================================
-
-for col in [
-    "total_billed_amt",
-    "total_allowed_amt",
-    "total_paid_amount"
-]:
-
-    df[col] = (
-        df[col]
-        .round(2)
-    )
-
-
-# ============================================================
-# 19. DROP INTERNAL GENERATION PARAMETERS
-# ============================================================
-
-df = df.drop(
-    columns=[
-        "high_acuity_rate_param",
-        "referral_rate_param",
-        "eye_procedure_rate_param",
-        "pct_99215_given_high_acuity_param"
-    ]
-)
-
-
-# ============================================================
-# 20. FINAL COLUMN ORDER
-# ============================================================
-
-df = df[
-    [
-        "claim_id",
-        "claim_date",
-
-        "provider_id",
-        "provider_name",
-        "provider_specialty",
-        "provider_city",
-        "provider_state",
-
-        "member_id",
-
-        "service_date",
-        "service_city",
-        "service_state",
-
-        "cpt_code",
-        "icd_code",
-        "diagnoses_code",
-
-        "total_billed_amt",
-        "total_allowed_amt",
-        "total_paid_amount",
-
-        "place_of_service",
-
-        "is_eye_diagnosis",
-        "is_high_acuity_em",
-        "is_99214",
-        "is_99215",
-        "is_eye_procedure",
-
-        "is_referral",
-        "referral_specialty",
-
-        # Evaluation only.
-        # NEVER use this as an Isolation Forest feature.
-        "fraud_provider_label",
-
-        "dataset_split"
-    ]
-]
-
-
-# ============================================================
-# 21. SAVE
-# ============================================================
-
-df.to_csv(
-    OUTPUT_FILE,
-    index=False
-)
-
-
-# ============================================================
-# 22. VALIDATION OUTPUT
-# ============================================================
-
-print(
-    "\n=============================================="
-)
-
-print(
-    "Synthetic Texas Eye-Related PCP Claims"
-)
-
-print(
-    "=============================================="
-)
-
-print(
-    f"\nClaims: {len(df):,}"
-)
-
-print(
-    f"Providers: "
-    f"{df['provider_id'].nunique():,}"
-)
-
-print(
-    f"Members: "
-    f"{df['member_id'].nunique():,}"
-)
-
-print(
-    f"Suspicious providers: "
-    f"{df.loc[df['fraud_provider_label'] == 1, 'provider_id'].nunique():,}"
-)
-
-print(
-    "\nState:"
-)
-
-print(
-    df["provider_state"]
-    .value_counts()
-)
-
-print(
-    "\nTrain/Test:"
-)
-
-print(
-    df["dataset_split"]
-    .value_counts()
-)
-
-print(
-    "\nDate range:"
-)
-
-print(
-    df["service_date"].min().date(),
-    "to",
-    df["service_date"].max().date()
-)
-
-print(
-    f"\nSaved to: {OUTPUT_FILE}"
-)
-
+        "service_date": [
+           

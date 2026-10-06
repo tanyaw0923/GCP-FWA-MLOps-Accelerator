@@ -5,7 +5,6 @@ from kfp import dsl
 def train_random_forest_component(
     project_id: str,
     feature_table: str,
-    feedback_table: str,
     feature_columns_json: str,
     model_output_uri: str,
 ):
@@ -14,15 +13,13 @@ def train_random_forest_component(
             "us-central1-docker.pkg.dev/"
             "fwa-mlops-accelerator-demo/"
             "fwa-mlops/"
-            "random-forest-training:v1"
+            "random-forest-training:v2"
         ),
         args=[
             "--project-id",
             project_id,
             "--feature-table",
             feature_table,
-            "--feedback-table",
-            feedback_table,
             "--feature-columns",
             feature_columns_json,
             "--model-output-uri",

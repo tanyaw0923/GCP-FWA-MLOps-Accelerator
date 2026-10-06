@@ -30,11 +30,6 @@ def main():
     )
 
     parser.add_argument(
-        "--feedback-table",
-        required=True,
-    )
-
-    parser.add_argument(
         "--feature-columns",
         required=True,
     )
@@ -53,7 +48,6 @@ def main():
     result = train_random_forest(
         project_id=args.project_id,
         feature_table=args.feature_table,
-        feedback_table=args.feedback_table,
         feature_columns=feature_columns,
         model_output_uri=args.model_output_uri,
     )

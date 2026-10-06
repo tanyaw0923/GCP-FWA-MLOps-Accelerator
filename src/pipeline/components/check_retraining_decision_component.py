@@ -65,9 +65,9 @@ def check_retraining_decision_component(
     # ---------------------------------------------------------
     prediction_drift_query = f"""
     SELECT
-      monitoring_status
+      status
     FROM `{prediction_drift_table}`
-    ORDER BY monitoring_timestamp DESC
+    ORDER BY check_date DESC
     LIMIT 1
     """
 
@@ -76,7 +76,7 @@ def check_retraining_decision_component(
     )
 
     prediction_drift_status = (
-        prediction_drift_result[0].monitoring_status
+        prediction_drift_result[0].status
         if prediction_drift_result
         else "PASS"
     )

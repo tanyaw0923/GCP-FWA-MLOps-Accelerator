@@ -17,19 +17,58 @@ model:
     random_state: 42
     n_jobs: -1
 
-data:
-  
-  current_data_month: "2026-09-01"  
 
+# ============================================================
+# DATA
+#
+# Use Case 1:
+# Change current_data_month from 2026-09-01 to 2026-10-01.
+# ============================================================
+
+data:
+  current_data_month: "2026-10-01"
+
+  rolling_window:
+    training_months: 6
+    testing_months: 3
+
+  claims_table: fwa-mlops-accelerator-demo.fwa_claims.claims
   feature_table: fwa-mlops-accelerator-demo.fraud_features.provider_eye_features
   feedback_table: fwa-mlops-accelerator-demo.fraud_feedback.investigation_results
-
-  experiment_runs_table: fwa-mlops-accelerator-demo.fraud_experiments.experiment_runs
-  experiment_metrics_table: fwa-mlops-accelerator-demo.fraud_experiments.experiment_metrics
-
+  experiment_runs_table: fwa-mlops-accelerator-demo.fraud_experiments.random_forest_runs
+  experiment_metrics_table: fwa-mlops-accelerator-demo.fraud_experiments.random_forest_metrics
   batch_input_table: fwa-mlops-accelerator-demo.fraud_features.random_forest_batch_input
-  provider_prediction_table: fwa-mlops-accelerator-demo.fraud_experiments.random_forest_provider_predictions
-  retraining_table: fwa-mlops-accelerator-demo.fraud_features.random_forest_retraining_dataset
+  provider_prediction_table: fwa-mlops-accelerator-demo.fraud_experiments.provider_predictions
+  retraining_table: fwa-mlops-accelerator-demo.fraud_monitoring.random_forest_retraining
+
+
+# ============================================================
+# PROVIDER-LEVEL FEATURE ENGINEERING
+# ============================================================
+
+feature_sql:
+  high_acuity_pct: "AVG(CAST(is_high_acuity_em AS FLOAT64))"
+  pct_99214: "AVG(CAST(is_99214 AS FLOAT64))"
+  pct_99215: "AVG(CAST(is_99215 AS FLOAT64))"
+  referral_rate: "AVG(CAST(is_referral AS FLOAT64))"
+  eye_procedure_pct: "AVG(CAST(is_eye_procedure AS FLOAT64))"
+  avg_paid_per_claim: "AVG(total_paid_amount)"
+
+  # Use Case 2:
+  # avg_member_provider_distance: "AVG(member_provider_distance)"
+
+
+# ============================================================
+# DERIVED FEATURES
+# ============================================================
+
+derived_feature_sql:
+  high_acuity_oe_ratio: "SAFE_DIVIDE(p.high_acuity_pct, b.expected_high_acuity_pct)"
+
+
+# ============================================================
+# RANDOM FOREST MODEL FEATURES
+# ============================================================
 
 features:
   - high_acuity_pct
@@ -40,12 +79,36 @@ features:
   - avg_paid_per_claim
   - high_acuity_oe_ratio
 
+  # Use Case 2:
+  # - avg_member_provider_distance
+
+
+# ============================================================
+# MONITORING
+# ============================================================
+
 monitoring:
   feature_shift_threshold: 0.10
   prediction_shift_threshold: 0.10
   baseline_positive_rate: 0.10
 
   data_quality_table: fwa-mlops-accelerator-demo.fraud_monitoring.random_forest_data_quality
-  feature_drift_table: fwa-mlops-accelerator-demo.fraud_monitoring.feature_drift_summary
-  prediction_drift_table: fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift
+  feature_drift_table: fwa-mlops-accelerator-demo.fraud_monitoring.random_forest_feature_drift
+  prediction_drift_table: fwa-mlops-accelerator-demo.fraud_monitoring.prediction_drift
   training_state_table: fwa-mlops-accelerator-demo.fraud_monitoring.random_forest_training_state
+
+
+# ============================================================
+# MODEL PROMOTION
+# ============================================================
+
+promotion:
+  require_manual_approval: true
+
+  candidate_status:
+    pending: PENDING_APPROVAL
+    approved: APPROVED
+    rejected: REJECTED
+
+  candidate_artifact_path: models/random_forest/candidate/
+  production_artifact_path: models/random_forest/production/
