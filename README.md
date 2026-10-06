@@ -2,7 +2,7 @@
 
 This project demonstrates a reusable MLOps architecture for detecting potentially fraudulent healthcare providers/claims using Google Cloud Platform.
 
-<img width="1998" height="1125" alt="image" src="https://github.com/user-attachments/assets/f9b39515-1aa5-44af-a2cb-d53cd5e83975" />
+<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/44fc006d-9fc8-453d-bd13-1d4abe37e41e" />
 
 ### Business goal: 
 A reusable ML product that data scientists can plug in a new dataset, target, features, model techniques, and the same pipeline handles validation, training, evaluation, registration, deployment, monitoring, and retraining. Eventually support rapid experimentation without allowing each data scientist to build a separate production workflow.
@@ -14,7 +14,7 @@ The pipeline is designed for a team of talented and innovative data scientists w
 
 ---
 #### Use Case 1
-<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/44fc006d-9fc8-453d-bd13-1d4abe37e41e" />
+
 Data Updated from 2026-09 to 2026-10
 → retraining triggered
 → TRAIN window [6 MONTH] = 2026-02-01 to 2026-07-31
