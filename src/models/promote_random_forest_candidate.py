@@ -17,7 +17,8 @@ def get_pending_candidate(
       last_training_data_month,
       candidate_status,
       candidate_data_month,
-      candidate_model_resource
+      candidate_model_resource,
+      candidate_feature_signature
     FROM `{training_state_table}`
     WHERE model_name = 'random_forest'
     LIMIT 1
@@ -42,13 +43,20 @@ def get_pending_candidate(
 
     if candidate.candidate_data_month is None:
         raise RuntimeError(
-            "Pending candidate does not have a candidate_data_month."
+            "Pending candidate does not have "
+            "candidate_data_month."
         )
 
     if not candidate.candidate_model_resource:
         raise RuntimeError(
-            "Pending candidate does not have a "
+            "Pending candidate does not have "
             "candidate_model_resource."
+        )
+
+    if not candidate.candidate_feature_signature:
+        raise RuntimeError(
+            "Pending candidate does not have "
+            "candidate_feature_signature."
         )
 
     return candidate
@@ -109,16 +117,19 @@ def approve_candidate(
     bq_client,
     training_state_table,
     candidate_data_month,
+    candidate_feature_signature,
 ):
     query = f"""
     UPDATE `{training_state_table}`
     SET
       last_training_data_month = @candidate_data_month,
       last_training_timestamp = CURRENT_TIMESTAMP(),
+      approved_feature_signature = @candidate_feature_signature,
       candidate_status = 'APPROVED'
     WHERE model_name = 'random_forest'
       AND candidate_status = 'PENDING_APPROVAL'
       AND candidate_data_month = @candidate_data_month
+      AND candidate_feature_signature = @candidate_feature_signature
     """
 
     job_config = bigquery.QueryJobConfig(
@@ -127,7 +138,12 @@ def approve_candidate(
                 "candidate_data_month",
                 "DATE",
                 candidate_data_month,
-            )
+            ),
+            bigquery.ScalarQueryParameter(
+                "candidate_feature_signature",
+                "STRING",
+                candidate_feature_signature,
+            ),
         ]
     )
 
@@ -217,6 +233,11 @@ def main():
     )
 
     print(
+        f"Candidate feature signature: "
+        f"{candidate.candidate_feature_signature[:12]}"
+    )
+
+    print(
         f"Candidate model resource: "
         f"{candidate.candidate_model_resource}"
     )
@@ -287,11 +308,12 @@ def main():
 
     approve_candidate(
         bq_client=bq_client,
-        training_state_table=(
-            training_state_table
-        ),
+        training_state_table=training_state_table,
         candidate_data_month=(
             candidate.candidate_data_month
+        ),
+        candidate_feature_signature=(
+            candidate.candidate_feature_signature
         ),
     )
 
@@ -307,6 +329,11 @@ def main():
     print(
         f"Approved data month: "
         f"{candidate.candidate_data_month}"
+    )
+
+    print(
+        f"Approved feature signature: "
+        f"{candidate.candidate_feature_signature[:12]}"
     )
 
     print(
@@ -328,12 +355,6 @@ def main():
         f"{promoted_at}"
     )
 
-    print(
-        "\nProduction is now ready to use "
-        "the newly approved model."
-    )
-
 
 if __name__ == "__main__":
     main()
-

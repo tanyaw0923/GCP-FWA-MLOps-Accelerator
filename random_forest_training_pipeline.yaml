@@ -1,8 +1,10 @@
 # PIPELINE DEFINITION
-# Name: random-forest-fraud-training-pipeline
+# Name: random-forest-fraud-training
+# Description: Continuous training pipeline for provider-level fraud detection using rolling data windows and config-driven feature engineering.
 # Inputs:
 #    claims_table: str
 #    current_data_month: str
+#    current_feature_signature: str
 #    data_quality_table: str
 #    derived_feature_sql_json: str
 #    feature_columns_json: str
@@ -46,6 +48,8 @@ components:
       parameters:
         current_data_month:
           parameterType: STRING
+        current_feature_signature:
+          parameterType: STRING
         data_quality_table:
           parameterType: STRING
         feature_drift_table:
@@ -77,7 +81,7 @@ components:
               training_months:
                 componentInputParameter: pipelinechannel--training_months
           taskInfo:
-            name: calculate-rolling-window-component
+            name: Calculate Rolling Window
         mark-candidate-pending-component:
           cachingOptions:
             enableCache: true
@@ -87,6 +91,8 @@ components:
           - register-random-forest-model-component
           inputs:
             parameters:
+              candidate_feature_signature:
+                componentInputParameter: pipelinechannel--current_feature_signature
               candidate_model_resource:
                 taskOutputParameter:
                   outputParameterKey: Output
@@ -98,7 +104,7 @@ components:
               training_state_table:
                 componentInputParameter: pipelinechannel--training_state_table
           taskInfo:
-            name: mark-candidate-pending-component
+            name: Mark Candidate Pending Approval
         refresh-provider-features-component:
           cachingOptions:
             enableCache: true
@@ -135,7 +141,7 @@ components:
                   outputParameterKey: train_start_date
                   producerTask: calculate-rolling-window-component
           taskInfo:
-            name: refresh-provider-features-component
+            name: Refresh Provider Features
         register-random-forest-model-component:
           cachingOptions:
             enableCache: true
@@ -156,7 +162,7 @@ components:
               serving_container_image_uri:
                 componentInputParameter: pipelinechannel--serving_container_image_uri
           taskInfo:
-            name: register-random-forest-model-component
+            name: Register Random Forest Candidate
         train-random-forest-component:
           cachingOptions:
             enableCache: true
@@ -175,7 +181,7 @@ components:
               project_id:
                 componentInputParameter: pipelinechannel--project_id
           taskInfo:
-            name: train-random-forest-component
+            name: Train Random Forest Candidate
     inputDefinitions:
       parameters:
         pipelinechannel--check-retraining-decision-component-Output:
@@ -183,6 +189,8 @@ components:
         pipelinechannel--claims_table:
           parameterType: STRING
         pipelinechannel--current_data_month:
+          parameterType: STRING
+        pipelinechannel--current_feature_signature:
           parameterType: STRING
         pipelinechannel--derived_feature_sql_json:
           parameterType: STRING
@@ -214,6 +222,8 @@ components:
     executorLabel: exec-mark-candidate-pending-component
     inputDefinitions:
       parameters:
+        candidate_feature_signature:
+          parameterType: STRING
         candidate_model_resource:
           parameterType: STRING
         current_data_month:
@@ -388,67 +398,88 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef check_retraining_decision_component(\n    project_id: str,\n\
-          \    current_data_month: str,\n    data_quality_table: str,\n    feature_drift_table:\
-          \ str,\n    prediction_drift_table: str,\n    training_state_table: str,\n\
-          ) -> bool:\n    from datetime import date\n    from google.cloud import\
-          \ bigquery\n\n    bq = bigquery.Client(project=project_id)\n\n    # ---------------------------------------------------------\n\
-          \    # 1. Data Quality trigger\n    # ---------------------------------------------------------\n\
+          \    current_data_month: str,\n    current_feature_signature: str,\n   \
+          \ data_quality_table: str,\n    feature_drift_table: str,\n    prediction_drift_table:\
+          \ str,\n    training_state_table: str,\n) -> bool:\n    from datetime import\
+          \ date\n    from google.cloud import bigquery\n\n    bq = bigquery.Client(project=project_id)\n\
+          \n    # ---------------------------------------------------------\n    #\
+          \ 1. Data quality trigger\n    # ---------------------------------------------------------\n\
           \    data_quality_query = f\"\"\"\n    SELECT\n      monitoring_status\n\
           \    FROM `{data_quality_table}`\n    ORDER BY monitoring_timestamp DESC\n\
-          \    LIMIT 1\n    \"\"\"\n\n    data_quality_result = list(\n        bq.query(data_quality_query).result()\n\
-          \    )\n\n    data_quality_status = (\n        data_quality_result[0].monitoring_status\n\
-          \        if data_quality_result\n        else \"PASS\"\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 2. Feature Drift trigger\n    # ---------------------------------------------------------\n\
+          \    LIMIT 1\n    \"\"\"\n\n    data_quality_rows = list(\n        bq.query(data_quality_query).result()\n\
+          \    )\n\n    data_quality_status = (\n        data_quality_rows[0].monitoring_status\n\
+          \        if data_quality_rows\n        else \"PASS\"\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 2. Feature drift trigger\n    #\n    # Only evaluate the most recent\
+          \ monitoring run.\n    # Historical alerts should not trigger retraining\
+          \ forever.\n    # ---------------------------------------------------------\n\
           \    feature_drift_query = f\"\"\"\n    SELECT\n      COUNTIF(monitoring_status\
-          \ = 'ALERT') AS alert_count\n    FROM `{feature_drift_table}`\n    \"\"\"\
-          \n\n    feature_drift_result = list(\n        bq.query(feature_drift_query).result()\n\
-          \    )\n\n    feature_alert_count = (\n        feature_drift_result[0].alert_count\n\
-          \        if feature_drift_result\n        else 0\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 3. Prediction Drift trigger\n    # ---------------------------------------------------------\n\
+          \ = 'ALERT') AS alert_count\n    FROM `{feature_drift_table}`\n    WHERE\
+          \ monitoring_timestamp = (\n      SELECT MAX(monitoring_timestamp)\n   \
+          \   FROM `{feature_drift_table}`\n    )\n    \"\"\"\n\n    feature_drift_rows\
+          \ = list(\n        bq.query(feature_drift_query).result()\n    )\n\n   \
+          \ feature_alert_count = (\n        feature_drift_rows[0].alert_count\n \
+          \       if feature_drift_rows\n        else 0\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 3. Prediction drift trigger\n    #\n    # prediction_drift uses:\n\
+          \    #   status\n    #   check_date\n    # ---------------------------------------------------------\n\
           \    prediction_drift_query = f\"\"\"\n    SELECT\n      status\n    FROM\
           \ `{prediction_drift_table}`\n    ORDER BY check_date DESC\n    LIMIT 1\n\
-          \    \"\"\"\n\n    prediction_drift_result = list(\n        bq.query(prediction_drift_query).result()\n\
-          \    )\n\n    prediction_drift_status = (\n        prediction_drift_result[0].status\n\
-          \        if prediction_drift_result\n        else \"PASS\"\n    )\n\n  \
-          \  # ---------------------------------------------------------\n    # 4.\
-          \ New Month Data trigger\n    #\n    # current_data_month comes from pipeline_config.yaml.\n\
-          \    # Example:\n    #   current_data_month: \"2026-09-01\"\n    #\n   \
-          \ # Compare it with the last month already used for training.\n    # ---------------------------------------------------------\n\
-          \    current_data_month_date = date.fromisoformat(\n        current_data_month\n\
-          \    )\n\n    training_state_query = f\"\"\"\n    SELECT\n      MAX(last_training_data_month)\n\
-          \        AS last_training_data_month\n    FROM `{training_state_table}`\n\
-          \    WHERE model_name = 'random_forest'\n    \"\"\"\n\n    training_state_result\
+          \    \"\"\"\n\n    prediction_drift_rows = list(\n        bq.query(prediction_drift_query).result()\n\
+          \    )\n\n    prediction_drift_status = (\n        prediction_drift_rows[0].status\n\
+          \        if prediction_drift_rows\n        else \"PASS\"\n    )\n\n    #\
+          \ ---------------------------------------------------------\n    # 4. Read\
+          \ current approved training state\n    # ---------------------------------------------------------\n\
+          \    training_state_query = f\"\"\"\n    SELECT\n      last_training_data_month,\n\
+          \      approved_feature_signature\n    FROM `{training_state_table}`\n \
+          \   WHERE model_name = 'random_forest'\n    LIMIT 1\n    \"\"\"\n\n    training_state_rows\
           \ = list(\n        bq.query(training_state_query).result()\n    )\n\n  \
-          \  last_training_data_month = (\n        training_state_result[0].last_training_data_month\n\
-          \        if training_state_result\n        else None\n    )\n\n    new_month_available\
+          \  if training_state_rows:\n        state = training_state_rows[0]\n\n \
+          \       last_training_data_month = (\n            state.last_training_data_month\n\
+          \        )\n\n        approved_feature_signature = (\n            state.approved_feature_signature\n\
+          \        )\n    else:\n        last_training_data_month = None\n       \
+          \ approved_feature_signature = None\n\n    # ---------------------------------------------------------\n\
+          \    # 5. Use Case 1:\n    # New monthly data triggers retraining\n    #\
+          \ ---------------------------------------------------------\n    current_data_month_date\
+          \ = date.fromisoformat(\n        current_data_month\n    )\n\n    new_month_available\
           \ = (\n        last_training_data_month is None\n        or current_data_month_date\n\
           \        > last_training_data_month\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 5. Final retraining decision\n    # ---------------------------------------------------------\n\
+          \    # 6. Use Case 2:\n    # A new feature configuration triggers retraining\n\
+          \    #\n    # NULL approved signature is treated as initialization,\n  \
+          \  # not as a feature change.\n    # ---------------------------------------------------------\n\
+          \    feature_set_changed = (\n        approved_feature_signature is not\
+          \ None\n        and current_feature_signature\n        != approved_feature_signature\n\
+          \    )\n\n    # ---------------------------------------------------------\n\
+          \    # 7. Final retraining decision\n    # ---------------------------------------------------------\n\
           \    should_retrain = (\n        data_quality_status == \"ALERT\"\n    \
           \    or feature_alert_count > 0\n        or prediction_drift_status == \"\
-          ALERT\"\n        or new_month_available\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 6. Collect retraining reasons\n    # ---------------------------------------------------------\n\
+          ALERT\"\n        or new_month_available\n        or feature_set_changed\n\
+          \    )\n\n    # ---------------------------------------------------------\n\
+          \    # 8. Collect retraining reasons\n    # ---------------------------------------------------------\n\
           \    reasons = []\n\n    if data_quality_status == \"ALERT\":\n        reasons.append(\n\
           \            \"data_quality_alert\"\n        )\n\n    if feature_alert_count\
           \ > 0:\n        reasons.append(\n            \"feature_drift_alert\"\n \
           \       )\n\n    if prediction_drift_status == \"ALERT\":\n        reasons.append(\n\
           \            \"prediction_drift_alert\"\n        )\n\n    if new_month_available:\n\
           \        reasons.append(\n            \"new_month_data\"\n        )\n\n\
-          \    # ---------------------------------------------------------\n    #\
-          \ 7. Print decision summary\n    # ---------------------------------------------------------\n\
-          \    print(\"=\" * 60)\n    print(\"Random Forest Retraining Decision\"\
-          )\n    print(\"=\" * 60)\n\n    print(\n        f\"Data Quality Status:\
+          \    if feature_set_changed:\n        reasons.append(\n            \"feature_set_changed\"\
+          \n        )\n\n    # ---------------------------------------------------------\n\
+          \    # 9. Print decision summary\n    # ---------------------------------------------------------\n\
+          \    print(\"=\" * 70)\n    print(\"Random Forest Retraining Decision\"\
+          )\n    print(\"=\" * 70)\n\n    print(\n        f\"Data Quality Status:\
           \ \"\n        f\"{data_quality_status}\"\n    )\n\n    print(\n        f\"\
           Feature Drift Alert Count: \"\n        f\"{feature_alert_count}\"\n    )\n\
           \n    print(\n        f\"Prediction Drift Status: \"\n        f\"{prediction_drift_status}\"\
-          \n    )\n\n    print(\n        f\"Current Data Month: \"\n        f\"{current_data_month_date}\"\
-          \n    )\n\n    print(\n        f\"Last Training Data Month: \"\n       \
-          \ f\"{last_training_data_month}\"\n    )\n\n    print(\n        f\"New Month\
-          \ Available: \"\n        f\"{new_month_available}\"\n    )\n\n    print(\"\
-          -\" * 60)\n\n    print(\n        f\"Should Retrain: \"\n        f\"{should_retrain}\"\
-          \n    )\n\n    if reasons:\n        print(\n            \"\\nRetraining\
-          \ trigger(s):\"\n        )\n\n        for reason in reasons:\n         \
-          \   print(\n                f\"  - {reason}\"\n            )\n\n    else:\n\
+          \n    )\n\n    print(\"-\" * 70)\n\n    print(\n        f\"Current Data\
+          \ Month: \"\n        f\"{current_data_month_date}\"\n    )\n\n    print(\n\
+          \        f\"Last Training Data Month: \"\n        f\"{last_training_data_month}\"\
+          \n    )\n\n    print(\n        f\"New Month Available: \"\n        f\"{new_month_available}\"\
+          \n    )\n\n    print(\"-\" * 70)\n\n    print(\n        \"Approved Feature\
+          \ Signature: \"\n        f\"{approved_feature_signature}\"\n    )\n\n  \
+          \  print(\n        \"Current Feature Signature: \"\n        f\"{current_feature_signature}\"\
+          \n    )\n\n    print(\n        f\"Feature Set Changed: \"\n        f\"{feature_set_changed}\"\
+          \n    )\n\n    print(\"-\" * 70)\n\n    print(\n        f\"Should Retrain:\
+          \ \"\n        f\"{should_retrain}\"\n    )\n\n    if reasons:\n        print(\"\
+          \\nRetraining trigger(s):\")\n\n        for reason in reasons:\n       \
+          \     print(\n                f\"  - {reason}\"\n            )\n    else:\n\
           \        print(\n            \"\\nNo retraining triggers detected.\"\n \
           \       )\n\n    return should_retrain\n\n"
         image: python:3.11
@@ -481,43 +512,45 @@ deploymentSpec:
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef mark_candidate_pending_component(\n    project_id: str,\n   \
           \ training_state_table: str,\n    current_data_month: str,\n    candidate_model_resource:\
-          \ str,\n    model_name: str = \"random_forest\",\n):\n    from datetime\
-          \ import date\n\n    from google.cloud import bigquery\n\n    client = bigquery.Client(\n\
-          \        project=project_id\n    )\n\n    current_data_month_date = (\n\
-          \        date.fromisoformat(\n            current_data_month\n        )\n\
-          \    )\n\n    # ---------------------------------------------------------\n\
-          \    # Store candidate information without updating\n    # last_training_data_month.\n\
-          \    #\n    # The month is considered accepted only after the model\n  \
-          \  # receives manual production approval.\n    # ---------------------------------------------------------\n\
-          \    query = f\"\"\"\n    MERGE `{training_state_table}` AS target\n\n \
-          \   USING (\n      SELECT\n        @model_name AS model_name\n    ) AS source\n\
-          \n    ON\n      target.model_name\n      = source.model_name\n\n    WHEN\
-          \ MATCHED THEN\n      UPDATE SET\n        candidate_status =\n         \
-          \ 'PENDING_APPROVAL',\n\n        candidate_model_resource =\n          @candidate_model_resource,\n\
-          \n        candidate_data_month =\n          @current_data_month,\n\n   \
-          \     candidate_created_at =\n          CURRENT_TIMESTAMP()\n\n    WHEN\
-          \ NOT MATCHED THEN\n      INSERT (\n        model_name,\n        candidate_status,\n\
-          \        candidate_model_resource,\n        candidate_data_month,\n    \
-          \    candidate_created_at\n      )\n\n      VALUES (\n        @model_name,\n\
-          \        'PENDING_APPROVAL',\n        @candidate_model_resource,\n     \
-          \   @current_data_month,\n        CURRENT_TIMESTAMP()\n      )\n    \"\"\
-          \"\n\n    job_config = (\n        bigquery.QueryJobConfig(\n           \
-          \ query_parameters=[\n                bigquery.ScalarQueryParameter(\n \
-          \                   \"model_name\",\n                    \"STRING\",\n \
-          \                   model_name,\n                ),\n                bigquery.ScalarQueryParameter(\n\
-          \                    \"candidate_model_resource\",\n                   \
-          \ \"STRING\",\n                    candidate_model_resource,\n         \
-          \       ),\n                bigquery.ScalarQueryParameter(\n           \
-          \         \"current_data_month\",\n                    \"DATE\",\n     \
-          \               current_data_month_date,\n                ),\n         \
-          \   ]\n        )\n    )\n\n    client.query(\n        query,\n        job_config=job_config,\n\
-          \    ).result()\n\n    print(\"=\" * 60)\n    print(\"Candidate Model Ready\"\
-          )\n    print(\"=\" * 60)\n\n    print(\n        f\"Model: \"\n        f\"\
-          {model_name}\"\n    )\n\n    print(\n        f\"Candidate data month: \"\
-          \n        f\"{current_data_month}\"\n    )\n\n    print(\n        f\"Candidate\
-          \ resource: \"\n        f\"{candidate_model_resource}\"\n    )\n\n    print(\n\
-          \        \"\\nStatus: \"\n        \"PENDING_APPROVAL\"\n    )\n\n    print(\n\
-          \        \"Production model remains unchanged.\"\n    )\n\n"
+          \ str,\n    candidate_feature_signature: str,\n    model_name: str = \"\
+          random_forest\",\n):\n    from google.cloud import bigquery\n\n    bq =\
+          \ bigquery.Client(project=project_id)\n\n    query = f\"\"\"\n    MERGE\
+          \ `{training_state_table}` AS target\n    USING (\n      SELECT\n      \
+          \  @model_name AS model_name,\n        DATE(@current_data_month) AS candidate_data_month,\n\
+          \        @candidate_model_resource AS candidate_model_resource,\n      \
+          \  @candidate_feature_signature AS candidate_feature_signature\n    ) AS\
+          \ source\n    ON target.model_name = source.model_name\n\n    WHEN MATCHED\
+          \ THEN\n      UPDATE SET\n        candidate_status = 'PENDING_APPROVAL',\n\
+          \        candidate_model_resource = source.candidate_model_resource,\n \
+          \       candidate_data_month = source.candidate_data_month,\n        candidate_feature_signature\
+          \ = source.candidate_feature_signature,\n        candidate_created_at =\
+          \ CURRENT_TIMESTAMP()\n\n    WHEN NOT MATCHED THEN\n      INSERT (\n   \
+          \     model_name,\n        candidate_status,\n        candidate_model_resource,\n\
+          \        candidate_data_month,\n        candidate_feature_signature,\n \
+          \       candidate_created_at\n      )\n      VALUES (\n        source.model_name,\n\
+          \        'PENDING_APPROVAL',\n        source.candidate_model_resource,\n\
+          \        source.candidate_data_month,\n        source.candidate_feature_signature,\n\
+          \        CURRENT_TIMESTAMP()\n      )\n    \"\"\"\n\n    job_config = bigquery.QueryJobConfig(\n\
+          \        query_parameters=[\n            bigquery.ScalarQueryParameter(\n\
+          \                \"model_name\",\n                \"STRING\",\n        \
+          \        model_name,\n            ),\n            bigquery.ScalarQueryParameter(\n\
+          \                \"current_data_month\",\n                \"STRING\",\n\
+          \                current_data_month,\n            ),\n            bigquery.ScalarQueryParameter(\n\
+          \                \"candidate_model_resource\",\n                \"STRING\"\
+          ,\n                candidate_model_resource,\n            ),\n         \
+          \   bigquery.ScalarQueryParameter(\n                \"candidate_feature_signature\"\
+          ,\n                \"STRING\",\n                candidate_feature_signature,\n\
+          \            ),\n        ]\n    )\n\n    bq.query(\n        query,\n   \
+          \     job_config=job_config,\n    ).result()\n\n    print(\"=\" * 70)\n\
+          \    print(\"Candidate Model Pending Approval\")\n    print(\"=\" * 70)\n\
+          \n    print(\n        f\"Model: \"\n        f\"{model_name}\"\n    )\n\n\
+          \    print(\n        f\"Candidate data month: \"\n        f\"{current_data_month}\"\
+          \n    )\n\n    print(\n        f\"Candidate model resource: \"\n       \
+          \ f\"{candidate_model_resource}\"\n    )\n\n    print(\n        f\"Candidate\
+          \ feature signature: \"\n        f\"{candidate_feature_signature}\"\n  \
+          \  )\n\n    print(\n        \"Candidate status: \"\n        \"PENDING_APPROVAL\"\
+          \n    )\n\n    print(\n        \"\\nApproved production state \"\n     \
+          \   \"has not been changed.\"\n    )\n\n"
         image: python:3.11
     exec-refresh-provider-features-component:
       container:
@@ -793,7 +826,9 @@ deploymentSpec:
         - '{{$.inputs.parameters[''model_output_uri'']}}'
         image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:v2
 pipelineInfo:
-  name: random-forest-fraud-training-pipeline
+  description: Continuous training pipeline for provider-level fraud detection using
+    rolling data windows and config-driven feature engineering.
+  name: random-forest-fraud-training
 root:
   dag:
     tasks:
@@ -806,6 +841,8 @@ root:
           parameters:
             current_data_month:
               componentInputParameter: current_data_month
+            current_feature_signature:
+              componentInputParameter: current_feature_signature
             data_quality_table:
               componentInputParameter: data_quality_table
             feature_drift_table:
@@ -817,7 +854,7 @@ root:
             training_state_table:
               componentInputParameter: training_state_table
         taskInfo:
-          name: check-retraining-decision-component
+          name: Check Retraining Decision
       condition-1:
         componentRef:
           name: comp-condition-1
@@ -833,6 +870,8 @@ root:
               componentInputParameter: claims_table
             pipelinechannel--current_data_month:
               componentInputParameter: current_data_month
+            pipelinechannel--current_feature_signature:
+              componentInputParameter: current_feature_signature
             pipelinechannel--derived_feature_sql_json:
               componentInputParameter: derived_feature_sql_json
             pipelinechannel--feature_columns_json:
@@ -869,6 +908,8 @@ root:
       claims_table:
         parameterType: STRING
       current_data_month:
+        parameterType: STRING
+      current_feature_signature:
         parameterType: STRING
       data_quality_table:
         parameterType: STRING

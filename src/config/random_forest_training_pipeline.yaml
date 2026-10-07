@@ -1,0 +1,915 @@
+# PIPELINE DEFINITION
+# Name: random-forest-fraud-training-pipeline
+# Inputs:
+#    baseline_positive_rate: float
+#    batch_input_table: str
+#    batch_output_dataset: str
+#    current_data_month: str
+#    data_quality_table: str
+#    experiment_runs_table: str
+#    feature_columns_json: str
+#    feature_drift_table: str
+#    feature_shift_threshold: float
+#    feature_table: str
+#    feedback_table: str
+#    model_artifact_uri: str
+#    model_display_name: str
+#    model_output_uri: str
+#    prediction_drift_table: str
+#    prediction_shift_threshold: float
+#    project_id: str
+#    provider_prediction_table: str
+#    region: str
+#    serving_container_image_uri: str
+#    training_state_table: str
+components:
+  comp-check-retraining-decision-component:
+    executorLabel: exec-check-retraining-decision-component
+    inputDefinitions:
+      parameters:
+        current_data_month:
+          parameterType: STRING
+        data_quality_table:
+          parameterType: STRING
+        feature_drift_table:
+          parameterType: STRING
+        prediction_drift_table:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        training_state_table:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: BOOLEAN
+  comp-postprocess-random-forest-predictions-component:
+    executorLabel: exec-postprocess-random-forest-predictions-component
+    inputDefinitions:
+      parameters:
+        experiment_runs_table:
+          parameterType: STRING
+        feature_columns_json:
+          parameterType: STRING
+        feature_table:
+          parameterType: STRING
+        output_table:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        raw_prediction_table:
+          parameterType: STRING
+  comp-register-random-forest-model-component:
+    executorLabel: exec-register-random-forest-model-component
+    inputDefinitions:
+      parameters:
+        artifact_uri:
+          parameterType: STRING
+        model_display_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+        serving_container_image_uri:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-run-random-forest-batch-prediction-component:
+    executorLabel: exec-run-random-forest-batch-prediction-component
+    inputDefinitions:
+      parameters:
+        batch_input_table:
+          parameterType: STRING
+        batch_output_dataset:
+          parameterType: STRING
+        feature_columns_json:
+          parameterType: STRING
+        model_resource_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-run-random-forest-monitoring-component:
+    executorLabel: exec-run-random-forest-monitoring-component
+    inputDefinitions:
+      parameters:
+        baseline_positive_rate:
+          parameterType: NUMBER_DOUBLE
+        batch_input_table:
+          parameterType: STRING
+        data_quality_table:
+          parameterType: STRING
+        feature_columns_json:
+          parameterType: STRING
+        feature_drift_table:
+          parameterType: STRING
+        feature_shift_threshold:
+          parameterType: NUMBER_DOUBLE
+        feature_table:
+          parameterType: STRING
+        prediction_drift_table:
+          parameterType: STRING
+        prediction_shift_threshold:
+          parameterType: NUMBER_DOUBLE
+        project_id:
+          parameterType: STRING
+        provider_prediction_table:
+          parameterType: STRING
+  comp-train-random-forest-component:
+    executorLabel: exec-train-random-forest-component
+    inputDefinitions:
+      parameters:
+        feature_columns_json:
+          parameterType: STRING
+        feature_table:
+          parameterType: STRING
+        feedback_table:
+          parameterType: STRING
+        model_output_uri:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-check-retraining-decision-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - check_retraining_decision_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef check_retraining_decision_component(\n    project_id: str,\n\
+          \    current_data_month: str,\n    data_quality_table: str,\n    feature_drift_table:\
+          \ str,\n    prediction_drift_table: str,\n    training_state_table: str,\n\
+          ) -> bool:\n    from datetime import date\n    from google.cloud import\
+          \ bigquery\n\n    bq = bigquery.Client(project=project_id)\n\n    # ---------------------------------------------------------\n\
+          \    # 1. Data Quality trigger\n    # ---------------------------------------------------------\n\
+          \    data_quality_query = f\"\"\"\n    SELECT\n      monitoring_status\n\
+          \    FROM `{data_quality_table}`\n    ORDER BY monitoring_timestamp DESC\n\
+          \    LIMIT 1\n    \"\"\"\n\n    data_quality_result = list(\n        bq.query(data_quality_query).result()\n\
+          \    )\n\n    data_quality_status = (\n        data_quality_result[0].monitoring_status\n\
+          \        if data_quality_result\n        else \"PASS\"\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 2. Feature Drift trigger\n    # ---------------------------------------------------------\n\
+          \    feature_drift_query = f\"\"\"\n    SELECT\n      COUNTIF(monitoring_status\
+          \ = 'ALERT') AS alert_count\n    FROM `{feature_drift_table}`\n    \"\"\"\
+          \n\n    feature_drift_result = list(\n        bq.query(feature_drift_query).result()\n\
+          \    )\n\n    feature_alert_count = (\n        feature_drift_result[0].alert_count\n\
+          \        if feature_drift_result\n        else 0\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 3. Prediction Drift trigger\n    # ---------------------------------------------------------\n\
+          \    prediction_drift_query = f\"\"\"\n    SELECT\n      monitoring_status\n\
+          \    FROM `{prediction_drift_table}`\n    ORDER BY monitoring_timestamp\
+          \ DESC\n    LIMIT 1\n    \"\"\"\n\n    prediction_drift_result = list(\n\
+          \        bq.query(prediction_drift_query).result()\n    )\n\n    prediction_drift_status\
+          \ = (\n        prediction_drift_result[0].monitoring_status\n        if\
+          \ prediction_drift_result\n        else \"PASS\"\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 4. New Month Data trigger\n    #\n    # current_data_month comes\
+          \ from pipeline_config.yaml.\n    # Example:\n    #   current_data_month:\
+          \ \"2026-09-01\"\n    #\n    # Compare it with the last month already used\
+          \ for training.\n    # ---------------------------------------------------------\n\
+          \    current_data_month_date = date.fromisoformat(\n        current_data_month\n\
+          \    )\n\n    training_state_query = f\"\"\"\n    SELECT\n      MAX(last_training_data_month)\n\
+          \        AS last_training_data_month\n    FROM `{training_state_table}`\n\
+          \    WHERE model_name = 'random_forest'\n    \"\"\"\n\n    training_state_result\
+          \ = list(\n        bq.query(training_state_query).result()\n    )\n\n  \
+          \  last_training_data_month = (\n        training_state_result[0].last_training_data_month\n\
+          \        if training_state_result\n        else None\n    )\n\n    new_month_available\
+          \ = (\n        last_training_data_month is None\n        or current_data_month_date\n\
+          \        > last_training_data_month\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 5. Final retraining decision\n    # ---------------------------------------------------------\n\
+          \    should_retrain = (\n        data_quality_status == \"ALERT\"\n    \
+          \    or feature_alert_count > 0\n        or prediction_drift_status == \"\
+          ALERT\"\n        or new_month_available\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 6. Collect retraining reasons\n    # ---------------------------------------------------------\n\
+          \    reasons = []\n\n    if data_quality_status == \"ALERT\":\n        reasons.append(\n\
+          \            \"data_quality_alert\"\n        )\n\n    if feature_alert_count\
+          \ > 0:\n        reasons.append(\n            \"feature_drift_alert\"\n \
+          \       )\n\n    if prediction_drift_status == \"ALERT\":\n        reasons.append(\n\
+          \            \"prediction_drift_alert\"\n        )\n\n    if new_month_available:\n\
+          \        reasons.append(\n            \"new_month_data\"\n        )\n\n\
+          \    # ---------------------------------------------------------\n    #\
+          \ 7. Print decision summary\n    # ---------------------------------------------------------\n\
+          \    print(\"=\" * 60)\n    print(\"Random Forest Retraining Decision\"\
+          )\n    print(\"=\" * 60)\n\n    print(\n        f\"Data Quality Status:\
+          \ \"\n        f\"{data_quality_status}\"\n    )\n\n    print(\n        f\"\
+          Feature Drift Alert Count: \"\n        f\"{feature_alert_count}\"\n    )\n\
+          \n    print(\n        f\"Prediction Drift Status: \"\n        f\"{prediction_drift_status}\"\
+          \n    )\n\n    print(\n        f\"Current Data Month: \"\n        f\"{current_data_month_date}\"\
+          \n    )\n\n    print(\n        f\"Last Training Data Month: \"\n       \
+          \ f\"{last_training_data_month}\"\n    )\n\n    print(\n        f\"New Month\
+          \ Available: \"\n        f\"{new_month_available}\"\n    )\n\n    print(\"\
+          -\" * 60)\n\n    print(\n        f\"Should Retrain: \"\n        f\"{should_retrain}\"\
+          \n    )\n\n    if reasons:\n        print(\n            \"\\nRetraining\
+          \ trigger(s):\"\n        )\n\n        for reason in reasons:\n         \
+          \   print(\n                f\"  - {reason}\"\n            )\n\n    else:\n\
+          \        print(\n            \"\\nNo retraining triggers detected.\"\n \
+          \       )\n\n    return should_retrain\n\n"
+        image: python:3.11
+    exec-postprocess-random-forest-predictions-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - postprocess_random_forest_predictions_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef postprocess_random_forest_predictions_component(\n    project_id:\
+          \ str,\n    raw_prediction_table: str,\n    feature_table: str,\n    experiment_runs_table:\
+          \ str,\n    output_table: str,\n    feature_columns_json: str,\n):\n   \
+          \ import json\n    import re\n\n    from google.cloud import bigquery\n\n\
+          \n    # ---------------------------------------------------------\n    #\
+          \ 1. Parse feature configuration\n    # ---------------------------------------------------------\n\
+          \    feature_columns = json.loads(\n        feature_columns_json\n    )\n\
+          \n    if not feature_columns:\n        raise ValueError(\n            \"\
+          feature_columns_json cannot be empty.\"\n        )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 2. Validate feature names\n    #\n    # Feature names are inserted\
+          \ into SQL identifiers,\n    # so only allow standard BigQuery-safe column\
+          \ names.\n    # ---------------------------------------------------------\n\
+          \    valid_column_pattern = re.compile(\n        r\"^[A-Za-z_][A-Za-z0-9_]*$\"\
+          \n    )\n\n    invalid_features = [\n        feature\n        for feature\
+          \ in feature_columns\n        if not valid_column_pattern.match(feature)\n\
+          \    ]\n\n    if invalid_features:\n        raise ValueError(\n        \
+          \    \"Invalid feature column names: \"\n            f\"{invalid_features}\"\
+          \n        )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 3. Normalize Vertex BigQuery output table URI\n    #\n    # Vertex\
+          \ can return:\n    # bq://project.dataset.table\n    #\n    # BigQuery SQL\
+          \ expects:\n    # project.dataset.table\n    # ---------------------------------------------------------\n\
+          \    raw_prediction_table = (\n        raw_prediction_table\n        .replace(\"\
+          bq://\", \"\")\n    )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 4. Dynamically build TRAIN feature means\n    #\n    # Example:\n\
+          \    # AVG(high_acuity_pct) AS mean_0,\n    # AVG(pct_99214) AS mean_1,\n\
+          \    # ...\n    # ---------------------------------------------------------\n\
+          \    train_mean_expressions = []\n\n    for index, feature in enumerate(\n\
+          \        feature_columns\n    ):\n        train_mean_expressions.append(\n\
+          \            f\"AVG(`{feature}`) AS mean_{index}\"\n        )\n\n    train_mean_select\
+          \ = \",\\n        \".join(\n        train_mean_expressions\n    )\n\n\n\
+          \    # ---------------------------------------------------------\n    #\
+          \ 5. Dynamically build reason-code structures\n    #\n    # For each feature:\n\
+          \    #\n    # provider feature value\n    # ----------------------\n   \
+          \ # TRAIN feature mean\n    #\n    # Then rank the ratios and keep the top\
+          \ 3.\n    # ---------------------------------------------------------\n\
+          \    reason_structs = []\n\n    for index, feature in enumerate(\n     \
+          \   feature_columns\n    ):\n        reason_structs.append(\n          \
+          \  f\"\"\"\n            STRUCT(\n              '{feature}' AS feature_name,\n\
+          \              SAFE_DIVIDE(\n                r.`{feature}`,\n          \
+          \      m.mean_{index}\n              ) AS ratio,\n              {index +\
+          \ 1} AS feature_order\n            )\n            \"\"\".strip()\n     \
+          \   )\n\n    reason_struct_array = \",\\n            \".join(\n        reason_structs\n\
+          \    )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 6. Create BigQuery client\n    # ---------------------------------------------------------\n\
+          \    bq = bigquery.Client(\n        project=project_id\n    )\n\n\n    #\
+          \ ---------------------------------------------------------\n    # 7. Build\
+          \ post-processing SQL\n    # ---------------------------------------------------------\n\
+          \    query = f\"\"\"\n    CREATE OR REPLACE TABLE `{output_table}` AS\n\n\
+          \    WITH latest_run AS (\n      SELECT\n        experiment_id,\n      \
+          \  run_id,\n        experiment_name\n      FROM `{experiment_runs_table}`\n\
+          \      WHERE model_type = 'random_forest'\n      ORDER BY created_at DESC\n\
+          \      LIMIT 1\n    ),\n\n    train_means AS (\n      SELECT\n        {train_mean_select}\n\
+          \      FROM `{feature_table}`\n      WHERE dataset_split = 'TRAIN'\n   \
+          \ ),\n\n    scored AS (\n      SELECT\n        p.*,\n\n        CASE\n  \
+          \        WHEN CAST(p.prediction AS STRING) = '1'\n            THEN 1.0\n\
+          \          ELSE 0.0\n        END AS fraud_score\n\n      FROM `{raw_prediction_table}`\
+          \ p\n    ),\n\n    ranked AS (\n      SELECT\n        *,\n\n        ROW_NUMBER()\
+          \ OVER (\n          ORDER BY\n            fraud_score DESC,\n          \
+          \  provider_id\n        ) AS risk_rank,\n\n        CASE\n          WHEN\
+          \ fraud_score = 1\n            THEN 'HIGH'\n          ELSE 'LOW'\n     \
+          \   END AS risk_category\n\n      FROM scored\n    ),\n\n    reason_codes\
+          \ AS (\n      SELECT\n        r.*,\n\n        ARRAY(\n          SELECT AS\
+          \ STRUCT\n            feature_name,\n            ratio\n\n          FROM\
+          \ UNNEST([\n            {reason_struct_array}\n          ])\n\n        \
+          \  WHERE ratio IS NOT NULL\n\n          ORDER BY\n            ratio DESC,\n\
+          \            feature_order\n\n          LIMIT 3\n        ) AS reasons\n\n\
+          \      FROM ranked r\n      CROSS JOIN train_means m\n    )\n\n    SELECT\n\
+          \      CURRENT_DATE() AS prediction_date,\n\n      p.provider_id,\n\n  \
+          \    lr.experiment_id,\n      lr.run_id,\n\n      'random_forest' AS model_name,\n\
+          \      lr.experiment_name,\n\n      p.fraud_score,\n      p.risk_rank,\n\
+          \      p.risk_category,\n\n      CASE\n        WHEN p.fraud_score = 1\n\
+          \          THEN 'Random Forest predicted provider as suspicious'\n     \
+          \   ELSE 'Random Forest predicted provider as normal'\n      END AS reason,\n\
+          \n      CURRENT_TIMESTAMP() AS created_at,\n\n      p.reasons[SAFE_OFFSET(0)].feature_name\n\
+          \        AS reason_1,\n\n      p.reasons[SAFE_OFFSET(1)].feature_name\n\
+          \        AS reason_2,\n\n      p.reasons[SAFE_OFFSET(2)].feature_name\n\
+          \        AS reason_3\n\n    FROM reason_codes p\n    CROSS JOIN latest_run\
+          \ lr\n    \"\"\"\n\n\n    # ---------------------------------------------------------\n\
+          \    # 8. Print configuration\n    # ---------------------------------------------------------\n\
+          \    print(\"=\" * 60)\n    print(\"Post-processing Random Forest Predictions\"\
+          )\n    print(\"=\" * 60)\n\n    print(\n        f\"Project: \"\n       \
+          \ f\"{project_id}\"\n    )\n\n    print(\n        f\"Raw prediction table:\
+          \ \"\n        f\"{raw_prediction_table}\"\n    )\n\n    print(\n       \
+          \ f\"Feature table: \"\n        f\"{feature_table}\"\n    )\n\n    print(\n\
+          \        f\"Experiment runs table: \"\n        f\"{experiment_runs_table}\"\
+          \n    )\n\n    print(\n        f\"Output table: \"\n        f\"{output_table}\"\
+          \n    )\n\n    print(\"\\nFeatures used for reason codes:\")\n\n    for\
+          \ feature in feature_columns:\n        print(\n            f\"  - {feature}\"\
+          \n        )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 9. Execute post-processing\n    # ---------------------------------------------------------\n\
+          \    job = bq.query(\n        query\n    )\n\n    job.result()\n\n\n   \
+          \ # ---------------------------------------------------------\n    # 10.\
+          \ Success\n    # ---------------------------------------------------------\n\
+          \    print(\"\\n\" + \"=\" * 60)\n    print(\"Post-processing Completed\
+          \ Successfully\")\n    print(\"=\" * 60)\n\n    print(\n        f\"Curated\
+          \ prediction table: \"\n        f\"{output_table}\"\n    )\n\n"
+        image: python:3.11
+    exec-register-random-forest-model-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - register_random_forest_model_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef register_random_forest_model_component(\n    project_id: str,\n\
+          \    region: str,\n    model_display_name: str,\n    artifact_uri: str,\n\
+          \    serving_container_image_uri: str,\n) -> str:\n    from google.cloud\
+          \ import aiplatform\n\n    aiplatform.init(\n        project=project_id,\n\
+          \        location=region,\n    )\n\n    print(\"=\" * 60)\n    print(\"\
+          Registering Random Forest Model\")\n    print(\"=\" * 60)\n\n    print(\n\
+          \        f\"Project: \"\n        f\"{project_id}\"\n    )\n\n    print(\n\
+          \        f\"Region: \"\n        f\"{region}\"\n    )\n\n    print(\n   \
+          \     f\"Model display name: \"\n        f\"{model_display_name}\"\n   \
+          \ )\n\n    print(\n        f\"Artifact URI: \"\n        f\"{artifact_uri}\"\
+          \n    )\n\n    print(\n        f\"Serving container: \"\n        f\"{serving_container_image_uri}\"\
+          \n    )\n\n    model = aiplatform.Model.upload(\n        display_name=model_display_name,\n\
+          \        artifact_uri=artifact_uri,\n        serving_container_image_uri=serving_container_image_uri,\n\
+          \        sync=True,\n    )\n\n    print(\"\\nModel registered successfully.\"\
+          )\n\n    print(\n        f\"Model resource name: \"\n        f\"{model.resource_name}\"\
+          \n    )\n\n    return model.resource_name\n\n"
+        image: python:3.11
+    exec-run-random-forest-batch-prediction-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - run_random_forest_batch_prediction_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef run_random_forest_batch_prediction_component(\n    project_id:\
+          \ str,\n    region: str,\n    model_resource_name: str,\n    batch_input_table:\
+          \ str,\n    batch_output_dataset: str,\n    feature_columns_json: str,\n\
+          ) -> str:\n    import json\n    import time\n\n    from google.cloud import\
+          \ aiplatform_v1\n\n\n    # ---------------------------------------------------------\n\
+          \    # 1. Parse feature columns\n    # ---------------------------------------------------------\n\
+          \    feature_columns = json.loads(\n        feature_columns_json\n    )\n\
+          \n    if not feature_columns:\n        raise ValueError(\n            \"\
+          feature_columns_json is empty.\"\n        )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 2. Vertex AI client\n    # ---------------------------------------------------------\n\
+          \    client = (\n        aiplatform_v1.JobServiceClient(\n            client_options={\n\
+          \                \"api_endpoint\":\n                f\"{region}-aiplatform.googleapis.com\"\
+          \n            }\n        )\n    )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 3. BigQuery source\n    # ---------------------------------------------------------\n\
+          \    bigquery_source = (\n        aiplatform_v1.types.BigQuerySource(\n\
+          \            input_uri=(\n                f\"bq://{batch_input_table}\"\n\
+          \            )\n        )\n    )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 4. BigQuery destination\n    #\n    # batch_output_dataset should\
+          \ be:\n    # project.dataset\n    # ---------------------------------------------------------\n\
+          \    bigquery_destination = (\n        aiplatform_v1.types.BigQueryDestination(\n\
+          \            output_uri=(\n                f\"bq://{batch_output_dataset}\"\
+          \n            )\n        )\n    )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 5. Instance configuration\n    #\n    # Keep provider_id in the BigQuery\
+          \ source table,\n    # but send only configured model features to sklearn.\n\
+          \    # ---------------------------------------------------------\n    instance_config\
+          \ = (\n        aiplatform_v1.types.BatchPredictionJob.InstanceConfig(\n\
+          \            instance_type=\"array\",\n            included_fields=feature_columns,\n\
+          \        )\n    )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 6. Compute resources\n    # ---------------------------------------------------------\n\
+          \    dedicated_resources = (\n        aiplatform_v1.types.BatchDedicatedResources(\n\
+          \            machine_spec=(\n                aiplatform_v1.types.MachineSpec(\n\
+          \                    machine_type=\"n1-standard-2\"\n                )\n\
+          \            ),\n            starting_replica_count=1,\n            max_replica_count=1,\n\
+          \        )\n    )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 7. Create batch prediction job\n    # ---------------------------------------------------------\n\
+          \    batch_job = (\n        aiplatform_v1.types.BatchPredictionJob(\n  \
+          \          display_name=(\n                \"random-forest-provider-batch-prediction\"\
+          \n            ),\n            model=model_resource_name,\n\n           \
+          \ input_config=(\n                aiplatform_v1.types.BatchPredictionJob.InputConfig(\n\
+          \                    instances_format=\"bigquery\",\n                  \
+          \  bigquery_source=bigquery_source,\n                )\n            ),\n\
+          \n            output_config=(\n                aiplatform_v1.types.BatchPredictionJob.OutputConfig(\n\
+          \                    predictions_format=\"bigquery\",\n                \
+          \    bigquery_destination=bigquery_destination,\n                )\n   \
+          \         ),\n\n            instance_config=instance_config,\n\n       \
+          \     dedicated_resources=dedicated_resources,\n        )\n    )\n\n\n \
+          \   # ---------------------------------------------------------\n    # 8.\
+          \ Submit batch prediction job\n    # ---------------------------------------------------------\n\
+          \    parent = (\n        f\"projects/{project_id}/\"\n        f\"locations/{region}\"\
+          \n    )\n\n    response = client.create_batch_prediction_job(\n        parent=parent,\n\
+          \        batch_prediction_job=batch_job,\n    )\n\n    job_name = response.name\n\
+          \n    print(\"=\" * 60)\n    print(\"Random Forest Batch Prediction\")\n\
+          \    print(\"=\" * 60)\n\n    print(\n        f\"Batch job resource: \"\n\
+          \        f\"{job_name}\"\n    )\n\n    print(\n        f\"Model resource:\
+          \ \"\n        f\"{model_resource_name}\"\n    )\n\n    print(\n        f\"\
+          Input table: \"\n        f\"{batch_input_table}\"\n    )\n\n    print(\n\
+          \        f\"Output dataset: \"\n        f\"{batch_output_dataset}\"\n  \
+          \  )\n\n    print(\n        \"Features sent to model:\"\n    )\n\n    for\
+          \ feature in feature_columns:\n        print(\n            f\"  - {feature}\"\
+          \n        )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 9. Wait for batch prediction to finish\n    # ---------------------------------------------------------\n\
+          \    terminal_states = {\n        aiplatform_v1.types.JobState.JOB_STATE_SUCCEEDED,\n\
+          \        aiplatform_v1.types.JobState.JOB_STATE_FAILED,\n        aiplatform_v1.types.JobState.JOB_STATE_CANCELLED,\n\
+          \        aiplatform_v1.types.JobState.JOB_STATE_EXPIRED,\n    }\n\n    while\
+          \ True:\n        job = client.get_batch_prediction_job(\n            name=job_name\n\
+          \        )\n\n        print(\n            f\"Batch prediction state: \"\n\
+          \            f\"{job.state.name}\"\n        )\n\n        if job.state in\
+          \ terminal_states:\n            break\n\n        time.sleep(30)\n\n\n  \
+          \  # ---------------------------------------------------------\n    # 10.\
+          \ Validate job result\n    # ---------------------------------------------------------\n\
+          \    if (\n        job.state\n        != aiplatform_v1.types.JobState.JOB_STATE_SUCCEEDED\n\
+          \    ):\n        raise RuntimeError(\n            \"Batch prediction failed.\
+          \ \"\n            f\"State: {job.state.name}. \"\n            f\"Error:\
+          \ {job.error}\"\n        )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 11. Get raw BigQuery prediction table\n    # ---------------------------------------------------------\n\
+          \    raw_prediction_table = (\n        job.output_info.bigquery_output_table\n\
+          \    )\n\n    if not raw_prediction_table:\n        raise RuntimeError(\n\
+          \            \"Batch prediction succeeded, but Vertex \"\n            \"\
+          did not return a BigQuery output table.\"\n        )\n\n\n    print(\n \
+          \       \"\\nVertex returned raw output table:\"\n    )\n\n    print(\n\
+          \        raw_prediction_table\n    )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 12. Normalize output table name\n    #\n    # Possible Vertex responses:\n\
+          \    #\n    #   predictions_xxx\n    #\n    #   fraud_experiments.predictions_xxx\n\
+          \    #\n    #   fwa-mlops-accelerator-demo.\n    #       fraud_experiments.predictions_xxx\n\
+          \    #\n    # Downstream BigQuery SQL requires:\n    #\n    #   project.dataset.table\n\
+          \    # ---------------------------------------------------------\n    raw_prediction_table\
+          \ = (\n        raw_prediction_table\n        .replace(\"bq://\", \"\")\n\
+          \        .replace(\"bigquery://\", \"\")\n        .strip()\n    )\n\n  \
+          \  table_parts = (\n        raw_prediction_table.split(\".\")\n    )\n\n\
+          \n    # Vertex returned only:\n    # predictions_xxx\n    if len(table_parts)\
+          \ == 1:\n\n        normalized_prediction_table = (\n            f\"{batch_output_dataset}.\"\
+          \n            f\"{raw_prediction_table}\"\n        )\n\n\n    # Vertex returned:\n\
+          \    # dataset.predictions_xxx\n    elif len(table_parts) == 2:\n\n    \
+          \    normalized_prediction_table = (\n            f\"{project_id}.\"\n \
+          \           f\"{raw_prediction_table}\"\n        )\n\n\n    # Vertex already\
+          \ returned:\n    # project.dataset.table\n    elif len(table_parts) == 3:\n\
+          \n        normalized_prediction_table = (\n            raw_prediction_table\n\
+          \        )\n\n\n    else:\n        raise ValueError(\n            \"Unexpected\
+          \ BigQuery prediction table \"\n            f\"format returned by Vertex:\
+          \ \"\n            f\"{raw_prediction_table}\"\n        )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 13. Final validation\n    # ---------------------------------------------------------\n\
+          \    normalized_parts = (\n        normalized_prediction_table.split(\"\
+          .\")\n    )\n\n    if len(normalized_parts) != 3:\n        raise ValueError(\n\
+          \            \"Prediction table is not fully qualified: \"\n           \
+          \ f\"{normalized_prediction_table}\"\n        )\n\n\n    print(\n      \
+          \  \"\\nFully qualified prediction table:\"\n    )\n\n    print(\n     \
+          \   normalized_prediction_table\n    )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 14. Return fully qualified table to post-processing\n    # ---------------------------------------------------------\n\
+          \    return normalized_prediction_table\n\n"
+        image: python:3.11
+    exec-run-random-forest-monitoring-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - run_random_forest_monitoring_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef run_random_forest_monitoring_component(\n    project_id: str,\n\
+          \    feature_table: str,\n    batch_input_table: str,\n    provider_prediction_table:\
+          \ str,\n    feature_columns_json: str,\n    data_quality_table: str,\n \
+          \   feature_drift_table: str,\n    prediction_drift_table: str,\n    feature_shift_threshold:\
+          \ float,\n    prediction_shift_threshold: float,\n    baseline_positive_rate:\
+          \ float,\n):\n    import json\n    import re\n\n    from google.cloud import\
+          \ bigquery\n\n\n    # ---------------------------------------------------------\n\
+          \    # 1. Parse feature configuration\n    # ---------------------------------------------------------\n\
+          \    feature_columns = json.loads(\n        feature_columns_json\n    )\n\
+          \n    if not feature_columns:\n        raise ValueError(\n            \"\
+          feature_columns_json cannot be empty.\"\n        )\n\n\n    # ---------------------------------------------------------\n\
+          \    # 2. Validate feature names\n    # ---------------------------------------------------------\n\
+          \    valid_column_pattern = re.compile(\n        r\"^[A-Za-z_][A-Za-z0-9_]*$\"\
+          \n    )\n\n    invalid_features = [\n        feature\n        for feature\
+          \ in feature_columns\n        if not valid_column_pattern.match(feature)\n\
+          \    ]\n\n    if invalid_features:\n        raise ValueError(\n        \
+          \    f\"Invalid feature names: {invalid_features}\"\n        )\n\n\n   \
+          \ # ---------------------------------------------------------\n    # 3.\
+          \ Create BigQuery client\n    # ---------------------------------------------------------\n\
+          \    bq = bigquery.Client(\n        project=project_id\n    )\n\n\n    print(\"\
+          =\" * 60)\n    print(\"Random Forest Monitoring\")\n    print(\"=\" * 60)\n\
+          \n    print(\n        f\"Feature table: \"\n        f\"{feature_table}\"\
+          \n    )\n\n    print(\n        f\"Batch input table: \"\n        f\"{batch_input_table}\"\
+          \n    )\n\n    print(\n        f\"Prediction table: \"\n        f\"{provider_prediction_table}\"\
+          \n    )\n\n    print(\n        f\"Feature shift threshold: \"\n        f\"\
+          {feature_shift_threshold:.2%}\"\n    )\n\n    print(\n        f\"Prediction\
+          \ shift threshold: \"\n        f\"{prediction_shift_threshold:.2%}\"\n \
+          \   )\n\n    print(\"\\nFeatures:\")\n\n    for feature in feature_columns:\n\
+          \        print(\n            f\"  - {feature}\"\n        )\n\n\n    # =========================================================\n\
+          \    # A. DATA QUALITY\n    #\n    # No row-count or unique-provider-count\
+          \ checks.\n    #\n    # We only check:\n    #   1. feature NULLs\n    #\
+          \   2. duplicate provider IDs\n    # =========================================================\n\
+          \n    null_count_expressions = [\n        f\"COUNTIF(`{feature}` IS NULL)\"\
+          \n        for feature in feature_columns\n    ]\n\n    total_null_expression\
+          \ = \" + \".join(\n        null_count_expressions\n    )\n\n\n    data_quality_query\
+          \ = f\"\"\"\n    CREATE OR REPLACE TABLE `{data_quality_table}` AS\n\n \
+          \   WITH null_summary AS (\n      SELECT\n        {total_null_expression}\n\
+          \          AS total_feature_null_count\n\n      FROM `{batch_input_table}`\n\
+          \    ),\n\n    duplicate_summary AS (\n      SELECT\n        COUNT(*) AS\
+          \ duplicate_provider_count\n\n      FROM (\n        SELECT\n          provider_id\n\
+          \n        FROM `{batch_input_table}`\n\n        GROUP BY\n          provider_id\n\
+          \n        HAVING\n          COUNT(*) > 1\n      )\n    )\n\n    SELECT\n\
+          \      CURRENT_TIMESTAMP()\n        AS monitoring_timestamp,\n\n      'random_forest'\n\
+          \        AS model_name,\n\n      n.total_feature_null_count,\n\n      d.duplicate_provider_count,\n\
+          \n      CASE\n        WHEN n.total_feature_null_count > 0\n          THEN\
+          \ 'ALERT'\n\n        WHEN d.duplicate_provider_count > 0\n          THEN\
+          \ 'ALERT'\n\n        ELSE 'PASS'\n      END AS monitoring_status\n\n   \
+          \ FROM null_summary n\n    CROSS JOIN duplicate_summary d\n    \"\"\"\n\n\
+          \n    print(\n        \"\\nRunning data quality monitoring...\"\n    )\n\
+          \n    bq.query(\n        data_quality_query\n    ).result()\n\n    print(\n\
+          \        f\"Data quality results written to: \"\n        f\"{data_quality_table}\"\
+          \n    )\n\n\n    # =========================================================\n\
+          \    # B. FEATURE DRIFT\n    #\n    # Relative mean shift:\n    #\n    #\
+          \ |current_mean - baseline_mean|\n    # --------------------------------\n\
+          \    #       |baseline_mean|\n    #\n    # Example:\n    #\n    # TRAIN\
+          \ mean = 0.50\n    # Current mean = 0.56\n    #\n    # shift = 0.06 / 0.50\n\
+          \    #       = 12%\n    #\n    # > 10% => ALERT\n    # =========================================================\n\
+          \n    feature_drift_queries = []\n\n\n    for feature in feature_columns:\n\
+          \n        feature_query = f\"\"\"\n        SELECT\n          '{feature}'\n\
+          \            AS feature_name,\n\n          baseline_mean,\n\n          current_mean,\n\
+          \n          CASE\n            WHEN baseline_mean = 0\n              AND\
+          \ current_mean = 0\n              THEN 0.0\n\n            WHEN baseline_mean\
+          \ = 0\n              THEN 1.0\n\n            ELSE SAFE_DIVIDE(\n       \
+          \       ABS(\n                current_mean\n                - baseline_mean\n\
+          \              ),\n              ABS(\n                baseline_mean\n \
+          \             )\n            )\n          END AS relative_mean_shift\n\n\
+          \        FROM (\n          SELECT\n\n            (\n              SELECT\n\
+          \                AVG(`{feature}`)\n\n              FROM `{feature_table}`\n\
+          \n              WHERE\n                dataset_split = 'TRAIN'\n       \
+          \     ) AS baseline_mean,\n\n            (\n              SELECT\n     \
+          \           AVG(`{feature}`)\n\n              FROM `{batch_input_table}`\n\
+          \            ) AS current_mean\n        )\n        \"\"\"\n\n        feature_drift_queries.append(\n\
+          \            feature_query\n        )\n\n\n    feature_drift_union = (\n\
+          \        \"\\nUNION ALL\\n\".join(\n            feature_drift_queries\n\
+          \        )\n    )\n\n\n    feature_drift_query = f\"\"\"\n    CREATE OR\
+          \ REPLACE TABLE `{feature_drift_table}` AS\n\n    WITH drift AS (\n\n  \
+          \    {feature_drift_union}\n\n    )\n\n    SELECT\n      CURRENT_TIMESTAMP()\n\
+          \        AS monitoring_timestamp,\n\n      'random_forest'\n        AS model_name,\n\
+          \n      feature_name,\n\n      baseline_mean,\n\n      current_mean,\n\n\
+          \      relative_mean_shift,\n\n      {feature_shift_threshold}\n       \
+          \ AS alert_threshold,\n\n      CASE\n        WHEN relative_mean_shift\n\
+          \             > {feature_shift_threshold}\n          THEN 'ALERT'\n\n  \
+          \      ELSE 'PASS'\n      END AS monitoring_status\n\n    FROM drift\n\n\
+          \    ORDER BY\n      relative_mean_shift DESC\n    \"\"\"\n\n\n    print(\n\
+          \        \"\\nRunning feature drift monitoring...\"\n    )\n\n    bq.query(\n\
+          \        feature_drift_query\n    ).result()\n\n    print(\n        f\"\
+          Feature drift results written to: \"\n        f\"{feature_drift_table}\"\
+          \n    )\n\n\n    # =========================================================\n\
+          \    # C. PREDICTION DRIFT\n    #\n    # Absolute positive-rate shift:\n\
+          \    #\n    # |current positive rate - baseline positive rate|\n    #\n\
+          \    # Example:\n    #\n    # baseline = 10%\n    # current  = 23%\n   \
+          \ #\n    # shift = 13 percentage points\n    #\n    # > 10% => ALERT\n \
+          \   # =========================================================\n\n    prediction_drift_query\
+          \ = f\"\"\"\n    CREATE OR REPLACE TABLE `{prediction_drift_table}` AS\n\
+          \n    WITH prediction_summary AS (\n\n      SELECT\n        AVG(\n     \
+          \     CASE\n            WHEN fraud_score = 1.0\n              THEN 1.0\n\
+          \            ELSE 0.0\n          END\n        ) AS current_positive_rate\n\
+          \n      FROM `{provider_prediction_table}`\n    )\n\n    SELECT\n      CURRENT_TIMESTAMP()\n\
+          \        AS monitoring_timestamp,\n\n      'random_forest'\n        AS model_name,\n\
+          \n      {baseline_positive_rate}\n        AS baseline_positive_rate,\n\n\
+          \      current_positive_rate,\n\n      ABS(\n        current_positive_rate\n\
+          \        - {baseline_positive_rate}\n      ) AS prediction_rate_shift,\n\
+          \n      {prediction_shift_threshold}\n        AS alert_threshold,\n\n  \
+          \    CASE\n        WHEN ABS(\n          current_positive_rate\n        \
+          \  - {baseline_positive_rate}\n        ) > {prediction_shift_threshold}\n\
+          \          THEN 'ALERT'\n\n        ELSE 'PASS'\n      END AS monitoring_status\n\
+          \n    FROM prediction_summary\n    \"\"\"\n\n\n    print(\n        \"\\\
+          nRunning prediction drift monitoring...\"\n    )\n\n    bq.query(\n    \
+          \    prediction_drift_query\n    ).result()\n\n    print(\n        f\"Prediction\
+          \ drift results written to: \"\n        f\"{prediction_drift_table}\"\n\
+          \    )\n\n\n    # =========================================================\n\
+          \    # D. MONITORING SUMMARY\n    # =========================================================\n\
+          \n    data_quality_result = list(\n        bq.query(\n            f\"\"\"\
+          \n            SELECT\n              monitoring_status\n\n            FROM\
+          \ `{data_quality_table}`\n            \"\"\"\n        ).result()\n    )[0]\n\
+          \n\n    feature_drift_result = list(\n        bq.query(\n            f\"\
+          \"\"\n            SELECT\n              COUNTIF(\n                monitoring_status\
+          \ = 'ALERT'\n              ) AS alert_features\n\n            FROM `{feature_drift_table}`\n\
+          \            \"\"\"\n        ).result()\n    )[0]\n\n\n    prediction_drift_result\
+          \ = list(\n        bq.query(\n            f\"\"\"\n            SELECT\n\
+          \              monitoring_status\n\n            FROM `{prediction_drift_table}`\n\
+          \            \"\"\"\n        ).result()\n    )[0]\n\n\n    print(\"\\n\"\
+          \ + \"=\" * 60)\n    print(\"Monitoring Summary\")\n    print(\"=\" * 60)\n\
+          \n    print(\n        \"Data Quality: \"\n        f\"{data_quality_result.monitoring_status}\"\
+          \n    )\n\n    print(\n        \"Feature Drift: \"\n        f\"{feature_drift_result.alert_features}\
+          \ \"\n        \"feature(s) above threshold\"\n    )\n\n    print(\n    \
+          \    \"Prediction Drift: \"\n        f\"{prediction_drift_result.monitoring_status}\"\
+          \n    )\n\n\n    # ---------------------------------------------------------\n\
+          \    # Overall status\n    # ---------------------------------------------------------\n\
+          \    overall_alert = (\n        data_quality_result.monitoring_status\n\
+          \        == \"ALERT\"\n\n        or feature_drift_result.alert_features\n\
+          \        > 0\n\n        or prediction_drift_result.monitoring_status\n \
+          \       == \"ALERT\"\n    )\n\n\n    if overall_alert:\n        print(\n\
+          \            \"\\nOVERALL MONITORING STATUS: ALERT\"\n        )\n    else:\n\
+          \        print(\n            \"\\nOVERALL MONITORING STATUS: PASS\"\n  \
+          \      )\n\n\n    print(\"\\n\" + \"=\" * 60)\n    print(\"Random Forest\
+          \ Monitoring Completed\")\n    print(\"=\" * 60)\n\n"
+        image: python:3.11
+    exec-train-random-forest-component:
+      container:
+        args:
+        - --project-id
+        - '{{$.inputs.parameters[''project_id'']}}'
+        - --feature-table
+        - '{{$.inputs.parameters[''feature_table'']}}'
+        - --feedback-table
+        - '{{$.inputs.parameters[''feedback_table'']}}'
+        - --feature-columns
+        - '{{$.inputs.parameters[''feature_columns_json'']}}'
+        - --model-output-uri
+        - '{{$.inputs.parameters[''model_output_uri'']}}'
+        image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:v1
+pipelineInfo:
+  name: random-forest-fraud-training-pipeline
+root:
+  dag:
+    tasks:
+      check-retraining-decision-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-check-retraining-decision-component
+        dependentTasks:
+        - run-random-forest-monitoring-component
+        inputs:
+          parameters:
+            current_data_month:
+              componentInputParameter: current_data_month
+            data_quality_table:
+              componentInputParameter: data_quality_table
+            feature_drift_table:
+              componentInputParameter: feature_drift_table
+            prediction_drift_table:
+              componentInputParameter: prediction_drift_table
+            project_id:
+              componentInputParameter: project_id
+            training_state_table:
+              componentInputParameter: training_state_table
+        taskInfo:
+          name: check-retraining-decision-component
+      postprocess-random-forest-predictions-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-postprocess-random-forest-predictions-component
+        dependentTasks:
+        - run-random-forest-batch-prediction-component
+        inputs:
+          parameters:
+            experiment_runs_table:
+              componentInputParameter: experiment_runs_table
+            feature_columns_json:
+              componentInputParameter: feature_columns_json
+            feature_table:
+              componentInputParameter: feature_table
+            output_table:
+              componentInputParameter: provider_prediction_table
+            project_id:
+              componentInputParameter: project_id
+            raw_prediction_table:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: run-random-forest-batch-prediction-component
+        taskInfo:
+          name: postprocess-random-forest-predictions-component
+      register-random-forest-model-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-register-random-forest-model-component
+        dependentTasks:
+        - train-random-forest-component
+        inputs:
+          parameters:
+            artifact_uri:
+              componentInputParameter: model_artifact_uri
+            model_display_name:
+              componentInputParameter: model_display_name
+            project_id:
+              componentInputParameter: project_id
+            region:
+              componentInputParameter: region
+            serving_container_image_uri:
+              componentInputParameter: serving_container_image_uri
+        taskInfo:
+          name: register-random-forest-model-component
+      run-random-forest-batch-prediction-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-run-random-forest-batch-prediction-component
+        dependentTasks:
+        - register-random-forest-model-component
+        inputs:
+          parameters:
+            batch_input_table:
+              componentInputParameter: batch_input_table
+            batch_output_dataset:
+              componentInputParameter: batch_output_dataset
+            feature_columns_json:
+              componentInputParameter: feature_columns_json
+            model_resource_name:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: register-random-forest-model-component
+            project_id:
+              componentInputParameter: project_id
+            region:
+              componentInputParameter: region
+        taskInfo:
+          name: run-random-forest-batch-prediction-component
+      run-random-forest-monitoring-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-run-random-forest-monitoring-component
+        dependentTasks:
+        - postprocess-random-forest-predictions-component
+        inputs:
+          parameters:
+            baseline_positive_rate:
+              componentInputParameter: baseline_positive_rate
+            batch_input_table:
+              componentInputParameter: batch_input_table
+            data_quality_table:
+              componentInputParameter: data_quality_table
+            feature_columns_json:
+              componentInputParameter: feature_columns_json
+            feature_drift_table:
+              componentInputParameter: feature_drift_table
+            feature_shift_threshold:
+              componentInputParameter: feature_shift_threshold
+            feature_table:
+              componentInputParameter: feature_table
+            prediction_drift_table:
+              componentInputParameter: prediction_drift_table
+            prediction_shift_threshold:
+              componentInputParameter: prediction_shift_threshold
+            project_id:
+              componentInputParameter: project_id
+            provider_prediction_table:
+              componentInputParameter: provider_prediction_table
+        taskInfo:
+          name: run-random-forest-monitoring-component
+      train-random-forest-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-random-forest-component
+        inputs:
+          parameters:
+            feature_columns_json:
+              componentInputParameter: feature_columns_json
+            feature_table:
+              componentInputParameter: feature_table
+            feedback_table:
+              componentInputParameter: feedback_table
+            model_output_uri:
+              componentInputParameter: model_output_uri
+            project_id:
+              componentInputParameter: project_id
+        taskInfo:
+          name: train-random-forest-component
+  inputDefinitions:
+    parameters:
+      baseline_positive_rate:
+        parameterType: NUMBER_DOUBLE
+      batch_input_table:
+        parameterType: STRING
+      batch_output_dataset:
+        parameterType: STRING
+      current_data_month:
+        parameterType: STRING
+      data_quality_table:
+        parameterType: STRING
+      experiment_runs_table:
+        parameterType: STRING
+      feature_columns_json:
+        parameterType: STRING
+      feature_drift_table:
+        parameterType: STRING
+      feature_shift_threshold:
+        parameterType: NUMBER_DOUBLE
+      feature_table:
+        parameterType: STRING
+      feedback_table:
+        parameterType: STRING
+      model_artifact_uri:
+        parameterType: STRING
+      model_display_name:
+        parameterType: STRING
+      model_output_uri:
+        parameterType: STRING
+      prediction_drift_table:
+        parameterType: STRING
+      prediction_shift_threshold:
+        parameterType: NUMBER_DOUBLE
+      project_id:
+        parameterType: STRING
+      provider_prediction_table:
+        parameterType: STRING
+      region:
+        parameterType: STRING
+      serving_container_image_uri:
+        parameterType: STRING
+      training_state_table:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0

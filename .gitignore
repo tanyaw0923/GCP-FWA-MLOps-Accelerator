@@ -1,14 +1,10 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-.pytest_cache/
-.mypy_cache/
 
 # Virtual environments
 .venv/
 venv/
-env/
 
 # IDE
 .vscode/
@@ -16,38 +12,21 @@ env/
 
 # OS
 .DS_Store
-Thumbs.db
 
-# Local model artifacts
-model_artifacts/
-src/models/model_artifacts/
-*.joblib
-*.bst
-*.pkl
+# Temporary Docker build file
+Dockerfile
 
-# Generated datasets/results
-src/data/*.csv
-*.parquet
-
-# Generated Vertex/KFP pipeline specs
-src/config/random_forest_training_pipeline.yaml
-src/config/random_forest_downstream_qa_pipeline.yaml
-
-# Logs/temp
+# Logs / temp files
 *.log
 *.tmp
 *.bak
 
-# Credentials / secrets
-*.json
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment files
 .env
 .env.*
-!package.json
-!tsconfig.json
 
-# Python cache
-__pycache__/
-*.pyc
-
-# Local temporary Dockerfile
-Dockerfile
+# Generated synthetic data
+synthetic_claims.csv

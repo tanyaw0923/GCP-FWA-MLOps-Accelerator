@@ -53,9 +53,8 @@ feature_sql:
   referral_rate: "AVG(CAST(is_referral AS FLOAT64))"
   eye_procedure_pct: "AVG(CAST(is_eye_procedure AS FLOAT64))"
   avg_paid_per_claim: "AVG(total_paid_amount)"
-
   # Use Case 2:
-  # avg_member_provider_distance: "AVG(member_provider_distance)"
+  avg_member_provider_distance: "AVG(member_provider_distance)"
 
 
 # ============================================================
@@ -78,9 +77,8 @@ features:
   - eye_procedure_pct
   - avg_paid_per_claim
   - high_acuity_oe_ratio
-
   # Use Case 2:
-  # - avg_member_provider_distance
+  - avg_member_provider_distance
 
 
 # ============================================================

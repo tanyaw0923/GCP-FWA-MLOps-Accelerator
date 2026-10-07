@@ -12,54 +12,31 @@ def mark_candidate_pending_component(
     training_state_table: str,
     current_data_month: str,
     candidate_model_resource: str,
+    candidate_feature_signature: str,
     model_name: str = "random_forest",
 ):
-    from datetime import date
-
     from google.cloud import bigquery
 
-    client = bigquery.Client(
-        project=project_id
-    )
+    bq = bigquery.Client(project=project_id)
 
-    current_data_month_date = (
-        date.fromisoformat(
-            current_data_month
-        )
-    )
-
-    # ---------------------------------------------------------
-    # Store candidate information without updating
-    # last_training_data_month.
-    #
-    # The month is considered accepted only after the model
-    # receives manual production approval.
-    # ---------------------------------------------------------
     query = f"""
     MERGE `{training_state_table}` AS target
-
     USING (
       SELECT
-        @model_name AS model_name
+        @model_name AS model_name,
+        DATE(@current_data_month) AS candidate_data_month,
+        @candidate_model_resource AS candidate_model_resource,
+        @candidate_feature_signature AS candidate_feature_signature
     ) AS source
-
-    ON
-      target.model_name
-      = source.model_name
+    ON target.model_name = source.model_name
 
     WHEN MATCHED THEN
       UPDATE SET
-        candidate_status =
-          'PENDING_APPROVAL',
-
-        candidate_model_resource =
-          @candidate_model_resource,
-
-        candidate_data_month =
-          @current_data_month,
-
-        candidate_created_at =
-          CURRENT_TIMESTAMP()
+        candidate_status = 'PENDING_APPROVAL',
+        candidate_model_resource = source.candidate_model_resource,
+        candidate_data_month = source.candidate_data_month,
+        candidate_feature_signature = source.candidate_feature_signature,
+        candidate_created_at = CURRENT_TIMESTAMP()
 
     WHEN NOT MATCHED THEN
       INSERT (
@@ -67,48 +44,52 @@ def mark_candidate_pending_component(
         candidate_status,
         candidate_model_resource,
         candidate_data_month,
+        candidate_feature_signature,
         candidate_created_at
       )
-
       VALUES (
-        @model_name,
+        source.model_name,
         'PENDING_APPROVAL',
-        @candidate_model_resource,
-        @current_data_month,
+        source.candidate_model_resource,
+        source.candidate_data_month,
+        source.candidate_feature_signature,
         CURRENT_TIMESTAMP()
       )
     """
 
-    job_config = (
-        bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter(
-                    "model_name",
-                    "STRING",
-                    model_name,
-                ),
-                bigquery.ScalarQueryParameter(
-                    "candidate_model_resource",
-                    "STRING",
-                    candidate_model_resource,
-                ),
-                bigquery.ScalarQueryParameter(
-                    "current_data_month",
-                    "DATE",
-                    current_data_month_date,
-                ),
-            ]
-        )
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter(
+                "model_name",
+                "STRING",
+                model_name,
+            ),
+            bigquery.ScalarQueryParameter(
+                "current_data_month",
+                "STRING",
+                current_data_month,
+            ),
+            bigquery.ScalarQueryParameter(
+                "candidate_model_resource",
+                "STRING",
+                candidate_model_resource,
+            ),
+            bigquery.ScalarQueryParameter(
+                "candidate_feature_signature",
+                "STRING",
+                candidate_feature_signature,
+            ),
+        ]
     )
 
-    client.query(
+    bq.query(
         query,
         job_config=job_config,
     ).result()
 
-    print("=" * 60)
-    print("Candidate Model Ready")
-    print("=" * 60)
+    print("=" * 70)
+    print("Candidate Model Pending Approval")
+    print("=" * 70)
 
     print(
         f"Model: "
@@ -121,15 +102,21 @@ def mark_candidate_pending_component(
     )
 
     print(
-        f"Candidate resource: "
+        f"Candidate model resource: "
         f"{candidate_model_resource}"
     )
 
     print(
-        "\nStatus: "
+        f"Candidate feature signature: "
+        f"{candidate_feature_signature}"
+    )
+
+    print(
+        "Candidate status: "
         "PENDING_APPROVAL"
     )
 
     print(
-        "Production model remains unchanged."
+        "\nApproved production state "
+        "has not been changed."
     )

@@ -10,6 +10,7 @@ from kfp import dsl
 def check_retraining_decision_component(
     project_id: str,
     current_data_month: str,
+    current_feature_signature: str,
     data_quality_table: str,
     feature_drift_table: str,
     prediction_drift_table: str,
@@ -21,7 +22,7 @@ def check_retraining_decision_component(
     bq = bigquery.Client(project=project_id)
 
     # ---------------------------------------------------------
-    # 1. Data Quality trigger
+    # 1. Data quality trigger
     # ---------------------------------------------------------
     data_quality_query = f"""
     SELECT
@@ -31,37 +32,48 @@ def check_retraining_decision_component(
     LIMIT 1
     """
 
-    data_quality_result = list(
+    data_quality_rows = list(
         bq.query(data_quality_query).result()
     )
 
     data_quality_status = (
-        data_quality_result[0].monitoring_status
-        if data_quality_result
+        data_quality_rows[0].monitoring_status
+        if data_quality_rows
         else "PASS"
     )
 
     # ---------------------------------------------------------
-    # 2. Feature Drift trigger
+    # 2. Feature drift trigger
+    #
+    # Only evaluate the most recent monitoring run.
+    # Historical alerts should not trigger retraining forever.
     # ---------------------------------------------------------
     feature_drift_query = f"""
     SELECT
       COUNTIF(monitoring_status = 'ALERT') AS alert_count
     FROM `{feature_drift_table}`
+    WHERE monitoring_timestamp = (
+      SELECT MAX(monitoring_timestamp)
+      FROM `{feature_drift_table}`
+    )
     """
 
-    feature_drift_result = list(
+    feature_drift_rows = list(
         bq.query(feature_drift_query).result()
     )
 
     feature_alert_count = (
-        feature_drift_result[0].alert_count
-        if feature_drift_result
+        feature_drift_rows[0].alert_count
+        if feature_drift_rows
         else 0
     )
 
     # ---------------------------------------------------------
-    # 3. Prediction Drift trigger
+    # 3. Prediction drift trigger
+    #
+    # prediction_drift uses:
+    #   status
+    #   check_date
     # ---------------------------------------------------------
     prediction_drift_query = f"""
     SELECT
@@ -71,45 +83,52 @@ def check_retraining_decision_component(
     LIMIT 1
     """
 
-    prediction_drift_result = list(
+    prediction_drift_rows = list(
         bq.query(prediction_drift_query).result()
     )
 
     prediction_drift_status = (
-        prediction_drift_result[0].status
-        if prediction_drift_result
+        prediction_drift_rows[0].status
+        if prediction_drift_rows
         else "PASS"
     )
 
     # ---------------------------------------------------------
-    # 4. New Month Data trigger
-    #
-    # current_data_month comes from pipeline_config.yaml.
-    # Example:
-    #   current_data_month: "2026-09-01"
-    #
-    # Compare it with the last month already used for training.
+    # 4. Read current approved training state
     # ---------------------------------------------------------
-    current_data_month_date = date.fromisoformat(
-        current_data_month
-    )
-
     training_state_query = f"""
     SELECT
-      MAX(last_training_data_month)
-        AS last_training_data_month
+      last_training_data_month,
+      approved_feature_signature
     FROM `{training_state_table}`
     WHERE model_name = 'random_forest'
+    LIMIT 1
     """
 
-    training_state_result = list(
+    training_state_rows = list(
         bq.query(training_state_query).result()
     )
 
-    last_training_data_month = (
-        training_state_result[0].last_training_data_month
-        if training_state_result
-        else None
+    if training_state_rows:
+        state = training_state_rows[0]
+
+        last_training_data_month = (
+            state.last_training_data_month
+        )
+
+        approved_feature_signature = (
+            state.approved_feature_signature
+        )
+    else:
+        last_training_data_month = None
+        approved_feature_signature = None
+
+    # ---------------------------------------------------------
+    # 5. Use Case 1:
+    # New monthly data triggers retraining
+    # ---------------------------------------------------------
+    current_data_month_date = date.fromisoformat(
+        current_data_month
     )
 
     new_month_available = (
@@ -119,17 +138,31 @@ def check_retraining_decision_component(
     )
 
     # ---------------------------------------------------------
-    # 5. Final retraining decision
+    # 6. Use Case 2:
+    # A new feature configuration triggers retraining
+    #
+    # NULL approved signature is treated as initialization,
+    # not as a feature change.
+    # ---------------------------------------------------------
+    feature_set_changed = (
+        approved_feature_signature is not None
+        and current_feature_signature
+        != approved_feature_signature
+    )
+
+    # ---------------------------------------------------------
+    # 7. Final retraining decision
     # ---------------------------------------------------------
     should_retrain = (
         data_quality_status == "ALERT"
         or feature_alert_count > 0
         or prediction_drift_status == "ALERT"
         or new_month_available
+        or feature_set_changed
     )
 
     # ---------------------------------------------------------
-    # 6. Collect retraining reasons
+    # 8. Collect retraining reasons
     # ---------------------------------------------------------
     reasons = []
 
@@ -153,12 +186,17 @@ def check_retraining_decision_component(
             "new_month_data"
         )
 
+    if feature_set_changed:
+        reasons.append(
+            "feature_set_changed"
+        )
+
     # ---------------------------------------------------------
-    # 7. Print decision summary
+    # 9. Print decision summary
     # ---------------------------------------------------------
-    print("=" * 60)
+    print("=" * 70)
     print("Random Forest Retraining Decision")
-    print("=" * 60)
+    print("=" * 70)
 
     print(
         f"Data Quality Status: "
@@ -175,6 +213,8 @@ def check_retraining_decision_component(
         f"{prediction_drift_status}"
     )
 
+    print("-" * 70)
+
     print(
         f"Current Data Month: "
         f"{current_data_month_date}"
@@ -190,7 +230,24 @@ def check_retraining_decision_component(
         f"{new_month_available}"
     )
 
-    print("-" * 60)
+    print("-" * 70)
+
+    print(
+        "Approved Feature Signature: "
+        f"{approved_feature_signature}"
+    )
+
+    print(
+        "Current Feature Signature: "
+        f"{current_feature_signature}"
+    )
+
+    print(
+        f"Feature Set Changed: "
+        f"{feature_set_changed}"
+    )
+
+    print("-" * 70)
 
     print(
         f"Should Retrain: "
@@ -198,19 +255,15 @@ def check_retraining_decision_component(
     )
 
     if reasons:
-        print(
-            "\nRetraining trigger(s):"
-        )
+        print("\nRetraining trigger(s):")
 
         for reason in reasons:
             print(
                 f"  - {reason}"
             )
-
     else:
         print(
             "\nNo retraining triggers detected."
         )
 
     return should_retrain
-
