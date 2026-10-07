@@ -34,7 +34,7 @@ Then Data scientists customize:
 - modeling techniques
 - hyperparameters
 
-## Project Structure
+## Repo Structure
 ```text 
 fwa-fraud-mlops-accelerator/
 ├── .gitignore
