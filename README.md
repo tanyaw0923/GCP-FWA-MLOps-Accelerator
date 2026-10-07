@@ -6,7 +6,7 @@ New Feature Available: member_provider_distance
 → feature_set_changed = True
 → retraining triggered
 
-[Everything Else Remains the Same]
+**[Everything Else Remains the Same]**
 
 → TRAIN window [6 months] = 2026-02-01 to 2026-07-31
 
