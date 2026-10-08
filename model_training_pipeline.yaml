@@ -1,8 +1,11 @@
 # PIPELINE DEFINITION
-# Name: random-forest-fraud-training-pipeline
+# Name: fraud-model-training
+# Description: Reusable provider-level fraud detection pipeline supporting Random Forest and XGBoost with shared feature engineering, retraining logic, model registration, and manual approval.
 # Inputs:
 #    claims_table: str
 #    current_data_month: str
+#    current_feature_signature: str
+#    current_model_signature: str
 #    data_quality_table: str
 #    derived_feature_sql_json: str
 #    feature_columns_json: str
@@ -11,11 +14,15 @@
 #    feature_table: str
 #    model_artifact_uri: str
 #    model_display_name: str
+#    model_name: str
 #    model_output_uri: str
+#    model_parameters_json: str
+#    model_type: str
 #    prediction_drift_table: str
 #    project_id: str
 #    region: str
 #    serving_container_image_uri: str
+#    state_key: str [Default: 'provider_fraud_model_rf']
 #    testing_months: int
 #    training_months: int
 #    training_state_table: str
@@ -46,6 +53,12 @@ components:
       parameters:
         current_data_month:
           parameterType: STRING
+        current_feature_signature:
+          parameterType: STRING
+        current_model_signature:
+          parameterType: STRING
+        current_model_type:
+          parameterType: STRING
         data_quality_table:
           parameterType: STRING
         feature_drift_table:
@@ -53,6 +66,10 @@ components:
         prediction_drift_table:
           parameterType: STRING
         project_id:
+          parameterType: STRING
+        state_key:
+          defaultValue: provider_fraud_model_rf
+          isOptional: true
           parameterType: STRING
         training_state_table:
           parameterType: STRING
@@ -77,28 +94,93 @@ components:
               training_months:
                 componentInputParameter: pipelinechannel--training_months
           taskInfo:
-            name: calculate-rolling-window-component
-        mark-candidate-pending-component:
-          cachingOptions:
-            enableCache: true
+            name: Calculate Rolling Window
+        condition-2:
           componentRef:
-            name: comp-mark-candidate-pending-component
+            name: comp-condition-2
           dependentTasks:
-          - register-random-forest-model-component
+          - refresh-provider-features-component
           inputs:
             parameters:
-              candidate_model_resource:
-                taskOutputParameter:
-                  outputParameterKey: Output
-                  producerTask: register-random-forest-model-component
-              current_data_month:
+              pipelinechannel--check-retraining-decision-component-Output:
+                componentInputParameter: pipelinechannel--check-retraining-decision-component-Output
+              pipelinechannel--current_data_month:
                 componentInputParameter: pipelinechannel--current_data_month
-              project_id:
+              pipelinechannel--current_feature_signature:
+                componentInputParameter: pipelinechannel--current_feature_signature
+              pipelinechannel--current_model_signature:
+                componentInputParameter: pipelinechannel--current_model_signature
+              pipelinechannel--feature_columns_json:
+                componentInputParameter: pipelinechannel--feature_columns_json
+              pipelinechannel--feature_table:
+                componentInputParameter: pipelinechannel--feature_table
+              pipelinechannel--model_artifact_uri:
+                componentInputParameter: pipelinechannel--model_artifact_uri
+              pipelinechannel--model_display_name:
+                componentInputParameter: pipelinechannel--model_display_name
+              pipelinechannel--model_output_uri:
+                componentInputParameter: pipelinechannel--model_output_uri
+              pipelinechannel--model_parameters_json:
+                componentInputParameter: pipelinechannel--model_parameters_json
+              pipelinechannel--model_type:
+                componentInputParameter: pipelinechannel--model_type
+              pipelinechannel--project_id:
                 componentInputParameter: pipelinechannel--project_id
-              training_state_table:
+              pipelinechannel--region:
+                componentInputParameter: pipelinechannel--region
+              pipelinechannel--serving_container_image_uri:
+                componentInputParameter: pipelinechannel--serving_container_image_uri
+              pipelinechannel--state_key:
+                componentInputParameter: pipelinechannel--state_key
+              pipelinechannel--training_state_table:
                 componentInputParameter: pipelinechannel--training_state_table
           taskInfo:
-            name: mark-candidate-pending-component
+            name: random-forest-model
+          triggerPolicy:
+            condition: inputs.parameter_values['pipelinechannel--model_type'] == 'random_forest'
+        condition-3:
+          componentRef:
+            name: comp-condition-3
+          dependentTasks:
+          - refresh-provider-features-component
+          inputs:
+            parameters:
+              pipelinechannel--check-retraining-decision-component-Output:
+                componentInputParameter: pipelinechannel--check-retraining-decision-component-Output
+              pipelinechannel--current_data_month:
+                componentInputParameter: pipelinechannel--current_data_month
+              pipelinechannel--current_feature_signature:
+                componentInputParameter: pipelinechannel--current_feature_signature
+              pipelinechannel--current_model_signature:
+                componentInputParameter: pipelinechannel--current_model_signature
+              pipelinechannel--feature_columns_json:
+                componentInputParameter: pipelinechannel--feature_columns_json
+              pipelinechannel--feature_table:
+                componentInputParameter: pipelinechannel--feature_table
+              pipelinechannel--model_artifact_uri:
+                componentInputParameter: pipelinechannel--model_artifact_uri
+              pipelinechannel--model_display_name:
+                componentInputParameter: pipelinechannel--model_display_name
+              pipelinechannel--model_output_uri:
+                componentInputParameter: pipelinechannel--model_output_uri
+              pipelinechannel--model_parameters_json:
+                componentInputParameter: pipelinechannel--model_parameters_json
+              pipelinechannel--model_type:
+                componentInputParameter: pipelinechannel--model_type
+              pipelinechannel--project_id:
+                componentInputParameter: pipelinechannel--project_id
+              pipelinechannel--region:
+                componentInputParameter: pipelinechannel--region
+              pipelinechannel--serving_container_image_uri:
+                componentInputParameter: pipelinechannel--serving_container_image_uri
+              pipelinechannel--state_key:
+                componentInputParameter: pipelinechannel--state_key
+              pipelinechannel--training_state_table:
+                componentInputParameter: pipelinechannel--training_state_table
+          taskInfo:
+            name: xgboost-model
+          triggerPolicy:
+            condition: inputs.parameter_values['pipelinechannel--model_type'] == 'xgboost'
         refresh-provider-features-component:
           cachingOptions:
             enableCache: true
@@ -135,47 +217,7 @@ components:
                   outputParameterKey: train_start_date
                   producerTask: calculate-rolling-window-component
           taskInfo:
-            name: refresh-provider-features-component
-        register-random-forest-model-component:
-          cachingOptions:
-            enableCache: true
-          componentRef:
-            name: comp-register-random-forest-model-component
-          dependentTasks:
-          - train-random-forest-component
-          inputs:
-            parameters:
-              artifact_uri:
-                componentInputParameter: pipelinechannel--model_artifact_uri
-              model_display_name:
-                componentInputParameter: pipelinechannel--model_display_name
-              project_id:
-                componentInputParameter: pipelinechannel--project_id
-              region:
-                componentInputParameter: pipelinechannel--region
-              serving_container_image_uri:
-                componentInputParameter: pipelinechannel--serving_container_image_uri
-          taskInfo:
-            name: register-random-forest-model-component
-        train-random-forest-component:
-          cachingOptions:
-            enableCache: true
-          componentRef:
-            name: comp-train-random-forest-component
-          dependentTasks:
-          - refresh-provider-features-component
-          inputs:
-            parameters:
-              feature_columns_json:
-                componentInputParameter: pipelinechannel--feature_columns_json
-              feature_table:
-                componentInputParameter: pipelinechannel--feature_table
-              model_output_uri:
-                componentInputParameter: pipelinechannel--model_output_uri
-              project_id:
-                componentInputParameter: pipelinechannel--project_id
-          taskInfo:
-            name: train-random-forest-component
+            name: Refresh Provider Features
     inputDefinitions:
       parameters:
         pipelinechannel--check-retraining-decision-component-Output:
@@ -183,6 +225,10 @@ components:
         pipelinechannel--claims_table:
           parameterType: STRING
         pipelinechannel--current_data_month:
+          parameterType: STRING
+        pipelinechannel--current_feature_signature:
+          parameterType: STRING
+        pipelinechannel--current_model_signature:
           parameterType: STRING
         pipelinechannel--derived_feature_sql_json:
           parameterType: STRING
@@ -198,11 +244,17 @@ components:
           parameterType: STRING
         pipelinechannel--model_output_uri:
           parameterType: STRING
+        pipelinechannel--model_parameters_json:
+          parameterType: STRING
+        pipelinechannel--model_type:
+          parameterType: STRING
         pipelinechannel--project_id:
           parameterType: STRING
         pipelinechannel--region:
           parameterType: STRING
         pipelinechannel--serving_container_image_uri:
+          parameterType: STRING
+        pipelinechannel--state_key:
           parameterType: STRING
         pipelinechannel--testing_months:
           parameterType: NUMBER_INTEGER
@@ -210,19 +262,259 @@ components:
           parameterType: NUMBER_INTEGER
         pipelinechannel--training_state_table:
           parameterType: STRING
+  comp-condition-2:
+    dag:
+      tasks:
+        mark-candidate-pending-component:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-mark-candidate-pending-component
+          dependentTasks:
+          - register-model-component
+          inputs:
+            parameters:
+              candidate_feature_signature:
+                componentInputParameter: pipelinechannel--current_feature_signature
+              candidate_model_resource:
+                taskOutputParameter:
+                  outputParameterKey: Output
+                  producerTask: register-model-component
+              candidate_model_signature:
+                componentInputParameter: pipelinechannel--current_model_signature
+              candidate_model_type:
+                componentInputParameter: pipelinechannel--model_type
+              current_data_month:
+                componentInputParameter: pipelinechannel--current_data_month
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              state_key:
+                componentInputParameter: pipelinechannel--state_key
+              training_state_table:
+                componentInputParameter: pipelinechannel--training_state_table
+          taskInfo:
+            name: Mark Random Forest Candidate Pending
+        register-model-component:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-register-model-component
+          dependentTasks:
+          - train-random-forest-component
+          inputs:
+            parameters:
+              artifact_uri:
+                componentInputParameter: pipelinechannel--model_artifact_uri
+              model_display_name:
+                componentInputParameter: pipelinechannel--model_display_name
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              region:
+                componentInputParameter: pipelinechannel--region
+              serving_container_image_uri:
+                componentInputParameter: pipelinechannel--serving_container_image_uri
+          taskInfo:
+            name: Register Random Forest Candidate
+        train-random-forest-component:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-train-random-forest-component
+          inputs:
+            parameters:
+              feature_columns_json:
+                componentInputParameter: pipelinechannel--feature_columns_json
+              feature_table:
+                componentInputParameter: pipelinechannel--feature_table
+              model_output_uri:
+                componentInputParameter: pipelinechannel--model_output_uri
+              model_parameters_json:
+                componentInputParameter: pipelinechannel--model_parameters_json
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+          taskInfo:
+            name: Train Random Forest Candidate
+    inputDefinitions:
+      parameters:
+        pipelinechannel--check-retraining-decision-component-Output:
+          parameterType: BOOLEAN
+        pipelinechannel--current_data_month:
+          parameterType: STRING
+        pipelinechannel--current_feature_signature:
+          parameterType: STRING
+        pipelinechannel--current_model_signature:
+          parameterType: STRING
+        pipelinechannel--feature_columns_json:
+          parameterType: STRING
+        pipelinechannel--feature_table:
+          parameterType: STRING
+        pipelinechannel--model_artifact_uri:
+          parameterType: STRING
+        pipelinechannel--model_display_name:
+          parameterType: STRING
+        pipelinechannel--model_output_uri:
+          parameterType: STRING
+        pipelinechannel--model_parameters_json:
+          parameterType: STRING
+        pipelinechannel--model_type:
+          parameterType: STRING
+        pipelinechannel--project_id:
+          parameterType: STRING
+        pipelinechannel--region:
+          parameterType: STRING
+        pipelinechannel--serving_container_image_uri:
+          parameterType: STRING
+        pipelinechannel--state_key:
+          parameterType: STRING
+        pipelinechannel--training_state_table:
+          parameterType: STRING
+  comp-condition-3:
+    dag:
+      tasks:
+        mark-candidate-pending-component-2:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-mark-candidate-pending-component-2
+          dependentTasks:
+          - register-model-component-2
+          inputs:
+            parameters:
+              candidate_feature_signature:
+                componentInputParameter: pipelinechannel--current_feature_signature
+              candidate_model_resource:
+                taskOutputParameter:
+                  outputParameterKey: Output
+                  producerTask: register-model-component-2
+              candidate_model_signature:
+                componentInputParameter: pipelinechannel--current_model_signature
+              candidate_model_type:
+                componentInputParameter: pipelinechannel--model_type
+              current_data_month:
+                componentInputParameter: pipelinechannel--current_data_month
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              state_key:
+                componentInputParameter: pipelinechannel--state_key
+              training_state_table:
+                componentInputParameter: pipelinechannel--training_state_table
+          taskInfo:
+            name: Mark XGBoost Candidate Pending
+        register-model-component-2:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-register-model-component-2
+          dependentTasks:
+          - train-xgboost-component
+          inputs:
+            parameters:
+              artifact_uri:
+                componentInputParameter: pipelinechannel--model_artifact_uri
+              model_display_name:
+                componentInputParameter: pipelinechannel--model_display_name
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              region:
+                componentInputParameter: pipelinechannel--region
+              serving_container_image_uri:
+                componentInputParameter: pipelinechannel--serving_container_image_uri
+          taskInfo:
+            name: Register XGBoost Candidate
+        train-xgboost-component:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-train-xgboost-component
+          inputs:
+            parameters:
+              feature_columns_json:
+                componentInputParameter: pipelinechannel--feature_columns_json
+              feature_table:
+                componentInputParameter: pipelinechannel--feature_table
+              model_output_uri:
+                componentInputParameter: pipelinechannel--model_output_uri
+              model_parameters_json:
+                componentInputParameter: pipelinechannel--model_parameters_json
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+          taskInfo:
+            name: Train XGBoost Candidate
+    inputDefinitions:
+      parameters:
+        pipelinechannel--check-retraining-decision-component-Output:
+          parameterType: BOOLEAN
+        pipelinechannel--current_data_month:
+          parameterType: STRING
+        pipelinechannel--current_feature_signature:
+          parameterType: STRING
+        pipelinechannel--current_model_signature:
+          parameterType: STRING
+        pipelinechannel--feature_columns_json:
+          parameterType: STRING
+        pipelinechannel--feature_table:
+          parameterType: STRING
+        pipelinechannel--model_artifact_uri:
+          parameterType: STRING
+        pipelinechannel--model_display_name:
+          parameterType: STRING
+        pipelinechannel--model_output_uri:
+          parameterType: STRING
+        pipelinechannel--model_parameters_json:
+          parameterType: STRING
+        pipelinechannel--model_type:
+          parameterType: STRING
+        pipelinechannel--project_id:
+          parameterType: STRING
+        pipelinechannel--region:
+          parameterType: STRING
+        pipelinechannel--serving_container_image_uri:
+          parameterType: STRING
+        pipelinechannel--state_key:
+          parameterType: STRING
+        pipelinechannel--training_state_table:
+          parameterType: STRING
   comp-mark-candidate-pending-component:
     executorLabel: exec-mark-candidate-pending-component
     inputDefinitions:
       parameters:
+        candidate_feature_signature:
+          parameterType: STRING
         candidate_model_resource:
+          parameterType: STRING
+        candidate_model_signature:
+          parameterType: STRING
+        candidate_model_type:
           parameterType: STRING
         current_data_month:
           parameterType: STRING
-        model_name:
-          defaultValue: random_forest
+        project_id:
+          parameterType: STRING
+        state_key:
+          defaultValue: provider_fraud_model_rf
           isOptional: true
           parameterType: STRING
+        training_state_table:
+          parameterType: STRING
+  comp-mark-candidate-pending-component-2:
+    executorLabel: exec-mark-candidate-pending-component-2
+    inputDefinitions:
+      parameters:
+        candidate_feature_signature:
+          parameterType: STRING
+        candidate_model_resource:
+          parameterType: STRING
+        candidate_model_signature:
+          parameterType: STRING
+        candidate_model_type:
+          parameterType: STRING
+        current_data_month:
+          parameterType: STRING
         project_id:
+          parameterType: STRING
+        state_key:
+          defaultValue: provider_fraud_model_rf
+          isOptional: true
           parameterType: STRING
         training_state_table:
           parameterType: STRING
@@ -248,8 +540,26 @@ components:
           parameterType: STRING
         train_start_date:
           parameterType: STRING
-  comp-register-random-forest-model-component:
-    executorLabel: exec-register-random-forest-model-component
+  comp-register-model-component:
+    executorLabel: exec-register-model-component
+    inputDefinitions:
+      parameters:
+        artifact_uri:
+          parameterType: STRING
+        model_display_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+        serving_container_image_uri:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-register-model-component-2:
+    executorLabel: exec-register-model-component-2
     inputDefinitions:
       parameters:
         artifact_uri:
@@ -275,6 +585,22 @@ components:
         feature_table:
           parameterType: STRING
         model_output_uri:
+          parameterType: STRING
+        model_parameters_json:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+  comp-train-xgboost-component:
+    executorLabel: exec-train-xgboost-component
+    inputDefinitions:
+      parameters:
+        feature_columns_json:
+          parameterType: STRING
+        feature_table:
+          parameterType: STRING
+        model_output_uri:
+          parameterType: STRING
+        model_parameters_json:
           parameterType: STRING
         project_id:
           parameterType: STRING
@@ -388,69 +714,123 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef check_retraining_decision_component(\n    project_id: str,\n\
-          \    current_data_month: str,\n    data_quality_table: str,\n    feature_drift_table:\
-          \ str,\n    prediction_drift_table: str,\n    training_state_table: str,\n\
-          ) -> bool:\n    from datetime import date\n    from google.cloud import\
-          \ bigquery\n\n    bq = bigquery.Client(project=project_id)\n\n    # ---------------------------------------------------------\n\
-          \    # 1. Data Quality trigger\n    # ---------------------------------------------------------\n\
-          \    data_quality_query = f\"\"\"\n    SELECT\n      monitoring_status\n\
+          \    current_data_month: str,\n    current_feature_signature: str,\n   \
+          \ current_model_signature: str,\n    current_model_type: str,\n    data_quality_table:\
+          \ str,\n    feature_drift_table: str,\n    prediction_drift_table: str,\n\
+          \    training_state_table: str,\n    state_key: str = \"provider_fraud_model_rf\"\
+          ,\n) -> bool:\n    from datetime import date\n\n    from google.cloud import\
+          \ bigquery\n\n    bq = bigquery.Client(\n        project=project_id\n  \
+          \  )\n\n    # ---------------------------------------------------------\n\
+          \    # 1. Data quality trigger\n    # ---------------------------------------------------------\n\
+          \n    data_quality_query = f\"\"\"\n    SELECT\n      monitoring_status\n\
           \    FROM `{data_quality_table}`\n    ORDER BY monitoring_timestamp DESC\n\
-          \    LIMIT 1\n    \"\"\"\n\n    data_quality_result = list(\n        bq.query(data_quality_query).result()\n\
-          \    )\n\n    data_quality_status = (\n        data_quality_result[0].monitoring_status\n\
-          \        if data_quality_result\n        else \"PASS\"\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 2. Feature Drift trigger\n    # ---------------------------------------------------------\n\
-          \    feature_drift_query = f\"\"\"\n    SELECT\n      COUNTIF(monitoring_status\
-          \ = 'ALERT') AS alert_count\n    FROM `{feature_drift_table}`\n    \"\"\"\
-          \n\n    feature_drift_result = list(\n        bq.query(feature_drift_query).result()\n\
-          \    )\n\n    feature_alert_count = (\n        feature_drift_result[0].alert_count\n\
-          \        if feature_drift_result\n        else 0\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 3. Prediction Drift trigger\n    # ---------------------------------------------------------\n\
-          \    prediction_drift_query = f\"\"\"\n    SELECT\n      status\n    FROM\
+          \    LIMIT 1\n    \"\"\"\n\n    data_quality_rows = list(\n        bq.query(\n\
+          \            data_quality_query\n        ).result()\n    )\n\n    data_quality_status\
+          \ = (\n        data_quality_rows[0].monitoring_status\n        if data_quality_rows\n\
+          \        else \"PASS\"\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 2. Feature drift trigger\n    #\n    # Evaluate only the latest monitoring\
+          \ run.\n    # ---------------------------------------------------------\n\
+          \n    feature_drift_query = f\"\"\"\n    SELECT\n      COUNTIF(\n      \
+          \  monitoring_status = 'ALERT'\n      ) AS alert_count\n    FROM `{feature_drift_table}`\n\
+          \    WHERE monitoring_timestamp = (\n      SELECT\n        MAX(monitoring_timestamp)\n\
+          \      FROM `{feature_drift_table}`\n    )\n    \"\"\"\n\n    feature_drift_rows\
+          \ = list(\n        bq.query(\n            feature_drift_query\n        ).result()\n\
+          \    )\n\n    feature_alert_count = (\n        feature_drift_rows[0].alert_count\n\
+          \        if feature_drift_rows\n        else 0\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 3. Prediction drift trigger\n    #\n    # prediction_drift uses:\n\
+          \    #   status\n    #   check_date\n    # ---------------------------------------------------------\n\
+          \n    prediction_drift_query = f\"\"\"\n    SELECT\n      status\n    FROM\
           \ `{prediction_drift_table}`\n    ORDER BY check_date DESC\n    LIMIT 1\n\
-          \    \"\"\"\n\n    prediction_drift_result = list(\n        bq.query(prediction_drift_query).result()\n\
-          \    )\n\n    prediction_drift_status = (\n        prediction_drift_result[0].status\n\
-          \        if prediction_drift_result\n        else \"PASS\"\n    )\n\n  \
-          \  # ---------------------------------------------------------\n    # 4.\
-          \ New Month Data trigger\n    #\n    # current_data_month comes from pipeline_config.yaml.\n\
-          \    # Example:\n    #   current_data_month: \"2026-09-01\"\n    #\n   \
-          \ # Compare it with the last month already used for training.\n    # ---------------------------------------------------------\n\
-          \    current_data_month_date = date.fromisoformat(\n        current_data_month\n\
-          \    )\n\n    training_state_query = f\"\"\"\n    SELECT\n      MAX(last_training_data_month)\n\
-          \        AS last_training_data_month\n    FROM `{training_state_table}`\n\
-          \    WHERE model_name = 'random_forest'\n    \"\"\"\n\n    training_state_result\
-          \ = list(\n        bq.query(training_state_query).result()\n    )\n\n  \
-          \  last_training_data_month = (\n        training_state_result[0].last_training_data_month\n\
-          \        if training_state_result\n        else None\n    )\n\n    new_month_available\
-          \ = (\n        last_training_data_month is None\n        or current_data_month_date\n\
+          \    \"\"\"\n\n    prediction_drift_rows = list(\n        bq.query(\n  \
+          \          prediction_drift_query\n        ).result()\n    )\n\n    prediction_drift_status\
+          \ = (\n        prediction_drift_rows[0].status\n        if prediction_drift_rows\n\
+          \        else \"PASS\"\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 4. Read approved production state\n    #\n    # state_key identifies\
+          \ the fraud workflow, not an algorithm.\n    #\n    # Random Forest and\
+          \ XGBoost therefore compare against the\n    # same approved production\
+          \ baseline.\n    # ---------------------------------------------------------\n\
+          \n    training_state_query = f\"\"\"\n    SELECT\n      last_training_data_month,\n\
+          \      approved_feature_signature,\n      approved_model_signature,\n  \
+          \    approved_model_type\n    FROM `{training_state_table}`\n    WHERE model_name\
+          \ = @state_key\n    LIMIT 1\n    \"\"\"\n\n    job_config = bigquery.QueryJobConfig(\n\
+          \        query_parameters=[\n            bigquery.ScalarQueryParameter(\n\
+          \                \"state_key\",\n                \"STRING\",\n         \
+          \       state_key,\n            )\n        ]\n    )\n\n    training_state_rows\
+          \ = list(\n        bq.query(\n            training_state_query,\n      \
+          \      job_config=job_config,\n        ).result()\n    )\n\n    if training_state_rows:\n\
+          \        state = training_state_rows[0]\n\n        last_training_data_month\
+          \ = (\n            state.last_training_data_month\n        )\n\n       \
+          \ approved_feature_signature = (\n            state.approved_feature_signature\n\
+          \        )\n\n        approved_model_signature = (\n            state.approved_model_signature\n\
+          \        )\n\n        approved_model_type = (\n            state.approved_model_type\n\
+          \        )\n\n    else:\n        last_training_data_month = None\n     \
+          \   approved_feature_signature = None\n        approved_model_signature\
+          \ = None\n        approved_model_type = None\n\n    # ---------------------------------------------------------\n\
+          \    # 5. Use Case 1\n    #\n    # New monthly data becomes available.\n\
+          \    # ---------------------------------------------------------\n\n   \
+          \ current_data_month_date = (\n        date.fromisoformat(\n           \
+          \ current_data_month\n        )\n    )\n\n    new_month_available = (\n\
+          \        last_training_data_month is None\n        or current_data_month_date\n\
           \        > last_training_data_month\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 5. Final retraining decision\n    # ---------------------------------------------------------\n\
-          \    should_retrain = (\n        data_quality_status == \"ALERT\"\n    \
-          \    or feature_alert_count > 0\n        or prediction_drift_status == \"\
-          ALERT\"\n        or new_month_available\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 6. Collect retraining reasons\n    # ---------------------------------------------------------\n\
-          \    reasons = []\n\n    if data_quality_status == \"ALERT\":\n        reasons.append(\n\
-          \            \"data_quality_alert\"\n        )\n\n    if feature_alert_count\
-          \ > 0:\n        reasons.append(\n            \"feature_drift_alert\"\n \
-          \       )\n\n    if prediction_drift_status == \"ALERT\":\n        reasons.append(\n\
+          \    # 6. Use Case 2\n    #\n    # Feature configuration changed.\n    #\
+          \ ---------------------------------------------------------\n\n    feature_set_changed\
+          \ = (\n        approved_feature_signature is not None\n        and current_feature_signature\n\
+          \        != approved_feature_signature\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 7. Use Case 3\n    #\n    # Model type or model parameters changed.\n\
+          \    #\n    # The model signature contains:\n    #   model_type\n    # \
+          \  model_name\n    #   hyperparameters\n    #\n    # Example:\n    #\n \
+          \   # random_forest\n    #       \u2193\n    # xgboost\n    #\n    # produces\
+          \ a different signature.\n    # ---------------------------------------------------------\n\
+          \n    model_configuration_changed = (\n        approved_model_signature\
+          \ is not None\n        and current_model_signature\n        != approved_model_signature\n\
+          \    )\n\n    # ---------------------------------------------------------\n\
+          \    # 8. Final retraining decision\n    # ---------------------------------------------------------\n\
+          \n    should_retrain = (\n        data_quality_status == \"ALERT\"\n   \
+          \     or feature_alert_count > 0\n        or prediction_drift_status ==\
+          \ \"ALERT\"\n        or new_month_available\n        or feature_set_changed\n\
+          \        or model_configuration_changed\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 9. Collect retraining reasons\n    # ---------------------------------------------------------\n\
+          \n    reasons = []\n\n    if data_quality_status == \"ALERT\":\n       \
+          \ reasons.append(\n            \"data_quality_alert\"\n        )\n\n   \
+          \ if feature_alert_count > 0:\n        reasons.append(\n            \"feature_drift_alert\"\
+          \n        )\n\n    if prediction_drift_status == \"ALERT\":\n        reasons.append(\n\
           \            \"prediction_drift_alert\"\n        )\n\n    if new_month_available:\n\
           \        reasons.append(\n            \"new_month_data\"\n        )\n\n\
-          \    # ---------------------------------------------------------\n    #\
-          \ 7. Print decision summary\n    # ---------------------------------------------------------\n\
-          \    print(\"=\" * 60)\n    print(\"Random Forest Retraining Decision\"\
-          )\n    print(\"=\" * 60)\n\n    print(\n        f\"Data Quality Status:\
-          \ \"\n        f\"{data_quality_status}\"\n    )\n\n    print(\n        f\"\
-          Feature Drift Alert Count: \"\n        f\"{feature_alert_count}\"\n    )\n\
-          \n    print(\n        f\"Prediction Drift Status: \"\n        f\"{prediction_drift_status}\"\
-          \n    )\n\n    print(\n        f\"Current Data Month: \"\n        f\"{current_data_month_date}\"\
+          \    if feature_set_changed:\n        reasons.append(\n            \"feature_set_changed\"\
+          \n        )\n\n    if model_configuration_changed:\n        reasons.append(\n\
+          \            \"model_configuration_changed\"\n        )\n\n    # ---------------------------------------------------------\n\
+          \    # 10. Decision summary\n    # ---------------------------------------------------------\n\
+          \n    print(\"=\" * 70)\n    print(\"FWA Retraining Decision\")\n    print(\"\
+          =\" * 70)\n\n    print(\n        f\"State key: \"\n        f\"{state_key}\"\
+          \n    )\n\n    print(\"\\nMONITORING\")\n    print(\"-\" * 70)\n\n    print(\n\
+          \        f\"Data Quality Status: \"\n        f\"{data_quality_status}\"\n\
+          \    )\n\n    print(\n        f\"Feature Drift Alert Count: \"\n       \
+          \ f\"{feature_alert_count}\"\n    )\n\n    print(\n        f\"Prediction\
+          \ Drift Status: \"\n        f\"{prediction_drift_status}\"\n    )\n\n  \
+          \  print(\"\\nUSE CASE 1 - DATA\")\n    print(\"-\" * 70)\n\n    print(\n\
+          \        f\"Current Data Month: \"\n        f\"{current_data_month_date}\"\
           \n    )\n\n    print(\n        f\"Last Training Data Month: \"\n       \
           \ f\"{last_training_data_month}\"\n    )\n\n    print(\n        f\"New Month\
           \ Available: \"\n        f\"{new_month_available}\"\n    )\n\n    print(\"\
-          -\" * 60)\n\n    print(\n        f\"Should Retrain: \"\n        f\"{should_retrain}\"\
-          \n    )\n\n    if reasons:\n        print(\n            \"\\nRetraining\
-          \ trigger(s):\"\n        )\n\n        for reason in reasons:\n         \
-          \   print(\n                f\"  - {reason}\"\n            )\n\n    else:\n\
-          \        print(\n            \"\\nNo retraining triggers detected.\"\n \
-          \       )\n\n    return should_retrain\n\n"
+          \\nUSE CASE 2 - FEATURES\")\n    print(\"-\" * 70)\n\n    print(\n     \
+          \   \"Approved Feature Signature: \"\n        f\"{approved_feature_signature}\"\
+          \n    )\n\n    print(\n        \"Current Feature Signature: \"\n       \
+          \ f\"{current_feature_signature}\"\n    )\n\n    print(\n        f\"Feature\
+          \ Set Changed: \"\n        f\"{feature_set_changed}\"\n    )\n\n    print(\"\
+          \\nUSE CASE 3 - MODEL\")\n    print(\"-\" * 70)\n\n    print(\n        f\"\
+          Approved Model Type: \"\n        f\"{approved_model_type}\"\n    )\n\n \
+          \   print(\n        f\"Current Model Type: \"\n        f\"{current_model_type}\"\
+          \n    )\n\n    print(\n        \"Approved Model Signature: \"\n        f\"\
+          {approved_model_signature}\"\n    )\n\n    print(\n        \"Current Model\
+          \ Signature: \"\n        f\"{current_model_signature}\"\n    )\n\n    print(\n\
+          \        f\"Model Configuration Changed: \"\n        f\"{model_configuration_changed}\"\
+          \n    )\n\n    print(\"\\n\" + \"=\" * 70)\n\n    print(\n        f\"Should\
+          \ Retrain: \"\n        f\"{should_retrain}\"\n    )\n\n    if reasons:\n\
+          \        print(\n            \"\\nRetraining trigger(s):\"\n        )\n\n\
+          \        for reason in reasons:\n            print(\n                f\"\
+          \  - {reason}\"\n            )\n\n    else:\n        print(\n          \
+          \  \"\\nNo retraining triggers detected.\"\n        )\n\n    return should_retrain\n\
+          \n"
         image: python:3.11
     exec-mark-candidate-pending-component:
       container:
@@ -481,43 +861,146 @@ deploymentSpec:
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef mark_candidate_pending_component(\n    project_id: str,\n   \
           \ training_state_table: str,\n    current_data_month: str,\n    candidate_model_resource:\
-          \ str,\n    model_name: str = \"random_forest\",\n):\n    from datetime\
-          \ import date\n\n    from google.cloud import bigquery\n\n    client = bigquery.Client(\n\
-          \        project=project_id\n    )\n\n    current_data_month_date = (\n\
-          \        date.fromisoformat(\n            current_data_month\n        )\n\
-          \    )\n\n    # ---------------------------------------------------------\n\
-          \    # Store candidate information without updating\n    # last_training_data_month.\n\
-          \    #\n    # The month is considered accepted only after the model\n  \
-          \  # receives manual production approval.\n    # ---------------------------------------------------------\n\
-          \    query = f\"\"\"\n    MERGE `{training_state_table}` AS target\n\n \
-          \   USING (\n      SELECT\n        @model_name AS model_name\n    ) AS source\n\
-          \n    ON\n      target.model_name\n      = source.model_name\n\n    WHEN\
-          \ MATCHED THEN\n      UPDATE SET\n        candidate_status =\n         \
-          \ 'PENDING_APPROVAL',\n\n        candidate_model_resource =\n          @candidate_model_resource,\n\
-          \n        candidate_data_month =\n          @current_data_month,\n\n   \
-          \     candidate_created_at =\n          CURRENT_TIMESTAMP()\n\n    WHEN\
+          \ str,\n    candidate_feature_signature: str,\n    candidate_model_signature:\
+          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model_rf\"\
+          ,\n):\n    from google.cloud import bigquery\n\n    bq = bigquery.Client(\n\
+          \        project=project_id\n    )\n\n    query = f\"\"\"\n    MERGE `{training_state_table}`\
+          \ AS target\n\n    USING (\n      SELECT\n        @state_key AS model_name,\n\
+          \        DATE(@current_data_month) AS candidate_data_month,\n        @candidate_model_resource\
+          \ AS candidate_model_resource,\n        @candidate_feature_signature AS\
+          \ candidate_feature_signature,\n        @candidate_model_signature AS candidate_model_signature,\n\
+          \        @candidate_model_type AS candidate_model_type\n    ) AS source\n\
+          \n    ON target.model_name = source.model_name\n\n    WHEN MATCHED THEN\n\
+          \      UPDATE SET\n\n        candidate_status =\n          'PENDING_APPROVAL',\n\
+          \n        candidate_model_resource =\n          source.candidate_model_resource,\n\
+          \n        candidate_data_month =\n          source.candidate_data_month,\n\
+          \n        candidate_feature_signature =\n          source.candidate_feature_signature,\n\
+          \n        candidate_model_signature =\n          source.candidate_model_signature,\n\
+          \n        candidate_model_type =\n          source.candidate_model_type,\n\
+          \n        candidate_created_at =\n          CURRENT_TIMESTAMP()\n\n    WHEN\
           \ NOT MATCHED THEN\n      INSERT (\n        model_name,\n        candidate_status,\n\
           \        candidate_model_resource,\n        candidate_data_month,\n    \
-          \    candidate_created_at\n      )\n\n      VALUES (\n        @model_name,\n\
-          \        'PENDING_APPROVAL',\n        @candidate_model_resource,\n     \
-          \   @current_data_month,\n        CURRENT_TIMESTAMP()\n      )\n    \"\"\
-          \"\n\n    job_config = (\n        bigquery.QueryJobConfig(\n           \
-          \ query_parameters=[\n                bigquery.ScalarQueryParameter(\n \
-          \                   \"model_name\",\n                    \"STRING\",\n \
-          \                   model_name,\n                ),\n                bigquery.ScalarQueryParameter(\n\
-          \                    \"candidate_model_resource\",\n                   \
-          \ \"STRING\",\n                    candidate_model_resource,\n         \
-          \       ),\n                bigquery.ScalarQueryParameter(\n           \
-          \         \"current_data_month\",\n                    \"DATE\",\n     \
-          \               current_data_month_date,\n                ),\n         \
-          \   ]\n        )\n    )\n\n    client.query(\n        query,\n        job_config=job_config,\n\
-          \    ).result()\n\n    print(\"=\" * 60)\n    print(\"Candidate Model Ready\"\
-          )\n    print(\"=\" * 60)\n\n    print(\n        f\"Model: \"\n        f\"\
-          {model_name}\"\n    )\n\n    print(\n        f\"Candidate data month: \"\
-          \n        f\"{current_data_month}\"\n    )\n\n    print(\n        f\"Candidate\
-          \ resource: \"\n        f\"{candidate_model_resource}\"\n    )\n\n    print(\n\
-          \        \"\\nStatus: \"\n        \"PENDING_APPROVAL\"\n    )\n\n    print(\n\
-          \        \"Production model remains unchanged.\"\n    )\n\n"
+          \    candidate_feature_signature,\n        candidate_model_signature,\n\
+          \        candidate_model_type,\n        candidate_created_at\n      )\n\n\
+          \      VALUES (\n        source.model_name,\n        'PENDING_APPROVAL',\n\
+          \        source.candidate_model_resource,\n        source.candidate_data_month,\n\
+          \        source.candidate_feature_signature,\n        source.candidate_model_signature,\n\
+          \        source.candidate_model_type,\n        CURRENT_TIMESTAMP()\n   \
+          \   )\n    \"\"\"\n\n    job_config = (\n        bigquery.QueryJobConfig(\n\
+          \            query_parameters=[\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"state_key\",\n                    \"STRING\",\n \
+          \                   state_key,\n                ),\n\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"current_data_month\",\n                    \"STRING\"\
+          ,\n                    current_data_month,\n                ),\n\n     \
+          \           bigquery.ScalarQueryParameter(\n                    \"candidate_model_resource\"\
+          ,\n                    \"STRING\",\n                    candidate_model_resource,\n\
+          \                ),\n\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"candidate_feature_signature\",\n                \
+          \    \"STRING\",\n                    candidate_feature_signature,\n   \
+          \             ),\n\n                bigquery.ScalarQueryParameter(\n   \
+          \                 \"candidate_model_signature\",\n                    \"\
+          STRING\",\n                    candidate_model_signature,\n            \
+          \    ),\n\n                bigquery.ScalarQueryParameter(\n            \
+          \        \"candidate_model_type\",\n                    \"STRING\",\n  \
+          \                  candidate_model_type,\n                ),\n         \
+          \   ]\n        )\n    )\n\n    bq.query(\n        query,\n        job_config=job_config,\n\
+          \    ).result()\n\n    print(\"=\" * 70)\n    print(\"Candidate Model Pending\
+          \ Approval\")\n    print(\"=\" * 70)\n\n    print(\n        f\"Workflow:\
+          \ \"\n        f\"{state_key}\"\n    )\n\n    print(\n        f\"Candidate\
+          \ model type: \"\n        f\"{candidate_model_type}\"\n    )\n\n    print(\n\
+          \        f\"Candidate data month: \"\n        f\"{current_data_month}\"\n\
+          \    )\n\n    print(\n        f\"Candidate model resource: \"\n        f\"\
+          {candidate_model_resource}\"\n    )\n\n    print(\n        f\"Candidate\
+          \ feature signature: \"\n        f\"{candidate_feature_signature}\"\n  \
+          \  )\n\n    print(\n        f\"Candidate model signature: \"\n        f\"\
+          {candidate_model_signature}\"\n    )\n\n    print(\n        \"Candidate\
+          \ status: \"\n        \"PENDING_APPROVAL\"\n    )\n\n    print(\n      \
+          \  \"\\nProduction state remains unchanged.\"\n    )\n\n"
+        image: python:3.11
+    exec-mark-candidate-pending-component-2:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - mark_candidate_pending_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef mark_candidate_pending_component(\n    project_id: str,\n   \
+          \ training_state_table: str,\n    current_data_month: str,\n    candidate_model_resource:\
+          \ str,\n    candidate_feature_signature: str,\n    candidate_model_signature:\
+          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model_rf\"\
+          ,\n):\n    from google.cloud import bigquery\n\n    bq = bigquery.Client(\n\
+          \        project=project_id\n    )\n\n    query = f\"\"\"\n    MERGE `{training_state_table}`\
+          \ AS target\n\n    USING (\n      SELECT\n        @state_key AS model_name,\n\
+          \        DATE(@current_data_month) AS candidate_data_month,\n        @candidate_model_resource\
+          \ AS candidate_model_resource,\n        @candidate_feature_signature AS\
+          \ candidate_feature_signature,\n        @candidate_model_signature AS candidate_model_signature,\n\
+          \        @candidate_model_type AS candidate_model_type\n    ) AS source\n\
+          \n    ON target.model_name = source.model_name\n\n    WHEN MATCHED THEN\n\
+          \      UPDATE SET\n\n        candidate_status =\n          'PENDING_APPROVAL',\n\
+          \n        candidate_model_resource =\n          source.candidate_model_resource,\n\
+          \n        candidate_data_month =\n          source.candidate_data_month,\n\
+          \n        candidate_feature_signature =\n          source.candidate_feature_signature,\n\
+          \n        candidate_model_signature =\n          source.candidate_model_signature,\n\
+          \n        candidate_model_type =\n          source.candidate_model_type,\n\
+          \n        candidate_created_at =\n          CURRENT_TIMESTAMP()\n\n    WHEN\
+          \ NOT MATCHED THEN\n      INSERT (\n        model_name,\n        candidate_status,\n\
+          \        candidate_model_resource,\n        candidate_data_month,\n    \
+          \    candidate_feature_signature,\n        candidate_model_signature,\n\
+          \        candidate_model_type,\n        candidate_created_at\n      )\n\n\
+          \      VALUES (\n        source.model_name,\n        'PENDING_APPROVAL',\n\
+          \        source.candidate_model_resource,\n        source.candidate_data_month,\n\
+          \        source.candidate_feature_signature,\n        source.candidate_model_signature,\n\
+          \        source.candidate_model_type,\n        CURRENT_TIMESTAMP()\n   \
+          \   )\n    \"\"\"\n\n    job_config = (\n        bigquery.QueryJobConfig(\n\
+          \            query_parameters=[\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"state_key\",\n                    \"STRING\",\n \
+          \                   state_key,\n                ),\n\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"current_data_month\",\n                    \"STRING\"\
+          ,\n                    current_data_month,\n                ),\n\n     \
+          \           bigquery.ScalarQueryParameter(\n                    \"candidate_model_resource\"\
+          ,\n                    \"STRING\",\n                    candidate_model_resource,\n\
+          \                ),\n\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"candidate_feature_signature\",\n                \
+          \    \"STRING\",\n                    candidate_feature_signature,\n   \
+          \             ),\n\n                bigquery.ScalarQueryParameter(\n   \
+          \                 \"candidate_model_signature\",\n                    \"\
+          STRING\",\n                    candidate_model_signature,\n            \
+          \    ),\n\n                bigquery.ScalarQueryParameter(\n            \
+          \        \"candidate_model_type\",\n                    \"STRING\",\n  \
+          \                  candidate_model_type,\n                ),\n         \
+          \   ]\n        )\n    )\n\n    bq.query(\n        query,\n        job_config=job_config,\n\
+          \    ).result()\n\n    print(\"=\" * 70)\n    print(\"Candidate Model Pending\
+          \ Approval\")\n    print(\"=\" * 70)\n\n    print(\n        f\"Workflow:\
+          \ \"\n        f\"{state_key}\"\n    )\n\n    print(\n        f\"Candidate\
+          \ model type: \"\n        f\"{candidate_model_type}\"\n    )\n\n    print(\n\
+          \        f\"Candidate data month: \"\n        f\"{current_data_month}\"\n\
+          \    )\n\n    print(\n        f\"Candidate model resource: \"\n        f\"\
+          {candidate_model_resource}\"\n    )\n\n    print(\n        f\"Candidate\
+          \ feature signature: \"\n        f\"{candidate_feature_signature}\"\n  \
+          \  )\n\n    print(\n        f\"Candidate model signature: \"\n        f\"\
+          {candidate_model_signature}\"\n    )\n\n    print(\n        \"Candidate\
+          \ status: \"\n        \"PENDING_APPROVAL\"\n    )\n\n    print(\n      \
+          \  \"\\nProduction state remains unchanged.\"\n    )\n\n"
         image: python:3.11
     exec-refresh-provider-features-component:
       container:
@@ -736,13 +1219,13 @@ deploymentSpec:
           \        \"No NULL values found in \"\n        \"configured model features.\"\
           \n    )\n\n"
         image: python:3.11
-    exec-register-random-forest-model-component:
+    exec-register-model-component:
       container:
         args:
         - --executor_input
         - '{{$}}'
         - --function_to_execute
-        - register_random_forest_model_component
+        - register_model_component
         command:
         - sh
         - -c
@@ -763,16 +1246,58 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef register_random_forest_model_component(\n    project_id: str,\n\
-          \    region: str,\n    model_display_name: str,\n    artifact_uri: str,\n\
-          \    serving_container_image_uri: str,\n) -> str:\n    from google.cloud\
-          \ import aiplatform\n\n    aiplatform.init(\n        project=project_id,\n\
-          \        location=region,\n    )\n\n    print(\"=\" * 60)\n    print(\"\
-          Registering Random Forest Model\")\n    print(\"=\" * 60)\n\n    print(\n\
-          \        f\"Project: \"\n        f\"{project_id}\"\n    )\n\n    print(\n\
-          \        f\"Region: \"\n        f\"{region}\"\n    )\n\n    print(\n   \
-          \     f\"Model display name: \"\n        f\"{model_display_name}\"\n   \
-          \ )\n\n    print(\n        f\"Artifact URI: \"\n        f\"{artifact_uri}\"\
+          \ *\n\ndef register_model_component(\n    project_id: str,\n    region:\
+          \ str,\n    model_display_name: str,\n    artifact_uri: str,\n    serving_container_image_uri:\
+          \ str,\n) -> str:\n    from google.cloud import aiplatform\n\n    aiplatform.init(\n\
+          \        project=project_id,\n        location=region,\n    )\n\n    print(\"\
+          =\" * 60)\n    print(\"Registering Random Forest Model\")\n    print(\"\
+          =\" * 60)\n\n    print(\n        f\"Project: \"\n        f\"{project_id}\"\
+          \n    )\n\n    print(\n        f\"Region: \"\n        f\"{region}\"\n  \
+          \  )\n\n    print(\n        f\"Model display name: \"\n        f\"{model_display_name}\"\
+          \n    )\n\n    print(\n        f\"Artifact URI: \"\n        f\"{artifact_uri}\"\
+          \n    )\n\n    print(\n        f\"Serving container: \"\n        f\"{serving_container_image_uri}\"\
+          \n    )\n\n    model = aiplatform.Model.upload(\n        display_name=model_display_name,\n\
+          \        artifact_uri=artifact_uri,\n        serving_container_image_uri=serving_container_image_uri,\n\
+          \        sync=True,\n    )\n\n    print(\"\\nModel registered successfully.\"\
+          )\n\n    print(\n        f\"Model resource name: \"\n        f\"{model.resource_name}\"\
+          \n    )\n\n    return model.resource_name\n\n"
+        image: python:3.11
+    exec-register-model-component-2:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - register_model_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef register_model_component(\n    project_id: str,\n    region:\
+          \ str,\n    model_display_name: str,\n    artifact_uri: str,\n    serving_container_image_uri:\
+          \ str,\n) -> str:\n    from google.cloud import aiplatform\n\n    aiplatform.init(\n\
+          \        project=project_id,\n        location=region,\n    )\n\n    print(\"\
+          =\" * 60)\n    print(\"Registering Random Forest Model\")\n    print(\"\
+          =\" * 60)\n\n    print(\n        f\"Project: \"\n        f\"{project_id}\"\
+          \n    )\n\n    print(\n        f\"Region: \"\n        f\"{region}\"\n  \
+          \  )\n\n    print(\n        f\"Model display name: \"\n        f\"{model_display_name}\"\
+          \n    )\n\n    print(\n        f\"Artifact URI: \"\n        f\"{artifact_uri}\"\
           \n    )\n\n    print(\n        f\"Serving container: \"\n        f\"{serving_container_image_uri}\"\
           \n    )\n\n    model = aiplatform.Model.upload(\n        display_name=model_display_name,\n\
           \        artifact_uri=artifact_uri,\n        serving_container_image_uri=serving_container_image_uri,\n\
@@ -789,11 +1314,30 @@ deploymentSpec:
         - '{{$.inputs.parameters[''feature_table'']}}'
         - --feature-columns
         - '{{$.inputs.parameters[''feature_columns_json'']}}'
+        - --model-parameters
+        - '{{$.inputs.parameters[''model_parameters_json'']}}'
         - --model-output-uri
         - '{{$.inputs.parameters[''model_output_uri'']}}'
         image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:v2
+    exec-train-xgboost-component:
+      container:
+        args:
+        - --project-id
+        - '{{$.inputs.parameters[''project_id'']}}'
+        - --feature-table
+        - '{{$.inputs.parameters[''feature_table'']}}'
+        - --feature-columns
+        - '{{$.inputs.parameters[''feature_columns_json'']}}'
+        - --model-parameters
+        - '{{$.inputs.parameters[''model_parameters_json'']}}'
+        - --model-output-uri
+        - '{{$.inputs.parameters[''model_output_uri'']}}'
+        image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-training:v1
 pipelineInfo:
-  name: random-forest-fraud-training-pipeline
+  description: Reusable provider-level fraud detection pipeline supporting Random
+    Forest and XGBoost with shared feature engineering, retraining logic, model registration,
+    and manual approval.
+  name: fraud-model-training
 root:
   dag:
     tasks:
@@ -806,6 +1350,12 @@ root:
           parameters:
             current_data_month:
               componentInputParameter: current_data_month
+            current_feature_signature:
+              componentInputParameter: current_feature_signature
+            current_model_signature:
+              componentInputParameter: current_model_signature
+            current_model_type:
+              componentInputParameter: model_type
             data_quality_table:
               componentInputParameter: data_quality_table
             feature_drift_table:
@@ -814,10 +1364,12 @@ root:
               componentInputParameter: prediction_drift_table
             project_id:
               componentInputParameter: project_id
+            state_key:
+              componentInputParameter: state_key
             training_state_table:
               componentInputParameter: training_state_table
         taskInfo:
-          name: check-retraining-decision-component
+          name: Check Retraining Decision
       condition-1:
         componentRef:
           name: comp-condition-1
@@ -833,6 +1385,10 @@ root:
               componentInputParameter: claims_table
             pipelinechannel--current_data_month:
               componentInputParameter: current_data_month
+            pipelinechannel--current_feature_signature:
+              componentInputParameter: current_feature_signature
+            pipelinechannel--current_model_signature:
+              componentInputParameter: current_model_signature
             pipelinechannel--derived_feature_sql_json:
               componentInputParameter: derived_feature_sql_json
             pipelinechannel--feature_columns_json:
@@ -847,12 +1403,18 @@ root:
               componentInputParameter: model_display_name
             pipelinechannel--model_output_uri:
               componentInputParameter: model_output_uri
+            pipelinechannel--model_parameters_json:
+              componentInputParameter: model_parameters_json
+            pipelinechannel--model_type:
+              componentInputParameter: model_type
             pipelinechannel--project_id:
               componentInputParameter: project_id
             pipelinechannel--region:
               componentInputParameter: region
             pipelinechannel--serving_container_image_uri:
               componentInputParameter: serving_container_image_uri
+            pipelinechannel--state_key:
+              componentInputParameter: state_key
             pipelinechannel--testing_months:
               componentInputParameter: testing_months
             pipelinechannel--training_months:
@@ -870,6 +1432,10 @@ root:
         parameterType: STRING
       current_data_month:
         parameterType: STRING
+      current_feature_signature:
+        parameterType: STRING
+      current_model_signature:
+        parameterType: STRING
       data_quality_table:
         parameterType: STRING
       derived_feature_sql_json:
@@ -886,7 +1452,13 @@ root:
         parameterType: STRING
       model_display_name:
         parameterType: STRING
+      model_name:
+        parameterType: STRING
       model_output_uri:
+        parameterType: STRING
+      model_parameters_json:
+        parameterType: STRING
+      model_type:
         parameterType: STRING
       prediction_drift_table:
         parameterType: STRING
@@ -895,6 +1467,10 @@ root:
       region:
         parameterType: STRING
       serving_container_image_uri:
+        parameterType: STRING
+      state_key:
+        defaultValue: provider_fraud_model_rf
+        isOptional: true
         parameterType: STRING
       testing_months:
         parameterType: NUMBER_INTEGER

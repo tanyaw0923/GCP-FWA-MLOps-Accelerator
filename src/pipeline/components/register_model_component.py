@@ -7,7 +7,7 @@ from kfp import dsl
         "google-cloud-aiplatform",
     ],
 )
-def register_random_forest_model_component(
+def register_model_component(
     project_id: str,
     region: str,
     model_display_name: str,

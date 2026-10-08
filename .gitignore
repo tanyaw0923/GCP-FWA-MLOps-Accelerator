@@ -50,4 +50,3 @@ __pycache__/
 *.pyc
 
 # Local temporary Dockerfile
-Dockerfile

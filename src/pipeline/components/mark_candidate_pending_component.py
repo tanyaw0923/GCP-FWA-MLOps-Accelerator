@@ -12,51 +12,52 @@ def mark_candidate_pending_component(
     training_state_table: str,
     current_data_month: str,
     candidate_model_resource: str,
-    model_name: str = "random_forest",
+    candidate_feature_signature: str,
+    candidate_model_signature: str,
+    candidate_model_type: str,
+    state_key: str = "provider_fraud_model_rf",
 ):
-    from datetime import date
-
     from google.cloud import bigquery
 
-    client = bigquery.Client(
+    bq = bigquery.Client(
         project=project_id
     )
 
-    current_data_month_date = (
-        date.fromisoformat(
-            current_data_month
-        )
-    )
-
-    # ---------------------------------------------------------
-    # Store candidate information without updating
-    # last_training_data_month.
-    #
-    # The month is considered accepted only after the model
-    # receives manual production approval.
-    # ---------------------------------------------------------
     query = f"""
     MERGE `{training_state_table}` AS target
 
     USING (
       SELECT
-        @model_name AS model_name
+        @state_key AS model_name,
+        DATE(@current_data_month) AS candidate_data_month,
+        @candidate_model_resource AS candidate_model_resource,
+        @candidate_feature_signature AS candidate_feature_signature,
+        @candidate_model_signature AS candidate_model_signature,
+        @candidate_model_type AS candidate_model_type
     ) AS source
 
-    ON
-      target.model_name
-      = source.model_name
+    ON target.model_name = source.model_name
 
     WHEN MATCHED THEN
       UPDATE SET
+
         candidate_status =
           'PENDING_APPROVAL',
 
         candidate_model_resource =
-          @candidate_model_resource,
+          source.candidate_model_resource,
 
         candidate_data_month =
-          @current_data_month,
+          source.candidate_data_month,
+
+        candidate_feature_signature =
+          source.candidate_feature_signature,
+
+        candidate_model_signature =
+          source.candidate_model_signature,
+
+        candidate_model_type =
+          source.candidate_model_type,
 
         candidate_created_at =
           CURRENT_TIMESTAMP()
@@ -67,14 +68,20 @@ def mark_candidate_pending_component(
         candidate_status,
         candidate_model_resource,
         candidate_data_month,
+        candidate_feature_signature,
+        candidate_model_signature,
+        candidate_model_type,
         candidate_created_at
       )
 
       VALUES (
-        @model_name,
+        source.model_name,
         'PENDING_APPROVAL',
-        @candidate_model_resource,
-        @current_data_month,
+        source.candidate_model_resource,
+        source.candidate_data_month,
+        source.candidate_feature_signature,
+        source.candidate_model_signature,
+        source.candidate_model_type,
         CURRENT_TIMESTAMP()
       )
     """
@@ -83,36 +90,61 @@ def mark_candidate_pending_component(
         bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter(
-                    "model_name",
+                    "state_key",
                     "STRING",
-                    model_name,
+                    state_key,
                 ),
+
+                bigquery.ScalarQueryParameter(
+                    "current_data_month",
+                    "STRING",
+                    current_data_month,
+                ),
+
                 bigquery.ScalarQueryParameter(
                     "candidate_model_resource",
                     "STRING",
                     candidate_model_resource,
                 ),
+
                 bigquery.ScalarQueryParameter(
-                    "current_data_month",
-                    "DATE",
-                    current_data_month_date,
+                    "candidate_feature_signature",
+                    "STRING",
+                    candidate_feature_signature,
+                ),
+
+                bigquery.ScalarQueryParameter(
+                    "candidate_model_signature",
+                    "STRING",
+                    candidate_model_signature,
+                ),
+
+                bigquery.ScalarQueryParameter(
+                    "candidate_model_type",
+                    "STRING",
+                    candidate_model_type,
                 ),
             ]
         )
     )
 
-    client.query(
+    bq.query(
         query,
         job_config=job_config,
     ).result()
 
-    print("=" * 60)
-    print("Candidate Model Ready")
-    print("=" * 60)
+    print("=" * 70)
+    print("Candidate Model Pending Approval")
+    print("=" * 70)
 
     print(
-        f"Model: "
-        f"{model_name}"
+        f"Workflow: "
+        f"{state_key}"
+    )
+
+    print(
+        f"Candidate model type: "
+        f"{candidate_model_type}"
     )
 
     print(
@@ -121,15 +153,26 @@ def mark_candidate_pending_component(
     )
 
     print(
-        f"Candidate resource: "
+        f"Candidate model resource: "
         f"{candidate_model_resource}"
     )
 
     print(
-        "\nStatus: "
+        f"Candidate feature signature: "
+        f"{candidate_feature_signature}"
+    )
+
+    print(
+        f"Candidate model signature: "
+        f"{candidate_model_signature}"
+    )
+
+    print(
+        "Candidate status: "
         "PENDING_APPROVAL"
     )
 
     print(
-        "Production model remains unchanged."
+        "\nProduction state remains unchanged."
     )
+

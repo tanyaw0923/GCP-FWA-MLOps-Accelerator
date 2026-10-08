@@ -2,14 +2,15 @@ from kfp import dsl
 
 
 # ============================================================
-# RANDOM FOREST TRAINING COMPONENT
+# XGBOOST TRAINING COMPONENT
 #
-# Keep the same interface as XGBoost so the two algorithms can
-# be swapped without changing the surrounding MLOps workflow.
+# The container image must be known at pipeline compile time.
+# KFP does not allow the image field itself to be supplied as
+# a runtime pipeline parameter.
 # ============================================================
 
 @dsl.container_component
-def train_random_forest_component(
+def train_xgboost_component(
     project_id: str,
     feature_table: str,
     feature_columns_json: str,
@@ -21,7 +22,7 @@ def train_random_forest_component(
             "us-central1-docker.pkg.dev/"
             "fwa-mlops-accelerator-demo/"
             "fwa-mlops/"
-            "random-forest-training:v2"
+            "xgboost-training:v1"
         ),
         args=[
             "--project-id",
