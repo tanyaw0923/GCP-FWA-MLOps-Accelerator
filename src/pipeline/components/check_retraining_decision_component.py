@@ -17,7 +17,7 @@ def check_retraining_decision_component(
     feature_drift_table: str,
     prediction_drift_table: str,
     training_state_table: str,
-    state_key: str = "provider_fraud_model_rf",
+    state_key: str = "provider_fraud_model",
 ) -> bool:
     from datetime import date
 
