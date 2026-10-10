@@ -15,7 +15,7 @@ def mark_candidate_pending_component(
     candidate_feature_signature: str,
     candidate_model_signature: str,
     candidate_model_type: str,
-    state_key: str = "provider_fraud_model_rf",
+    state_key: str = "provider_fraud_model",
 ):
     from google.cloud import bigquery
 
