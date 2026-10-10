@@ -138,7 +138,7 @@ def model_training_pipeline(
     # Both still belong to:
     # provider_fraud_model
     # --------------------------------------------------------
-    state_key: str = "provider_fraud_model_rf",
+    state_key: str = "provider_fraud_model",
 ):
 
     # ========================================================
