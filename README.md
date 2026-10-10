@@ -35,6 +35,12 @@ This design allows data, features, and modeling techniques to evolve independent
 
 The repository supports three retraining use cases.
 
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/31a80327-2da5-4865-9902-bf6b5e9d701d" />
+
+---
+
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/591a8d49-8f89-43c9-a104-74847c37b540" />
+
 ### Use Case 1 — New Data
 
 A new monthly claims dataset becomes available.
