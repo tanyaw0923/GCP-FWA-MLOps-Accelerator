@@ -1,0 +1,1482 @@
+# PIPELINE DEFINITION
+# Name: fraud-model-training
+# Description: Reusable provider-level fraud detection pipeline supporting Random Forest and XGBoost with shared feature engineering, retraining logic, model registration, and manual approval.
+# Inputs:
+#    claims_table: str
+#    current_data_month: str
+#    current_feature_signature: str
+#    current_model_signature: str
+#    data_quality_table: str
+#    derived_feature_sql_json: str
+#    feature_columns_json: str
+#    feature_drift_table: str
+#    feature_sql_json: str
+#    feature_table: str
+#    model_artifact_uri: str
+#    model_display_name: str
+#    model_name: str
+#    model_output_uri: str
+#    model_parameters_json: str
+#    model_type: str
+#    prediction_drift_table: str
+#    project_id: str
+#    region: str
+#    serving_container_image_uri: str
+#    state_key: str [Default: 'provider_fraud_model']
+#    testing_months: int
+#    training_months: int
+#    training_state_table: str
+components:
+  comp-calculate-rolling-window-component:
+    executorLabel: exec-calculate-rolling-window-component
+    inputDefinitions:
+      parameters:
+        current_data_month:
+          parameterType: STRING
+        testing_months:
+          parameterType: NUMBER_INTEGER
+        training_months:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      parameters:
+        test_end_date:
+          parameterType: STRING
+        test_start_date:
+          parameterType: STRING
+        train_end_date:
+          parameterType: STRING
+        train_start_date:
+          parameterType: STRING
+  comp-check-retraining-decision-component:
+    executorLabel: exec-check-retraining-decision-component
+    inputDefinitions:
+      parameters:
+        current_data_month:
+          parameterType: STRING
+        current_feature_signature:
+          parameterType: STRING
+        current_model_signature:
+          parameterType: STRING
+        current_model_type:
+          parameterType: STRING
+        data_quality_table:
+          parameterType: STRING
+        feature_drift_table:
+          parameterType: STRING
+        prediction_drift_table:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        state_key:
+          defaultValue: provider_fraud_model
+          isOptional: true
+          parameterType: STRING
+        training_state_table:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: BOOLEAN
+  comp-condition-1:
+    dag:
+      tasks:
+        calculate-rolling-window-component:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-calculate-rolling-window-component
+          inputs:
+            parameters:
+              current_data_month:
+                componentInputParameter: pipelinechannel--current_data_month
+              testing_months:
+                componentInputParameter: pipelinechannel--testing_months
+              training_months:
+                componentInputParameter: pipelinechannel--training_months
+          taskInfo:
+            name: Calculate Rolling Window
+        condition-2:
+          componentRef:
+            name: comp-condition-2
+          dependentTasks:
+          - refresh-provider-features-component
+          inputs:
+            parameters:
+              pipelinechannel--check-retraining-decision-component-Output:
+                componentInputParameter: pipelinechannel--check-retraining-decision-component-Output
+              pipelinechannel--current_data_month:
+                componentInputParameter: pipelinechannel--current_data_month
+              pipelinechannel--current_feature_signature:
+                componentInputParameter: pipelinechannel--current_feature_signature
+              pipelinechannel--current_model_signature:
+                componentInputParameter: pipelinechannel--current_model_signature
+              pipelinechannel--feature_columns_json:
+                componentInputParameter: pipelinechannel--feature_columns_json
+              pipelinechannel--feature_table:
+                componentInputParameter: pipelinechannel--feature_table
+              pipelinechannel--model_artifact_uri:
+                componentInputParameter: pipelinechannel--model_artifact_uri
+              pipelinechannel--model_display_name:
+                componentInputParameter: pipelinechannel--model_display_name
+              pipelinechannel--model_output_uri:
+                componentInputParameter: pipelinechannel--model_output_uri
+              pipelinechannel--model_parameters_json:
+                componentInputParameter: pipelinechannel--model_parameters_json
+              pipelinechannel--model_type:
+                componentInputParameter: pipelinechannel--model_type
+              pipelinechannel--project_id:
+                componentInputParameter: pipelinechannel--project_id
+              pipelinechannel--region:
+                componentInputParameter: pipelinechannel--region
+              pipelinechannel--serving_container_image_uri:
+                componentInputParameter: pipelinechannel--serving_container_image_uri
+              pipelinechannel--state_key:
+                componentInputParameter: pipelinechannel--state_key
+              pipelinechannel--training_state_table:
+                componentInputParameter: pipelinechannel--training_state_table
+          taskInfo:
+            name: random-forest-model
+          triggerPolicy:
+            condition: inputs.parameter_values['pipelinechannel--model_type'] == 'random_forest'
+        condition-3:
+          componentRef:
+            name: comp-condition-3
+          dependentTasks:
+          - refresh-provider-features-component
+          inputs:
+            parameters:
+              pipelinechannel--check-retraining-decision-component-Output:
+                componentInputParameter: pipelinechannel--check-retraining-decision-component-Output
+              pipelinechannel--current_data_month:
+                componentInputParameter: pipelinechannel--current_data_month
+              pipelinechannel--current_feature_signature:
+                componentInputParameter: pipelinechannel--current_feature_signature
+              pipelinechannel--current_model_signature:
+                componentInputParameter: pipelinechannel--current_model_signature
+              pipelinechannel--feature_columns_json:
+                componentInputParameter: pipelinechannel--feature_columns_json
+              pipelinechannel--feature_table:
+                componentInputParameter: pipelinechannel--feature_table
+              pipelinechannel--model_artifact_uri:
+                componentInputParameter: pipelinechannel--model_artifact_uri
+              pipelinechannel--model_display_name:
+                componentInputParameter: pipelinechannel--model_display_name
+              pipelinechannel--model_output_uri:
+                componentInputParameter: pipelinechannel--model_output_uri
+              pipelinechannel--model_parameters_json:
+                componentInputParameter: pipelinechannel--model_parameters_json
+              pipelinechannel--model_type:
+                componentInputParameter: pipelinechannel--model_type
+              pipelinechannel--project_id:
+                componentInputParameter: pipelinechannel--project_id
+              pipelinechannel--region:
+                componentInputParameter: pipelinechannel--region
+              pipelinechannel--serving_container_image_uri:
+                componentInputParameter: pipelinechannel--serving_container_image_uri
+              pipelinechannel--state_key:
+                componentInputParameter: pipelinechannel--state_key
+              pipelinechannel--training_state_table:
+                componentInputParameter: pipelinechannel--training_state_table
+          taskInfo:
+            name: xgboost-model
+          triggerPolicy:
+            condition: inputs.parameter_values['pipelinechannel--model_type'] == 'xgboost'
+        refresh-provider-features-component:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-refresh-provider-features-component
+          dependentTasks:
+          - calculate-rolling-window-component
+          inputs:
+            parameters:
+              claims_table:
+                componentInputParameter: pipelinechannel--claims_table
+              derived_feature_sql_json:
+                componentInputParameter: pipelinechannel--derived_feature_sql_json
+              feature_sql_json:
+                componentInputParameter: pipelinechannel--feature_sql_json
+              output_feature_table:
+                componentInputParameter: pipelinechannel--feature_table
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              test_end_date:
+                taskOutputParameter:
+                  outputParameterKey: test_end_date
+                  producerTask: calculate-rolling-window-component
+              test_start_date:
+                taskOutputParameter:
+                  outputParameterKey: test_start_date
+                  producerTask: calculate-rolling-window-component
+              train_end_date:
+                taskOutputParameter:
+                  outputParameterKey: train_end_date
+                  producerTask: calculate-rolling-window-component
+              train_start_date:
+                taskOutputParameter:
+                  outputParameterKey: train_start_date
+                  producerTask: calculate-rolling-window-component
+          taskInfo:
+            name: Refresh Provider Features
+    inputDefinitions:
+      parameters:
+        pipelinechannel--check-retraining-decision-component-Output:
+          parameterType: BOOLEAN
+        pipelinechannel--claims_table:
+          parameterType: STRING
+        pipelinechannel--current_data_month:
+          parameterType: STRING
+        pipelinechannel--current_feature_signature:
+          parameterType: STRING
+        pipelinechannel--current_model_signature:
+          parameterType: STRING
+        pipelinechannel--derived_feature_sql_json:
+          parameterType: STRING
+        pipelinechannel--feature_columns_json:
+          parameterType: STRING
+        pipelinechannel--feature_sql_json:
+          parameterType: STRING
+        pipelinechannel--feature_table:
+          parameterType: STRING
+        pipelinechannel--model_artifact_uri:
+          parameterType: STRING
+        pipelinechannel--model_display_name:
+          parameterType: STRING
+        pipelinechannel--model_output_uri:
+          parameterType: STRING
+        pipelinechannel--model_parameters_json:
+          parameterType: STRING
+        pipelinechannel--model_type:
+          parameterType: STRING
+        pipelinechannel--project_id:
+          parameterType: STRING
+        pipelinechannel--region:
+          parameterType: STRING
+        pipelinechannel--serving_container_image_uri:
+          parameterType: STRING
+        pipelinechannel--state_key:
+          parameterType: STRING
+        pipelinechannel--testing_months:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--training_months:
+          parameterType: NUMBER_INTEGER
+        pipelinechannel--training_state_table:
+          parameterType: STRING
+  comp-condition-2:
+    dag:
+      tasks:
+        mark-candidate-pending-component:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-mark-candidate-pending-component
+          dependentTasks:
+          - register-model-component
+          inputs:
+            parameters:
+              candidate_feature_signature:
+                componentInputParameter: pipelinechannel--current_feature_signature
+              candidate_model_resource:
+                taskOutputParameter:
+                  outputParameterKey: Output
+                  producerTask: register-model-component
+              candidate_model_signature:
+                componentInputParameter: pipelinechannel--current_model_signature
+              candidate_model_type:
+                componentInputParameter: pipelinechannel--model_type
+              current_data_month:
+                componentInputParameter: pipelinechannel--current_data_month
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              state_key:
+                componentInputParameter: pipelinechannel--state_key
+              training_state_table:
+                componentInputParameter: pipelinechannel--training_state_table
+          taskInfo:
+            name: Mark Random Forest Candidate Pending
+        register-model-component:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-register-model-component
+          dependentTasks:
+          - train-random-forest-component
+          inputs:
+            parameters:
+              artifact_uri:
+                componentInputParameter: pipelinechannel--model_artifact_uri
+              model_display_name:
+                componentInputParameter: pipelinechannel--model_display_name
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              region:
+                componentInputParameter: pipelinechannel--region
+              serving_container_image_uri:
+                componentInputParameter: pipelinechannel--serving_container_image_uri
+          taskInfo:
+            name: Register Random Forest Candidate
+        train-random-forest-component:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-train-random-forest-component
+          inputs:
+            parameters:
+              feature_columns_json:
+                componentInputParameter: pipelinechannel--feature_columns_json
+              feature_table:
+                componentInputParameter: pipelinechannel--feature_table
+              model_output_uri:
+                componentInputParameter: pipelinechannel--model_output_uri
+              model_parameters_json:
+                componentInputParameter: pipelinechannel--model_parameters_json
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+          taskInfo:
+            name: Train Random Forest Candidate
+    inputDefinitions:
+      parameters:
+        pipelinechannel--check-retraining-decision-component-Output:
+          parameterType: BOOLEAN
+        pipelinechannel--current_data_month:
+          parameterType: STRING
+        pipelinechannel--current_feature_signature:
+          parameterType: STRING
+        pipelinechannel--current_model_signature:
+          parameterType: STRING
+        pipelinechannel--feature_columns_json:
+          parameterType: STRING
+        pipelinechannel--feature_table:
+          parameterType: STRING
+        pipelinechannel--model_artifact_uri:
+          parameterType: STRING
+        pipelinechannel--model_display_name:
+          parameterType: STRING
+        pipelinechannel--model_output_uri:
+          parameterType: STRING
+        pipelinechannel--model_parameters_json:
+          parameterType: STRING
+        pipelinechannel--model_type:
+          parameterType: STRING
+        pipelinechannel--project_id:
+          parameterType: STRING
+        pipelinechannel--region:
+          parameterType: STRING
+        pipelinechannel--serving_container_image_uri:
+          parameterType: STRING
+        pipelinechannel--state_key:
+          parameterType: STRING
+        pipelinechannel--training_state_table:
+          parameterType: STRING
+  comp-condition-3:
+    dag:
+      tasks:
+        mark-candidate-pending-component-2:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-mark-candidate-pending-component-2
+          dependentTasks:
+          - register-model-component-2
+          inputs:
+            parameters:
+              candidate_feature_signature:
+                componentInputParameter: pipelinechannel--current_feature_signature
+              candidate_model_resource:
+                taskOutputParameter:
+                  outputParameterKey: Output
+                  producerTask: register-model-component-2
+              candidate_model_signature:
+                componentInputParameter: pipelinechannel--current_model_signature
+              candidate_model_type:
+                componentInputParameter: pipelinechannel--model_type
+              current_data_month:
+                componentInputParameter: pipelinechannel--current_data_month
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              state_key:
+                componentInputParameter: pipelinechannel--state_key
+              training_state_table:
+                componentInputParameter: pipelinechannel--training_state_table
+          taskInfo:
+            name: Mark XGBoost Candidate Pending
+        register-model-component-2:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-register-model-component-2
+          dependentTasks:
+          - train-xgboost-component
+          inputs:
+            parameters:
+              artifact_uri:
+                componentInputParameter: pipelinechannel--model_artifact_uri
+              model_display_name:
+                componentInputParameter: pipelinechannel--model_display_name
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+              region:
+                componentInputParameter: pipelinechannel--region
+              serving_container_image_uri:
+                componentInputParameter: pipelinechannel--serving_container_image_uri
+          taskInfo:
+            name: Register XGBoost Candidate
+        train-xgboost-component:
+          cachingOptions:
+            enableCache: true
+          componentRef:
+            name: comp-train-xgboost-component
+          inputs:
+            parameters:
+              feature_columns_json:
+                componentInputParameter: pipelinechannel--feature_columns_json
+              feature_table:
+                componentInputParameter: pipelinechannel--feature_table
+              model_output_uri:
+                componentInputParameter: pipelinechannel--model_output_uri
+              model_parameters_json:
+                componentInputParameter: pipelinechannel--model_parameters_json
+              project_id:
+                componentInputParameter: pipelinechannel--project_id
+          taskInfo:
+            name: Train XGBoost Candidate
+    inputDefinitions:
+      parameters:
+        pipelinechannel--check-retraining-decision-component-Output:
+          parameterType: BOOLEAN
+        pipelinechannel--current_data_month:
+          parameterType: STRING
+        pipelinechannel--current_feature_signature:
+          parameterType: STRING
+        pipelinechannel--current_model_signature:
+          parameterType: STRING
+        pipelinechannel--feature_columns_json:
+          parameterType: STRING
+        pipelinechannel--feature_table:
+          parameterType: STRING
+        pipelinechannel--model_artifact_uri:
+          parameterType: STRING
+        pipelinechannel--model_display_name:
+          parameterType: STRING
+        pipelinechannel--model_output_uri:
+          parameterType: STRING
+        pipelinechannel--model_parameters_json:
+          parameterType: STRING
+        pipelinechannel--model_type:
+          parameterType: STRING
+        pipelinechannel--project_id:
+          parameterType: STRING
+        pipelinechannel--region:
+          parameterType: STRING
+        pipelinechannel--serving_container_image_uri:
+          parameterType: STRING
+        pipelinechannel--state_key:
+          parameterType: STRING
+        pipelinechannel--training_state_table:
+          parameterType: STRING
+  comp-mark-candidate-pending-component:
+    executorLabel: exec-mark-candidate-pending-component
+    inputDefinitions:
+      parameters:
+        candidate_feature_signature:
+          parameterType: STRING
+        candidate_model_resource:
+          parameterType: STRING
+        candidate_model_signature:
+          parameterType: STRING
+        candidate_model_type:
+          parameterType: STRING
+        current_data_month:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        state_key:
+          defaultValue: provider_fraud_model
+          isOptional: true
+          parameterType: STRING
+        training_state_table:
+          parameterType: STRING
+  comp-mark-candidate-pending-component-2:
+    executorLabel: exec-mark-candidate-pending-component-2
+    inputDefinitions:
+      parameters:
+        candidate_feature_signature:
+          parameterType: STRING
+        candidate_model_resource:
+          parameterType: STRING
+        candidate_model_signature:
+          parameterType: STRING
+        candidate_model_type:
+          parameterType: STRING
+        current_data_month:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        state_key:
+          defaultValue: provider_fraud_model
+          isOptional: true
+          parameterType: STRING
+        training_state_table:
+          parameterType: STRING
+  comp-refresh-provider-features-component:
+    executorLabel: exec-refresh-provider-features-component
+    inputDefinitions:
+      parameters:
+        claims_table:
+          parameterType: STRING
+        derived_feature_sql_json:
+          parameterType: STRING
+        feature_sql_json:
+          parameterType: STRING
+        output_feature_table:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        test_end_date:
+          parameterType: STRING
+        test_start_date:
+          parameterType: STRING
+        train_end_date:
+          parameterType: STRING
+        train_start_date:
+          parameterType: STRING
+  comp-register-model-component:
+    executorLabel: exec-register-model-component
+    inputDefinitions:
+      parameters:
+        artifact_uri:
+          parameterType: STRING
+        model_display_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+        serving_container_image_uri:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-register-model-component-2:
+    executorLabel: exec-register-model-component-2
+    inputDefinitions:
+      parameters:
+        artifact_uri:
+          parameterType: STRING
+        model_display_name:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+        region:
+          parameterType: STRING
+        serving_container_image_uri:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+  comp-train-random-forest-component:
+    executorLabel: exec-train-random-forest-component
+    inputDefinitions:
+      parameters:
+        feature_columns_json:
+          parameterType: STRING
+        feature_table:
+          parameterType: STRING
+        model_output_uri:
+          parameterType: STRING
+        model_parameters_json:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+  comp-train-xgboost-component:
+    executorLabel: exec-train-xgboost-component
+    inputDefinitions:
+      parameters:
+        feature_columns_json:
+          parameterType: STRING
+        feature_table:
+          parameterType: STRING
+        model_output_uri:
+          parameterType: STRING
+        model_parameters_json:
+          parameterType: STRING
+        project_id:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-calculate-rolling-window-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - calculate_rolling_window_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef calculate_rolling_window_component(\n    current_data_month:\
+          \ str,\n    training_months: int,\n    testing_months: int,\n) -> NamedTuple(\n\
+          \    \"Outputs\",\n    [\n        (\"train_start_date\", str),\n       \
+          \ (\"train_end_date\", str),\n        (\"test_start_date\", str),\n    \
+          \    (\"test_end_date\", str),\n    ],\n):\n    import calendar\n    from\
+          \ datetime import date\n    from typing import NamedTuple\n\n    # ---------------------------------------------------------\n\
+          \    # Move a year/month pair forward or backward.\n    # ---------------------------------------------------------\n\
+          \    def add_months(\n        year,\n        month,\n        offset,\n \
+          \   ):\n        month_index = (\n            year * 12\n            + month\n\
+          \            - 1\n            + offset\n        )\n\n        new_year =\
+          \ (\n            month_index // 12\n        )\n\n        new_month = (\n\
+          \            month_index % 12\n            + 1\n        )\n\n        return\
+          \ (\n            new_year,\n            new_month,\n        )\n\n    # ---------------------------------------------------------\n\
+          \    # Return the last day of a month.\n    # ---------------------------------------------------------\n\
+          \    def month_end(\n        year,\n        month,\n    ):\n        final_day\
+          \ = (\n            calendar.monthrange(\n                year,\n       \
+          \         month,\n            )[1]\n        )\n\n        return date(\n\
+          \            year,\n            month,\n            final_day,\n       \
+          \ )\n\n    current = date.fromisoformat(\n        current_data_month\n \
+          \   )\n\n    # ---------------------------------------------------------\n\
+          \    # TEST window\n    #\n    # The latest complete month is included in\
+          \ TEST.\n    #\n    # Example:\n    #\n    # current_data_month = October\n\
+          \    # testing_months = 3\n    #\n    # TEST = Aug - Oct\n    # ---------------------------------------------------------\n\
+          \    test_end = month_end(\n        current.year,\n        current.month,\n\
+          \    )\n\n    (\n        test_start_year,\n        test_start_month,\n \
+          \   ) = add_months(\n        current.year,\n        current.month,\n   \
+          \     -(testing_months - 1),\n    )\n\n    test_start = date(\n        test_start_year,\n\
+          \        test_start_month,\n        1,\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # TRAIN ends immediately before TEST begins.\n    # ---------------------------------------------------------\n\
+          \    (\n        train_end_year,\n        train_end_month,\n    ) = add_months(\n\
+          \        test_start_year,\n        test_start_month,\n        -1,\n    )\n\
+          \n    train_end = month_end(\n        train_end_year,\n        train_end_month,\n\
+          \    )\n\n    # ---------------------------------------------------------\n\
+          \    # TRAIN contains the configured number of complete months.\n    #\n\
+          \    # Example:\n    #\n    # training_months = 6\n    #\n    # TRAIN =\
+          \ Feb - Jul\n    # ---------------------------------------------------------\n\
+          \    (\n        train_start_year,\n        train_start_month,\n    ) = add_months(\n\
+          \        train_end_year,\n        train_end_month,\n        -(training_months\
+          \ - 1),\n    )\n\n    train_start = date(\n        train_start_year,\n \
+          \       train_start_month,\n        1,\n    )\n\n    print(\"=\" * 60)\n\
+          \    print(\"Rolling Train / Test Window\")\n    print(\"=\" * 60)\n\n \
+          \   print(\n        f\"Current data month: \"\n        f\"{current_data_month}\"\
+          \n    )\n\n    print(\n        f\"Training months: \"\n        f\"{training_months}\"\
+          \n    )\n\n    print(\n        f\"Testing months: \"\n        f\"{testing_months}\"\
+          \n    )\n\n    print(\n        f\"\\nTRAIN: \"\n        f\"{train_start}\
+          \ -> {train_end}\"\n    )\n\n    print(\n        f\"TEST:  \"\n        f\"\
+          {test_start} -> {test_end}\"\n    )\n\n    outputs = NamedTuple(\n     \
+          \   \"Outputs\",\n        [\n            (\"train_start_date\", str),\n\
+          \            (\"train_end_date\", str),\n            (\"test_start_date\"\
+          , str),\n            (\"test_end_date\", str),\n        ],\n    )\n\n  \
+          \  return outputs(\n        train_start.isoformat(),\n        train_end.isoformat(),\n\
+          \        test_start.isoformat(),\n        test_end.isoformat(),\n    )\n\
+          \n"
+        image: python:3.11
+    exec-check-retraining-decision-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - check_retraining_decision_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef check_retraining_decision_component(\n    project_id: str,\n\
+          \    current_data_month: str,\n    current_feature_signature: str,\n   \
+          \ current_model_signature: str,\n    current_model_type: str,\n    data_quality_table:\
+          \ str,\n    feature_drift_table: str,\n    prediction_drift_table: str,\n\
+          \    training_state_table: str,\n    state_key: str = \"provider_fraud_model\"\
+          ,\n) -> bool:\n    from datetime import date\n\n    from google.cloud import\
+          \ bigquery\n\n    bq = bigquery.Client(\n        project=project_id\n  \
+          \  )\n\n    # ---------------------------------------------------------\n\
+          \    # 1. Data quality trigger\n    # ---------------------------------------------------------\n\
+          \n    data_quality_query = f\"\"\"\n    SELECT\n      monitoring_status\n\
+          \    FROM `{data_quality_table}`\n    ORDER BY monitoring_timestamp DESC\n\
+          \    LIMIT 1\n    \"\"\"\n\n    data_quality_rows = list(\n        bq.query(\n\
+          \            data_quality_query\n        ).result()\n    )\n\n    data_quality_status\
+          \ = (\n        data_quality_rows[0].monitoring_status\n        if data_quality_rows\n\
+          \        else \"PASS\"\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 2. Feature drift trigger\n    #\n    # Evaluate only the latest monitoring\
+          \ run.\n    # ---------------------------------------------------------\n\
+          \n    feature_drift_query = f\"\"\"\n    SELECT\n      COUNTIF(\n      \
+          \  monitoring_status = 'ALERT'\n      ) AS alert_count\n    FROM `{feature_drift_table}`\n\
+          \    WHERE monitoring_timestamp = (\n      SELECT\n        MAX(monitoring_timestamp)\n\
+          \      FROM `{feature_drift_table}`\n    )\n    \"\"\"\n\n    feature_drift_rows\
+          \ = list(\n        bq.query(\n            feature_drift_query\n        ).result()\n\
+          \    )\n\n    feature_alert_count = (\n        feature_drift_rows[0].alert_count\n\
+          \        if feature_drift_rows\n        else 0\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 3. Prediction drift trigger\n    #\n    # prediction_drift uses:\n\
+          \    #   status\n    #   check_date\n    # ---------------------------------------------------------\n\
+          \n    prediction_drift_query = f\"\"\"\n    SELECT\n      status\n    FROM\
+          \ `{prediction_drift_table}`\n    ORDER BY check_date DESC\n    LIMIT 1\n\
+          \    \"\"\"\n\n    prediction_drift_rows = list(\n        bq.query(\n  \
+          \          prediction_drift_query\n        ).result()\n    )\n\n    prediction_drift_status\
+          \ = (\n        prediction_drift_rows[0].status\n        if prediction_drift_rows\n\
+          \        else \"PASS\"\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 4. Read approved production state\n    #\n    # state_key identifies\
+          \ the fraud workflow, not an algorithm.\n    #\n    # Random Forest and\
+          \ XGBoost therefore compare against the\n    # same approved production\
+          \ baseline.\n    # ---------------------------------------------------------\n\
+          \n    training_state_query = f\"\"\"\n    SELECT\n      last_training_data_month,\n\
+          \      approved_feature_signature,\n      approved_model_signature,\n  \
+          \    approved_model_type\n    FROM `{training_state_table}`\n    WHERE model_name\
+          \ = @state_key\n    LIMIT 1\n    \"\"\"\n\n    job_config = bigquery.QueryJobConfig(\n\
+          \        query_parameters=[\n            bigquery.ScalarQueryParameter(\n\
+          \                \"state_key\",\n                \"STRING\",\n         \
+          \       state_key,\n            )\n        ]\n    )\n\n    training_state_rows\
+          \ = list(\n        bq.query(\n            training_state_query,\n      \
+          \      job_config=job_config,\n        ).result()\n    )\n\n    if training_state_rows:\n\
+          \        state = training_state_rows[0]\n\n        last_training_data_month\
+          \ = (\n            state.last_training_data_month\n        )\n\n       \
+          \ approved_feature_signature = (\n            state.approved_feature_signature\n\
+          \        )\n\n        approved_model_signature = (\n            state.approved_model_signature\n\
+          \        )\n\n        approved_model_type = (\n            state.approved_model_type\n\
+          \        )\n\n    else:\n        last_training_data_month = None\n     \
+          \   approved_feature_signature = None\n        approved_model_signature\
+          \ = None\n        approved_model_type = None\n\n    # ---------------------------------------------------------\n\
+          \    # 5. Use Case 1\n    #\n    # New monthly data becomes available.\n\
+          \    # ---------------------------------------------------------\n\n   \
+          \ current_data_month_date = (\n        date.fromisoformat(\n           \
+          \ current_data_month\n        )\n    )\n\n    new_month_available = (\n\
+          \        last_training_data_month is None\n        or current_data_month_date\n\
+          \        > last_training_data_month\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 6. Use Case 2\n    #\n    # Feature configuration changed.\n    #\
+          \ ---------------------------------------------------------\n\n    feature_set_changed\
+          \ = (\n        approved_feature_signature is not None\n        and current_feature_signature\n\
+          \        != approved_feature_signature\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 7. Use Case 3\n    #\n    # Model type or model parameters changed.\n\
+          \    #\n    # The model signature contains:\n    #   model_type\n    # \
+          \  model_name\n    #   hyperparameters\n    #\n    # Example:\n    #\n \
+          \   # random_forest\n    #       \u2193\n    # xgboost\n    #\n    # produces\
+          \ a different signature.\n    # ---------------------------------------------------------\n\
+          \n    model_configuration_changed = (\n        approved_model_signature\
+          \ is not None\n        and current_model_signature\n        != approved_model_signature\n\
+          \    )\n\n    # ---------------------------------------------------------\n\
+          \    # 8. Final retraining decision\n    # ---------------------------------------------------------\n\
+          \n    should_retrain = (\n        data_quality_status == \"ALERT\"\n   \
+          \     or feature_alert_count > 0\n        or prediction_drift_status ==\
+          \ \"ALERT\"\n        or new_month_available\n        or feature_set_changed\n\
+          \        or model_configuration_changed\n    )\n\n    # ---------------------------------------------------------\n\
+          \    # 9. Collect retraining reasons\n    # ---------------------------------------------------------\n\
+          \n    reasons = []\n\n    if data_quality_status == \"ALERT\":\n       \
+          \ reasons.append(\n            \"data_quality_alert\"\n        )\n\n   \
+          \ if feature_alert_count > 0:\n        reasons.append(\n            \"feature_drift_alert\"\
+          \n        )\n\n    if prediction_drift_status == \"ALERT\":\n        reasons.append(\n\
+          \            \"prediction_drift_alert\"\n        )\n\n    if new_month_available:\n\
+          \        reasons.append(\n            \"new_month_data\"\n        )\n\n\
+          \    if feature_set_changed:\n        reasons.append(\n            \"feature_set_changed\"\
+          \n        )\n\n    if model_configuration_changed:\n        reasons.append(\n\
+          \            \"model_configuration_changed\"\n        )\n\n    # ---------------------------------------------------------\n\
+          \    # 10. Decision summary\n    # ---------------------------------------------------------\n\
+          \n    print(\"=\" * 70)\n    print(\"FWA Retraining Decision\")\n    print(\"\
+          =\" * 70)\n\n    print(\n        f\"State key: \"\n        f\"{state_key}\"\
+          \n    )\n\n    print(\"\\nMONITORING\")\n    print(\"-\" * 70)\n\n    print(\n\
+          \        f\"Data Quality Status: \"\n        f\"{data_quality_status}\"\n\
+          \    )\n\n    print(\n        f\"Feature Drift Alert Count: \"\n       \
+          \ f\"{feature_alert_count}\"\n    )\n\n    print(\n        f\"Prediction\
+          \ Drift Status: \"\n        f\"{prediction_drift_status}\"\n    )\n\n  \
+          \  print(\"\\nUSE CASE 1 - DATA\")\n    print(\"-\" * 70)\n\n    print(\n\
+          \        f\"Current Data Month: \"\n        f\"{current_data_month_date}\"\
+          \n    )\n\n    print(\n        f\"Last Training Data Month: \"\n       \
+          \ f\"{last_training_data_month}\"\n    )\n\n    print(\n        f\"New Month\
+          \ Available: \"\n        f\"{new_month_available}\"\n    )\n\n    print(\"\
+          \\nUSE CASE 2 - FEATURES\")\n    print(\"-\" * 70)\n\n    print(\n     \
+          \   \"Approved Feature Signature: \"\n        f\"{approved_feature_signature}\"\
+          \n    )\n\n    print(\n        \"Current Feature Signature: \"\n       \
+          \ f\"{current_feature_signature}\"\n    )\n\n    print(\n        f\"Feature\
+          \ Set Changed: \"\n        f\"{feature_set_changed}\"\n    )\n\n    print(\"\
+          \\nUSE CASE 3 - MODEL\")\n    print(\"-\" * 70)\n\n    print(\n        f\"\
+          Approved Model Type: \"\n        f\"{approved_model_type}\"\n    )\n\n \
+          \   print(\n        f\"Current Model Type: \"\n        f\"{current_model_type}\"\
+          \n    )\n\n    print(\n        \"Approved Model Signature: \"\n        f\"\
+          {approved_model_signature}\"\n    )\n\n    print(\n        \"Current Model\
+          \ Signature: \"\n        f\"{current_model_signature}\"\n    )\n\n    print(\n\
+          \        f\"Model Configuration Changed: \"\n        f\"{model_configuration_changed}\"\
+          \n    )\n\n    print(\"\\n\" + \"=\" * 70)\n\n    print(\n        f\"Should\
+          \ Retrain: \"\n        f\"{should_retrain}\"\n    )\n\n    if reasons:\n\
+          \        print(\n            \"\\nRetraining trigger(s):\"\n        )\n\n\
+          \        for reason in reasons:\n            print(\n                f\"\
+          \  - {reason}\"\n            )\n\n    else:\n        print(\n          \
+          \  \"\\nNo retraining triggers detected.\"\n        )\n\n    return should_retrain\n\
+          \n"
+        image: python:3.11
+    exec-mark-candidate-pending-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - mark_candidate_pending_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef mark_candidate_pending_component(\n    project_id: str,\n   \
+          \ training_state_table: str,\n    current_data_month: str,\n    candidate_model_resource:\
+          \ str,\n    candidate_feature_signature: str,\n    candidate_model_signature:\
+          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model\"\
+          ,\n):\n    from google.cloud import bigquery\n\n    bq = bigquery.Client(\n\
+          \        project=project_id\n    )\n\n    query = f\"\"\"\n    MERGE `{training_state_table}`\
+          \ AS target\n\n    USING (\n      SELECT\n        @state_key AS model_name,\n\
+          \        DATE(@current_data_month) AS candidate_data_month,\n        @candidate_model_resource\
+          \ AS candidate_model_resource,\n        @candidate_feature_signature AS\
+          \ candidate_feature_signature,\n        @candidate_model_signature AS candidate_model_signature,\n\
+          \        @candidate_model_type AS candidate_model_type\n    ) AS source\n\
+          \n    ON target.model_name = source.model_name\n\n    WHEN MATCHED THEN\n\
+          \      UPDATE SET\n\n        candidate_status =\n          'PENDING_APPROVAL',\n\
+          \n        candidate_model_resource =\n          source.candidate_model_resource,\n\
+          \n        candidate_data_month =\n          source.candidate_data_month,\n\
+          \n        candidate_feature_signature =\n          source.candidate_feature_signature,\n\
+          \n        candidate_model_signature =\n          source.candidate_model_signature,\n\
+          \n        candidate_model_type =\n          source.candidate_model_type,\n\
+          \n        candidate_created_at =\n          CURRENT_TIMESTAMP()\n\n    WHEN\
+          \ NOT MATCHED THEN\n      INSERT (\n        model_name,\n        candidate_status,\n\
+          \        candidate_model_resource,\n        candidate_data_month,\n    \
+          \    candidate_feature_signature,\n        candidate_model_signature,\n\
+          \        candidate_model_type,\n        candidate_created_at\n      )\n\n\
+          \      VALUES (\n        source.model_name,\n        'PENDING_APPROVAL',\n\
+          \        source.candidate_model_resource,\n        source.candidate_data_month,\n\
+          \        source.candidate_feature_signature,\n        source.candidate_model_signature,\n\
+          \        source.candidate_model_type,\n        CURRENT_TIMESTAMP()\n   \
+          \   )\n    \"\"\"\n\n    job_config = (\n        bigquery.QueryJobConfig(\n\
+          \            query_parameters=[\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"state_key\",\n                    \"STRING\",\n \
+          \                   state_key,\n                ),\n\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"current_data_month\",\n                    \"STRING\"\
+          ,\n                    current_data_month,\n                ),\n\n     \
+          \           bigquery.ScalarQueryParameter(\n                    \"candidate_model_resource\"\
+          ,\n                    \"STRING\",\n                    candidate_model_resource,\n\
+          \                ),\n\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"candidate_feature_signature\",\n                \
+          \    \"STRING\",\n                    candidate_feature_signature,\n   \
+          \             ),\n\n                bigquery.ScalarQueryParameter(\n   \
+          \                 \"candidate_model_signature\",\n                    \"\
+          STRING\",\n                    candidate_model_signature,\n            \
+          \    ),\n\n                bigquery.ScalarQueryParameter(\n            \
+          \        \"candidate_model_type\",\n                    \"STRING\",\n  \
+          \                  candidate_model_type,\n                ),\n         \
+          \   ]\n        )\n    )\n\n    bq.query(\n        query,\n        job_config=job_config,\n\
+          \    ).result()\n\n    print(\"=\" * 70)\n    print(\"Candidate Model Pending\
+          \ Approval\")\n    print(\"=\" * 70)\n\n    print(\n        f\"Workflow:\
+          \ \"\n        f\"{state_key}\"\n    )\n\n    print(\n        f\"Candidate\
+          \ model type: \"\n        f\"{candidate_model_type}\"\n    )\n\n    print(\n\
+          \        f\"Candidate data month: \"\n        f\"{current_data_month}\"\n\
+          \    )\n\n    print(\n        f\"Candidate model resource: \"\n        f\"\
+          {candidate_model_resource}\"\n    )\n\n    print(\n        f\"Candidate\
+          \ feature signature: \"\n        f\"{candidate_feature_signature}\"\n  \
+          \  )\n\n    print(\n        f\"Candidate model signature: \"\n        f\"\
+          {candidate_model_signature}\"\n    )\n\n    print(\n        \"Candidate\
+          \ status: \"\n        \"PENDING_APPROVAL\"\n    )\n\n    print(\n      \
+          \  \"\\nProduction state remains unchanged.\"\n    )\n\n"
+        image: python:3.11
+    exec-mark-candidate-pending-component-2:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - mark_candidate_pending_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef mark_candidate_pending_component(\n    project_id: str,\n   \
+          \ training_state_table: str,\n    current_data_month: str,\n    candidate_model_resource:\
+          \ str,\n    candidate_feature_signature: str,\n    candidate_model_signature:\
+          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model\"\
+          ,\n):\n    from google.cloud import bigquery\n\n    bq = bigquery.Client(\n\
+          \        project=project_id\n    )\n\n    query = f\"\"\"\n    MERGE `{training_state_table}`\
+          \ AS target\n\n    USING (\n      SELECT\n        @state_key AS model_name,\n\
+          \        DATE(@current_data_month) AS candidate_data_month,\n        @candidate_model_resource\
+          \ AS candidate_model_resource,\n        @candidate_feature_signature AS\
+          \ candidate_feature_signature,\n        @candidate_model_signature AS candidate_model_signature,\n\
+          \        @candidate_model_type AS candidate_model_type\n    ) AS source\n\
+          \n    ON target.model_name = source.model_name\n\n    WHEN MATCHED THEN\n\
+          \      UPDATE SET\n\n        candidate_status =\n          'PENDING_APPROVAL',\n\
+          \n        candidate_model_resource =\n          source.candidate_model_resource,\n\
+          \n        candidate_data_month =\n          source.candidate_data_month,\n\
+          \n        candidate_feature_signature =\n          source.candidate_feature_signature,\n\
+          \n        candidate_model_signature =\n          source.candidate_model_signature,\n\
+          \n        candidate_model_type =\n          source.candidate_model_type,\n\
+          \n        candidate_created_at =\n          CURRENT_TIMESTAMP()\n\n    WHEN\
+          \ NOT MATCHED THEN\n      INSERT (\n        model_name,\n        candidate_status,\n\
+          \        candidate_model_resource,\n        candidate_data_month,\n    \
+          \    candidate_feature_signature,\n        candidate_model_signature,\n\
+          \        candidate_model_type,\n        candidate_created_at\n      )\n\n\
+          \      VALUES (\n        source.model_name,\n        'PENDING_APPROVAL',\n\
+          \        source.candidate_model_resource,\n        source.candidate_data_month,\n\
+          \        source.candidate_feature_signature,\n        source.candidate_model_signature,\n\
+          \        source.candidate_model_type,\n        CURRENT_TIMESTAMP()\n   \
+          \   )\n    \"\"\"\n\n    job_config = (\n        bigquery.QueryJobConfig(\n\
+          \            query_parameters=[\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"state_key\",\n                    \"STRING\",\n \
+          \                   state_key,\n                ),\n\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"current_data_month\",\n                    \"STRING\"\
+          ,\n                    current_data_month,\n                ),\n\n     \
+          \           bigquery.ScalarQueryParameter(\n                    \"candidate_model_resource\"\
+          ,\n                    \"STRING\",\n                    candidate_model_resource,\n\
+          \                ),\n\n                bigquery.ScalarQueryParameter(\n\
+          \                    \"candidate_feature_signature\",\n                \
+          \    \"STRING\",\n                    candidate_feature_signature,\n   \
+          \             ),\n\n                bigquery.ScalarQueryParameter(\n   \
+          \                 \"candidate_model_signature\",\n                    \"\
+          STRING\",\n                    candidate_model_signature,\n            \
+          \    ),\n\n                bigquery.ScalarQueryParameter(\n            \
+          \        \"candidate_model_type\",\n                    \"STRING\",\n  \
+          \                  candidate_model_type,\n                ),\n         \
+          \   ]\n        )\n    )\n\n    bq.query(\n        query,\n        job_config=job_config,\n\
+          \    ).result()\n\n    print(\"=\" * 70)\n    print(\"Candidate Model Pending\
+          \ Approval\")\n    print(\"=\" * 70)\n\n    print(\n        f\"Workflow:\
+          \ \"\n        f\"{state_key}\"\n    )\n\n    print(\n        f\"Candidate\
+          \ model type: \"\n        f\"{candidate_model_type}\"\n    )\n\n    print(\n\
+          \        f\"Candidate data month: \"\n        f\"{current_data_month}\"\n\
+          \    )\n\n    print(\n        f\"Candidate model resource: \"\n        f\"\
+          {candidate_model_resource}\"\n    )\n\n    print(\n        f\"Candidate\
+          \ feature signature: \"\n        f\"{candidate_feature_signature}\"\n  \
+          \  )\n\n    print(\n        f\"Candidate model signature: \"\n        f\"\
+          {candidate_model_signature}\"\n    )\n\n    print(\n        \"Candidate\
+          \ status: \"\n        \"PENDING_APPROVAL\"\n    )\n\n    print(\n      \
+          \  \"\\nProduction state remains unchanged.\"\n    )\n\n"
+        image: python:3.11
+    exec-refresh-provider-features-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - refresh_provider_features_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef refresh_provider_features_component(\n    project_id: str,\n\
+          \    claims_table: str,\n    output_feature_table: str,\n    feature_sql_json:\
+          \ str,\n    derived_feature_sql_json: str,\n    train_start_date: str,\n\
+          \    train_end_date: str,\n    test_start_date: str,\n    test_end_date:\
+          \ str,\n):\n    import json\n    import re\n\n    from google.cloud import\
+          \ bigquery\n\n\n    # ============================================================\n\
+          \    # 1. PARSE FEATURE DEFINITIONS\n    #\n    # Base features and derived\
+          \ features are passed into the\n    # component as JSON so the same pipeline\
+          \ can support different\n    # feature sets without rewriting this component.\n\
+          \    #\n    # Example:\n    #\n    # {\n    #   \"high_acuity_pct\":\n \
+          \   #       \"AVG(CAST(is_high_acuity_em AS FLOAT64))\",\n    #\n    # \
+          \  \"avg_member_provider_distance\":\n    #       \"AVG(member_provider_distance)\"\
+          \n    # }\n    #\n    # Use Case 2 simply adds a new feature definition\
+          \ to the config.\n    # ============================================================\n\
+          \n    feature_sql = json.loads(\n        feature_sql_json\n    )\n\n   \
+          \ derived_feature_sql = json.loads(\n        derived_feature_sql_json\n\
+          \    )\n\n    if not feature_sql:\n        raise ValueError(\n         \
+          \   \"feature_sql_json is empty.\"\n        )\n\n\n    # ============================================================\n\
+          \    # 2. VALIDATE FEATURE NAMES\n    #\n    # Feature names are used when\
+          \ dynamically building SQL, so only\n    # standard SQL-safe column names\
+          \ are allowed.\n    # ============================================================\n\
+          \n    feature_name_pattern = (\n        r\"^[A-Za-z_][A-Za-z0-9_]*$\"\n\
+          \    )\n\n    all_feature_names = (\n        list(feature_sql.keys())\n\
+          \        + list(derived_feature_sql.keys())\n    )\n\n    for feature_name\
+          \ in all_feature_names:\n        if not re.fullmatch(\n            feature_name_pattern,\n\
+          \            feature_name,\n        ):\n            raise ValueError(\n\
+          \                f\"Invalid feature name: \"\n                f\"{feature_name}\"\
+          \n            )\n\n\n    # ============================================================\n\
+          \    # 3. VALIDATE BIGQUERY TABLE NAMES\n    # ============================================================\n\
+          \n    table_pattern = (\n        r\"^[A-Za-z0-9_-]+\\.\"\n        r\"[A-Za-z0-9_]+\\\
+          .\"\n        r\"[A-Za-z0-9_]+$\"\n    )\n\n    for table_name in [\n   \
+          \     claims_table,\n        output_feature_table,\n    ]:\n        if not\
+          \ re.fullmatch(\n            table_pattern,\n            table_name,\n \
+          \       ):\n            raise ValueError(\n                f\"Invalid BigQuery\
+          \ table: \"\n                f\"{table_name}\"\n            )\n\n\n    client\
+          \ = bigquery.Client(\n        project=project_id\n    )\n\n\n    # ============================================================\n\
+          \    # 4. BUILD BASE FEATURE SQL\n    #\n    # Each configured claim-level\
+          \ expression is aggregated to the\n    # provider level.\n    #\n    # Examples:\n\
+          \    #\n    # AVG(CAST(is_99215 AS FLOAT64))\n    #     AS pct_99215\n \
+          \   #\n    # AVG(member_provider_distance)\n    #     AS avg_member_provider_distance\n\
+          \    #\n    # The second example is the feature introduced in Use Case 2.\n\
+          \    # ============================================================\n\n\
+          \    aggregate_feature_expressions = []\n\n    for (\n        feature_name,\n\
+          \        sql_expression,\n    ) in feature_sql.items():\n\n        aggregate_feature_expressions.append(\n\
+          \            f\"\"\"\n            {sql_expression}\n              AS {feature_name}\n\
+          \            \"\"\"\n        )\n\n    aggregate_feature_sql = \",\\n\".join(\n\
+          \        aggregate_feature_expressions\n    )\n\n\n    # ============================================================\n\
+          \    # 5. SPLIT-LEVEL BASELINE\n    #\n    # high_acuity_oe_ratio depends\
+          \ on a peer baseline calculated\n    # separately for TRAIN and TEST.\n\
+          \    #\n    # These baseline values are supporting metadata rather than\n\
+          \    # direct Random Forest inputs.\n    # ============================================================\n\
+          \n    baseline_sql = \"\"\"\n        AVG(high_acuity_pct)\n          AS\
+          \ expected_high_acuity_pct\n    \"\"\"\n\n\n    # ============================================================\n\
+          \    # 6. BUILD DERIVED FEATURE SQL\n    #\n    # Derived features are calculated\
+          \ after provider aggregation.\n    #\n    # Example:\n    #\n    # SAFE_DIVIDE(\n\
+          \    #     p.high_acuity_pct,\n    #     b.expected_high_acuity_pct\n  \
+          \  # )\n    #\n    #     AS high_acuity_oe_ratio\n    # ============================================================\n\
+          \n    derived_expressions = []\n\n    for (\n        feature_name,\n   \
+          \     sql_expression,\n    ) in derived_feature_sql.items():\n\n       \
+          \ derived_expressions.append(\n            f\"\"\"\n            {sql_expression}\n\
+          \              AS {feature_name}\n            \"\"\"\n        )\n\n    if\
+          \ derived_expressions:\n        derived_select_sql = (\n            \",\\\
+          n\"\n            + \",\\n\".join(\n                derived_expressions\n\
+          \            )\n        )\n    else:\n        derived_select_sql = \"\"\n\
+          \n\n    # ============================================================\n\
+          \    # 7. BUILD FINAL BASE FEATURE SELECT\n    # ============================================================\n\
+          \n    base_feature_select = []\n\n    for feature_name in feature_sql.keys():\n\
+          \        base_feature_select.append(\n            f\"p.{feature_name}\"\n\
+          \        )\n\n    base_feature_select_sql = \",\\n\".join(\n        base_feature_select\n\
+          \    )\n\n\n    # ============================================================\n\
+          \    # 8. CREATE ROLLING PROVIDER FEATURE TABLE\n    #\n    # Use Case 1:\n\
+          \    #\n    # TRAIN and TEST are assigned dynamically from service_date.\n\
+          \    #\n    # Example for:\n    #\n    # current_data_month = 2026-10-01\n\
+          \    #\n    # TRAIN:\n    # 2026-02-01 -> 2026-07-31\n    #\n    # TEST:\n\
+          \    # 2026-08-01 -> 2026-10-31\n    #\n    # There are no hard-coded split\
+          \ dates in this component.\n    #\n    #\n    # Use Case 2:\n    #\n   \
+          \ # member_provider_distance already exists in raw claims.\n    # Adding:\n\
+          \    #\n    # AVG(member_provider_distance)\n    #\n    # to feature_sql\
+          \ automatically creates the new provider-level\n    # feature without changing\
+          \ this component.\n    #\n    #\n    # fraud_provider_label is synthetic\
+          \ ground truth used only for\n    # this demo. It allows Random Forest to\
+          \ train on TRAIN and\n    # evaluate on TEST.\n    # ============================================================\n\
+          \n    query = f\"\"\"\n    CREATE OR REPLACE TABLE\n    `{output_feature_table}`\
+          \ AS\n\n    WITH claim_windows AS (\n\n      SELECT\n        *,\n\n    \
+          \    CASE\n          WHEN service_date BETWEEN\n               DATE(@train_start_date)\n\
+          \               AND DATE(@train_end_date)\n            THEN 'TRAIN'\n\n\
+          \          WHEN service_date BETWEEN\n               DATE(@test_start_date)\n\
+          \               AND DATE(@test_end_date)\n            THEN 'TEST'\n\n  \
+          \        ELSE NULL\n        END AS rolling_dataset_split\n\n      FROM `{claims_table}`\n\
+          \n      WHERE service_date BETWEEN\n        DATE(@train_start_date)\n  \
+          \      AND DATE(@test_end_date)\n    ),\n\n    provider_base AS (\n\n  \
+          \    SELECT\n        provider_id,\n\n        ANY_VALUE(\n          provider_name\n\
+          \        ) AS provider_name,\n\n        ANY_VALUE(\n          provider_specialty\n\
+          \        ) AS provider_specialty,\n\n        ANY_VALUE(\n          provider_city\n\
+          \        ) AS provider_city,\n\n        ANY_VALUE(\n          provider_state\n\
+          \        ) AS provider_state,\n\n        rolling_dataset_split\n       \
+          \   AS dataset_split,\n\n        MAX(\n          fraud_provider_label\n\
+          \        ) AS fraud_label,\n\n        COUNT(*)\n          AS claim_count,\n\
+          \n        COUNT(\n          DISTINCT member_id\n        ) AS unique_members,\n\
+          \n        {aggregate_feature_sql}\n\n      FROM claim_windows\n\n      WHERE\n\
+          \        rolling_dataset_split\n        IS NOT NULL\n\n      GROUP BY\n\
+          \        provider_id,\n        rolling_dataset_split\n    ),\n\n    split_baseline\
+          \ AS (\n\n      SELECT\n        dataset_split,\n\n        {baseline_sql}\n\
+          \n      FROM provider_base\n\n      GROUP BY\n        dataset_split\n  \
+          \  )\n\n    SELECT\n      p.provider_id,\n      p.provider_name,\n     \
+          \ p.provider_specialty,\n      p.provider_city,\n      p.provider_state,\n\
+          \n      p.dataset_split,\n      p.fraud_label,\n\n      p.claim_count,\n\
+          \      p.unique_members,\n\n      {base_feature_select_sql}\n\n      {derived_select_sql}\n\
+          \n    FROM provider_base p\n\n    LEFT JOIN split_baseline b\n      USING(dataset_split)\n\
+          \n    ORDER BY\n      dataset_split,\n      provider_id\n    \"\"\"\n\n\n\
+          \    # ============================================================\n  \
+          \  # 9. EXECUTE FEATURE REFRESH\n    # ============================================================\n\
+          \n    job_config = bigquery.QueryJobConfig(\n        query_parameters=[\n\
+          \            bigquery.ScalarQueryParameter(\n                \"train_start_date\"\
+          ,\n                \"STRING\",\n                train_start_date,\n    \
+          \        ),\n            bigquery.ScalarQueryParameter(\n              \
+          \  \"train_end_date\",\n                \"STRING\",\n                train_end_date,\n\
+          \            ),\n            bigquery.ScalarQueryParameter(\n          \
+          \      \"test_start_date\",\n                \"STRING\",\n             \
+          \   test_start_date,\n            ),\n            bigquery.ScalarQueryParameter(\n\
+          \                \"test_end_date\",\n                \"STRING\",\n     \
+          \           test_end_date,\n            ),\n        ]\n    )\n\n    print(\"\
+          =\" * 65)\n    print(\"REFRESH PROVIDER FEATURES\")\n    print(\"=\" * 65)\n\
+          \n    print(\n        f\"TRAIN: \"\n        f\"{train_start_date} \"\n \
+          \       f\"to {train_end_date}\"\n    )\n\n    print(\n        f\"TEST:\
+          \  \"\n        f\"{test_start_date} \"\n        f\"to {test_end_date}\"\n\
+          \    )\n\n    print(\n        \"\\nBase features:\"\n    )\n\n    for feature_name\
+          \ in feature_sql:\n        print(\n            f\"  - {feature_name}\"\n\
+          \        )\n\n    if derived_feature_sql:\n        print(\n            \"\
+          \\nDerived features:\"\n        )\n\n        for feature_name in derived_feature_sql:\n\
+          \            print(\n                f\"  - {feature_name}\"\n         \
+          \   )\n\n    client.query(\n        query,\n        job_config=job_config,\n\
+          \    ).result()\n\n\n    # ============================================================\n\
+          \    # 10. VERIFY OUTPUT\n    #\n    # Confirm both rolling splits were\
+          \ created and show:\n    #\n    # - number of providers\n    # - number\
+          \ of claims\n    # - fraud / normal provider counts\n    #\n    # This output\
+          \ is useful during the Vertex Pipeline demo.\n    # ============================================================\n\
+          \n    verify_query = f\"\"\"\n    SELECT\n      dataset_split,\n\n     \
+          \ COUNT(*) AS provider_rows,\n\n      SUM(claim_count)\n        AS claims_used,\n\
+          \n      COUNTIF(\n        fraud_label = 1\n      ) AS fraud_providers,\n\
+          \n      COUNTIF(\n        fraud_label = 0\n      ) AS normal_providers\n\
+          \n    FROM `{output_feature_table}`\n\n    GROUP BY\n      dataset_split\n\
+          \n    ORDER BY\n      dataset_split\n    \"\"\"\n\n    rows = list(\n  \
+          \      client.query(\n            verify_query\n        ).result()\n   \
+          \ )\n\n    if not rows:\n        raise RuntimeError(\n            \"Feature\
+          \ refresh produced no rows.\"\n        )\n\n    split_names = {\n      \
+          \  row.dataset_split\n        for row in rows\n    }\n\n    required_splits\
+          \ = {\n        \"TRAIN\",\n        \"TEST\",\n    }\n\n    missing_splits\
+          \ = (\n        required_splits\n        - split_names\n    )\n\n    if missing_splits:\n\
+          \        raise RuntimeError(\n            \"Feature refresh is missing \"\
+          \n            f\"dataset split(s): \"\n            f\"{sorted(missing_splits)}\"\
+          \n        )\n\n\n    # ============================================================\n\
+          \    # 11. PRINT FEATURE REFRESH SUMMARY\n    # ============================================================\n\
+          \n    print(\n        \"\\nFeature refresh complete:\"\n    )\n\n    for\
+          \ row in rows:\n        print(\n            f\"\\n{row.dataset_split}\"\n\
+          \        )\n\n        print(\n            f\"  Providers: \"\n         \
+          \   f\"{row.provider_rows}\"\n        )\n\n        print(\n            f\"\
+          \  Claims used: \"\n            f\"{row.claims_used}\"\n        )\n\n  \
+          \      print(\n            f\"  Fraud providers: \"\n            f\"{row.fraud_providers}\"\
+          \n        )\n\n        print(\n            f\"  Normal providers: \"\n \
+          \           f\"{row.normal_providers}\"\n        )\n\n\n    # ============================================================\n\
+          \    # 12. FEATURE VALIDATION\n    #\n    # Check whether any generated\
+          \ feature contains NULL values.\n    #\n    # This prevents Random Forest\
+          \ training from starting with an\n    # invalid provider-level dataset.\n\
+          \    # ============================================================\n\n\
+          \    all_model_features = (\n        list(feature_sql.keys())\n        +\
+          \ list(\n            derived_feature_sql.keys()\n        )\n    )\n\n  \
+          \  null_checks = []\n\n    for feature_name in all_model_features:\n   \
+          \     null_checks.append(\n            f\"\"\"\n            COUNTIF(\n \
+          \             {feature_name} IS NULL\n            ) AS {feature_name}_nulls\n\
+          \            \"\"\"\n        )\n\n    null_check_sql = \",\\n\".join(\n\
+          \        null_checks\n    )\n\n    validation_query = f\"\"\"\n    SELECT\n\
+          \      {null_check_sql}\n    FROM `{output_feature_table}`\n    \"\"\"\n\
+          \n    validation_rows = list(\n        client.query(\n            validation_query\n\
+          \        ).result()\n    )\n\n    if not validation_rows:\n        raise\
+          \ RuntimeError(\n            \"Feature validation query \"\n           \
+          \ \"returned no result.\"\n        )\n\n    validation_row = (\n       \
+          \ validation_rows[0]\n    )\n\n    null_feature_counts = {}\n\n    for feature_name\
+          \ in all_model_features:\n        null_count = getattr(\n            validation_row,\n\
+          \            f\"{feature_name}_nulls\",\n        )\n\n        null_feature_counts[\n\
+          \            feature_name\n        ] = null_count\n\n    features_with_nulls\
+          \ = {\n        feature_name: null_count\n        for (\n            feature_name,\n\
+          \            null_count,\n        ) in null_feature_counts.items()\n   \
+          \     if null_count > 0\n    }\n\n    if features_with_nulls:\n        raise\
+          \ RuntimeError(\n            \"NULL values found in \"\n            f\"\
+          provider features: \"\n            f\"{features_with_nulls}\"\n        )\n\
+          \n    print(\n        \"\\nFeature validation: PASS\"\n    )\n\n    print(\n\
+          \        \"No NULL values found in \"\n        \"configured model features.\"\
+          \n    )\n\n"
+        image: python:3.11
+    exec-register-model-component:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - register_model_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef register_model_component(\n    project_id: str,\n    region:\
+          \ str,\n    model_display_name: str,\n    artifact_uri: str,\n    serving_container_image_uri:\
+          \ str,\n) -> str:\n    from google.cloud import aiplatform\n\n    aiplatform.init(\n\
+          \        project=project_id,\n        location=region,\n    )\n\n    print(\"\
+          =\" * 60)\n    print(\"Registering Random Forest Model\")\n    print(\"\
+          =\" * 60)\n\n    print(\n        f\"Project: \"\n        f\"{project_id}\"\
+          \n    )\n\n    print(\n        f\"Region: \"\n        f\"{region}\"\n  \
+          \  )\n\n    print(\n        f\"Model display name: \"\n        f\"{model_display_name}\"\
+          \n    )\n\n    print(\n        f\"Artifact URI: \"\n        f\"{artifact_uri}\"\
+          \n    )\n\n    print(\n        f\"Serving container: \"\n        f\"{serving_container_image_uri}\"\
+          \n    )\n\n    model = aiplatform.Model.upload(\n        display_name=model_display_name,\n\
+          \        artifact_uri=artifact_uri,\n        serving_container_image_uri=serving_container_image_uri,\n\
+          \        sync=True,\n    )\n\n    print(\"\\nModel registered successfully.\"\
+          )\n\n    print(\n        f\"Model resource name: \"\n        f\"{model.resource_name}\"\
+          \n    )\n\n    return model.resource_name\n\n"
+        image: python:3.11
+    exec-register-model-component-2:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - register_model_component
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.17.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef register_model_component(\n    project_id: str,\n    region:\
+          \ str,\n    model_display_name: str,\n    artifact_uri: str,\n    serving_container_image_uri:\
+          \ str,\n) -> str:\n    from google.cloud import aiplatform\n\n    aiplatform.init(\n\
+          \        project=project_id,\n        location=region,\n    )\n\n    print(\"\
+          =\" * 60)\n    print(\"Registering Random Forest Model\")\n    print(\"\
+          =\" * 60)\n\n    print(\n        f\"Project: \"\n        f\"{project_id}\"\
+          \n    )\n\n    print(\n        f\"Region: \"\n        f\"{region}\"\n  \
+          \  )\n\n    print(\n        f\"Model display name: \"\n        f\"{model_display_name}\"\
+          \n    )\n\n    print(\n        f\"Artifact URI: \"\n        f\"{artifact_uri}\"\
+          \n    )\n\n    print(\n        f\"Serving container: \"\n        f\"{serving_container_image_uri}\"\
+          \n    )\n\n    model = aiplatform.Model.upload(\n        display_name=model_display_name,\n\
+          \        artifact_uri=artifact_uri,\n        serving_container_image_uri=serving_container_image_uri,\n\
+          \        sync=True,\n    )\n\n    print(\"\\nModel registered successfully.\"\
+          )\n\n    print(\n        f\"Model resource name: \"\n        f\"{model.resource_name}\"\
+          \n    )\n\n    return model.resource_name\n\n"
+        image: python:3.11
+    exec-train-random-forest-component:
+      container:
+        args:
+        - --project-id
+        - '{{$.inputs.parameters[''project_id'']}}'
+        - --feature-table
+        - '{{$.inputs.parameters[''feature_table'']}}'
+        - --feature-columns
+        - '{{$.inputs.parameters[''feature_columns_json'']}}'
+        - --model-parameters
+        - '{{$.inputs.parameters[''model_parameters_json'']}}'
+        - --model-output-uri
+        - '{{$.inputs.parameters[''model_output_uri'']}}'
+        image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:v2
+    exec-train-xgboost-component:
+      container:
+        args:
+        - --project-id
+        - '{{$.inputs.parameters[''project_id'']}}'
+        - --feature-table
+        - '{{$.inputs.parameters[''feature_table'']}}'
+        - --feature-columns
+        - '{{$.inputs.parameters[''feature_columns_json'']}}'
+        - --model-parameters
+        - '{{$.inputs.parameters[''model_parameters_json'']}}'
+        - --model-output-uri
+        - '{{$.inputs.parameters[''model_output_uri'']}}'
+        image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-training:v1
+pipelineInfo:
+  description: Reusable provider-level fraud detection pipeline supporting Random
+    Forest and XGBoost with shared feature engineering, retraining logic, model registration,
+    and manual approval.
+  name: fraud-model-training
+root:
+  dag:
+    tasks:
+      check-retraining-decision-component:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-check-retraining-decision-component
+        inputs:
+          parameters:
+            current_data_month:
+              componentInputParameter: current_data_month
+            current_feature_signature:
+              componentInputParameter: current_feature_signature
+            current_model_signature:
+              componentInputParameter: current_model_signature
+            current_model_type:
+              componentInputParameter: model_type
+            data_quality_table:
+              componentInputParameter: data_quality_table
+            feature_drift_table:
+              componentInputParameter: feature_drift_table
+            prediction_drift_table:
+              componentInputParameter: prediction_drift_table
+            project_id:
+              componentInputParameter: project_id
+            state_key:
+              componentInputParameter: state_key
+            training_state_table:
+              componentInputParameter: training_state_table
+        taskInfo:
+          name: Check Retraining Decision
+      condition-1:
+        componentRef:
+          name: comp-condition-1
+        dependentTasks:
+        - check-retraining-decision-component
+        inputs:
+          parameters:
+            pipelinechannel--check-retraining-decision-component-Output:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: check-retraining-decision-component
+            pipelinechannel--claims_table:
+              componentInputParameter: claims_table
+            pipelinechannel--current_data_month:
+              componentInputParameter: current_data_month
+            pipelinechannel--current_feature_signature:
+              componentInputParameter: current_feature_signature
+            pipelinechannel--current_model_signature:
+              componentInputParameter: current_model_signature
+            pipelinechannel--derived_feature_sql_json:
+              componentInputParameter: derived_feature_sql_json
+            pipelinechannel--feature_columns_json:
+              componentInputParameter: feature_columns_json
+            pipelinechannel--feature_sql_json:
+              componentInputParameter: feature_sql_json
+            pipelinechannel--feature_table:
+              componentInputParameter: feature_table
+            pipelinechannel--model_artifact_uri:
+              componentInputParameter: model_artifact_uri
+            pipelinechannel--model_display_name:
+              componentInputParameter: model_display_name
+            pipelinechannel--model_output_uri:
+              componentInputParameter: model_output_uri
+            pipelinechannel--model_parameters_json:
+              componentInputParameter: model_parameters_json
+            pipelinechannel--model_type:
+              componentInputParameter: model_type
+            pipelinechannel--project_id:
+              componentInputParameter: project_id
+            pipelinechannel--region:
+              componentInputParameter: region
+            pipelinechannel--serving_container_image_uri:
+              componentInputParameter: serving_container_image_uri
+            pipelinechannel--state_key:
+              componentInputParameter: state_key
+            pipelinechannel--testing_months:
+              componentInputParameter: testing_months
+            pipelinechannel--training_months:
+              componentInputParameter: training_months
+            pipelinechannel--training_state_table:
+              componentInputParameter: training_state_table
+        taskInfo:
+          name: retraining-required
+        triggerPolicy:
+          condition: inputs.parameter_values['pipelinechannel--check-retraining-decision-component-Output']
+            == true
+  inputDefinitions:
+    parameters:
+      claims_table:
+        parameterType: STRING
+      current_data_month:
+        parameterType: STRING
+      current_feature_signature:
+        parameterType: STRING
+      current_model_signature:
+        parameterType: STRING
+      data_quality_table:
+        parameterType: STRING
+      derived_feature_sql_json:
+        parameterType: STRING
+      feature_columns_json:
+        parameterType: STRING
+      feature_drift_table:
+        parameterType: STRING
+      feature_sql_json:
+        parameterType: STRING
+      feature_table:
+        parameterType: STRING
+      model_artifact_uri:
+        parameterType: STRING
+      model_display_name:
+        parameterType: STRING
+      model_name:
+        parameterType: STRING
+      model_output_uri:
+        parameterType: STRING
+      model_parameters_json:
+        parameterType: STRING
+      model_type:
+        parameterType: STRING
+      prediction_drift_table:
+        parameterType: STRING
+      project_id:
+        parameterType: STRING
+      region:
+        parameterType: STRING
+      serving_container_image_uri:
+        parameterType: STRING
+      state_key:
+        defaultValue: provider_fraud_model
+        isOptional: true
+        parameterType: STRING
+      testing_months:
+        parameterType: NUMBER_INTEGER
+      training_months:
+        parameterType: NUMBER_INTEGER
+      training_state_table:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.17.0

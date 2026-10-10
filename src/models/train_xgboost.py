@@ -1,8 +1,7 @@
-import joblib
 import pandas as pd
+import xgboost as xgb
 
 from google.cloud import bigquery, storage
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     average_precision_score,
     precision_score,
@@ -11,7 +10,7 @@ from sklearn.metrics import (
 )
 
 
-def train_random_forest(
+def train_xgboost(
     project_id,
     feature_table,
     feature_columns,
@@ -19,7 +18,7 @@ def train_random_forest(
     model_output_uri,
 ):
     print("=" * 70)
-    print("Random Forest Candidate Training")
+    print("XGBoost Candidate Training")
     print("=" * 70)
 
     print(f"Project: {project_id}")
@@ -124,9 +123,7 @@ def train_random_forest(
     # ========================================================
 
     if (
-        train_df[
-            "fraud_label"
-        ]
+        train_df["fraud_label"]
         .nunique()
         < 2
     ):
@@ -136,9 +133,7 @@ def train_random_forest(
         )
 
     if (
-        test_df[
-            "fraud_label"
-        ]
+        test_df["fraud_label"]
         .nunique()
         < 2
     ):
@@ -232,24 +227,16 @@ def train_random_forest(
     ]
 
     # ========================================================
-    # 7. BUILD RANDOM FOREST FROM CONFIG
-    #
-    # No hyperparameters are hard-coded here anymore.
-    #
-    # pipeline_config.yaml
-    #        ↓
-    # launcher
-    #        ↓
-    # model_parameters_json
-    #        ↓
-    # this function
+    # 7. VALIDATE XGBOOST PARAMETERS
     # ========================================================
 
     supported_parameters = {
         "n_estimators",
         "max_depth",
-        "min_samples_leaf",
-        "class_weight",
+        "learning_rate",
+        "subsample",
+        "colsample_bytree",
+        "eval_metric",
         "random_state",
         "n_jobs",
     }
@@ -261,22 +248,26 @@ def train_random_forest(
 
     if unsupported_parameters:
         raise ValueError(
-            "Unsupported Random Forest "
+            "Unsupported XGBoost "
             "parameter(s): "
             f"{sorted(unsupported_parameters)}"
         )
 
-    model = RandomForestClassifier(
-        **model_parameters
+    # ========================================================
+    # 8. BUILD XGBOOST MODEL FROM CONFIG
+    # ========================================================
+
+    model = xgb.XGBClassifier(
+        objective="binary:logistic",
+        **model_parameters,
     )
 
     # ========================================================
-    # 8. TRAIN
+    # 9. TRAIN
     # ========================================================
 
     print(
-        "\nTraining Random Forest "
-        "candidate..."
+        "\nTraining XGBoost candidate..."
     )
 
     model.fit(
@@ -285,12 +276,11 @@ def train_random_forest(
     )
 
     # ========================================================
-    # 9. EVALUATE ON TEST
+    # 10. EVALUATE ON TEST
     # ========================================================
 
     print(
-        "\nEvaluating Random Forest "
-        "candidate..."
+        "\nEvaluating XGBoost candidate..."
     )
 
     test_probabilities = (
@@ -349,7 +339,7 @@ def train_random_forest(
         )
 
     # ========================================================
-    # 10. FEATURE IMPORTANCE
+    # 11. FEATURE IMPORTANCE
     # ========================================================
 
     feature_importance = (
@@ -375,7 +365,7 @@ def train_random_forest(
     )
 
     print(
-        "Random Forest Feature Importance"
+        "XGBoost Feature Importance"
     )
 
     print(
@@ -389,16 +379,19 @@ def train_random_forest(
     )
 
     # ========================================================
-    # 11. SAVE MODEL LOCALLY
+    # 12. SAVE MODEL LOCALLY
+    #
+    # Save the Booster artifact because the launcher expects:
+    #
+    #   model.bst
     # ========================================================
 
     local_model_path = (
-        "/tmp/model.joblib"
+        "/tmp/model.bst"
     )
 
-    joblib.dump(
-        model,
-        local_model_path,
+    model.get_booster().save_model(
+        local_model_path
     )
 
     print(
@@ -407,7 +400,7 @@ def train_random_forest(
     )
 
     # ========================================================
-    # 12. UPLOAD CANDIDATE TO GCS
+    # 13. UPLOAD CANDIDATE TO GCS
     # ========================================================
 
     if not model_output_uri.startswith(
@@ -460,12 +453,12 @@ def train_random_forest(
     )
 
     # ========================================================
-    # 13. RETURN CANDIDATE METADATA
+    # 14. RETURN CANDIDATE METADATA
     # ========================================================
 
     result = {
         "model_type": (
-            "random_forest"
+            "xgboost"
         ),
 
         "metrics": (

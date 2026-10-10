@@ -44,3 +44,9 @@ src/config/random_forest_downstream_qa_pipeline.yaml
 .env.*
 !package.json
 !tsconfig.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local temporary Dockerfile

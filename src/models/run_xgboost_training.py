@@ -3,13 +3,13 @@
 import argparse
 import json
 
-from src.models.train_random_forest import (
-    train_random_forest,
+from src.models.train_xgboost import (
+    train_xgboost,
 )
 
 
 # ============================================================
-# RANDOM FOREST TRAINING ENTRY POINT
+# XGBOOST TRAINING ENTRY POINT
 #
 # Vertex Pipeline
 #       ↓
@@ -17,9 +17,7 @@ from src.models.train_random_forest import (
 #       ↓
 # This script
 #       ↓
-# train_random_forest()
-#
-# The same interface will later be used by XGBoost.
+# train_xgboost()
 # ============================================================
 
 
@@ -27,14 +25,10 @@ def main():
 
     parser = argparse.ArgumentParser(
         description=(
-            "Train a Random Forest fraud "
+            "Train an XGBoost fraud "
             "candidate model."
         )
     )
-
-    # --------------------------------------------------------
-    # GCP project
-    # --------------------------------------------------------
 
     parser.add_argument(
         "--project-id",
@@ -43,10 +37,6 @@ def main():
             "Google Cloud project ID."
         ),
     )
-
-    # --------------------------------------------------------
-    # Provider feature table
-    # --------------------------------------------------------
 
     parser.add_argument(
         "--feature-table",
@@ -57,14 +47,6 @@ def main():
         ),
     )
 
-    # --------------------------------------------------------
-    # Feature list
-    #
-    # Passed as JSON:
-    #
-    # ["feature_1", "feature_2"]
-    # --------------------------------------------------------
-
     parser.add_argument(
         "--feature-columns",
         required=True,
@@ -74,29 +56,14 @@ def main():
         ),
     )
 
-    # --------------------------------------------------------
-    # Model parameters
-    #
-    # Passed as JSON:
-    #
-    # {
-    #   "n_estimators": 300,
-    #   "max_depth": 5
-    # }
-    # --------------------------------------------------------
-
     parser.add_argument(
         "--model-parameters",
         required=True,
         help=(
-            "JSON encoded Random Forest "
+            "JSON encoded XGBoost "
             "hyperparameters."
         ),
     )
-
-    # --------------------------------------------------------
-    # Candidate artifact destination
-    # --------------------------------------------------------
 
     parser.add_argument(
         "--model-output-uri",
@@ -110,7 +77,7 @@ def main():
     args = parser.parse_args()
 
     # ========================================================
-    # PARSE FEATURE CONFIGURATION
+    # PARSE FEATURES
     # ========================================================
 
     try:
@@ -167,7 +134,7 @@ def main():
     # ========================================================
 
     print("=" * 70)
-    print("Random Forest Training Container")
+    print("XGBoost Training Container")
     print("=" * 70)
 
     print(
@@ -194,7 +161,7 @@ def main():
     # TRAIN CANDIDATE
     # ========================================================
 
-    result = train_random_forest(
+    result = train_xgboost(
         project_id=(
             args.project_id
         ),
@@ -226,7 +193,7 @@ def main():
     )
 
     print(
-        "RANDOM FOREST TRAINING COMPLETED"
+        "XGBOOST TRAINING COMPLETED"
     )
 
     print(
