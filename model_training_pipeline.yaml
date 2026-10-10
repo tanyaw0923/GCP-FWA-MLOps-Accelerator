@@ -22,7 +22,7 @@
 #    project_id: str
 #    region: str
 #    serving_container_image_uri: str
-#    state_key: str [Default: 'provider_fraud_model_rf']
+#    state_key: str [Default: 'provider_fraud_model']
 #    testing_months: int
 #    training_months: int
 #    training_state_table: str
@@ -68,7 +68,7 @@ components:
         project_id:
           parameterType: STRING
         state_key:
-          defaultValue: provider_fraud_model_rf
+          defaultValue: provider_fraud_model
           isOptional: true
           parameterType: STRING
         training_state_table:
@@ -491,7 +491,7 @@ components:
         project_id:
           parameterType: STRING
         state_key:
-          defaultValue: provider_fraud_model_rf
+          defaultValue: provider_fraud_model
           isOptional: true
           parameterType: STRING
         training_state_table:
@@ -513,7 +513,7 @@ components:
         project_id:
           parameterType: STRING
         state_key:
-          defaultValue: provider_fraud_model_rf
+          defaultValue: provider_fraud_model
           isOptional: true
           parameterType: STRING
         training_state_table:
@@ -717,7 +717,7 @@ deploymentSpec:
           \    current_data_month: str,\n    current_feature_signature: str,\n   \
           \ current_model_signature: str,\n    current_model_type: str,\n    data_quality_table:\
           \ str,\n    feature_drift_table: str,\n    prediction_drift_table: str,\n\
-          \    training_state_table: str,\n    state_key: str = \"provider_fraud_model_rf\"\
+          \    training_state_table: str,\n    state_key: str = \"provider_fraud_model\"\
           ,\n) -> bool:\n    from datetime import date\n\n    from google.cloud import\
           \ bigquery\n\n    bq = bigquery.Client(\n        project=project_id\n  \
           \  )\n\n    # ---------------------------------------------------------\n\
@@ -862,7 +862,7 @@ deploymentSpec:
           \ *\n\ndef mark_candidate_pending_component(\n    project_id: str,\n   \
           \ training_state_table: str,\n    current_data_month: str,\n    candidate_model_resource:\
           \ str,\n    candidate_feature_signature: str,\n    candidate_model_signature:\
-          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model_rf\"\
+          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model\"\
           ,\n):\n    from google.cloud import bigquery\n\n    bq = bigquery.Client(\n\
           \        project=project_id\n    )\n\n    query = f\"\"\"\n    MERGE `{training_state_table}`\
           \ AS target\n\n    USING (\n      SELECT\n        @state_key AS model_name,\n\
@@ -947,7 +947,7 @@ deploymentSpec:
           \ *\n\ndef mark_candidate_pending_component(\n    project_id: str,\n   \
           \ training_state_table: str,\n    current_data_month: str,\n    candidate_model_resource:\
           \ str,\n    candidate_feature_signature: str,\n    candidate_model_signature:\
-          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model_rf\"\
+          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model\"\
           ,\n):\n    from google.cloud import bigquery\n\n    bq = bigquery.Client(\n\
           \        project=project_id\n    )\n\n    query = f\"\"\"\n    MERGE `{training_state_table}`\
           \ AS target\n\n    USING (\n      SELECT\n        @state_key AS model_name,\n\
@@ -1469,7 +1469,7 @@ root:
       serving_container_image_uri:
         parameterType: STRING
       state_key:
-        defaultValue: provider_fraud_model_rf
+        defaultValue: provider_fraud_model
         isOptional: true
         parameterType: STRING
       testing_months:
