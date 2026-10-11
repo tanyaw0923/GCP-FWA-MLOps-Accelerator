@@ -22,7 +22,7 @@ def register_model_component(
     )
 
     print("=" * 60)
-    print("Registering Random Forest Model")
+    print("Registering Candidate Model")
     print("=" * 60)
 
     print(

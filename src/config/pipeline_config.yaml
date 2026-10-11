@@ -17,7 +17,7 @@ bucket: fwa-mlops-accelerator-demo-folder
 # ============================================================
 
 model:
-  model_type: xgboost
+  model_type: random_forest
 
   positive_class: 1
   normal_class: 0
@@ -34,11 +34,9 @@ model:
       random_state: 42
       n_jobs: -1
 
-    training_image: >
-      us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:v2
+    training_image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:v2
 
-    serving_container_image_uri: >
-      us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-6:latest
+    serving_container_image_uri: us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-6:latest
 
 
   xgboost:
@@ -55,11 +53,32 @@ model:
       random_state: 42
       n_jobs: -1
 
-    training_image: >
-      us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-training:v1
+    training_image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-training:v1
 
-    serving_container_image_uri: >
-      us-docker.pkg.dev/vertex-ai/prediction/xgboost-cpu.2-1:latest
+    serving_container_image_uri: us-docker.pkg.dev/vertex-ai/prediction/xgboost-cpu.2-1:latest
+
+
+# ============================================================
+# EXPERIMENT TRACKING
+#
+# experiment_id:
+#   generated from experiment_name
+#
+# run_id:
+#   generated for every pipeline execution
+#
+# feature_version:
+#   generated from the feature signature
+#
+# dataset_version:
+#   uses current_data_month
+#
+# git_commit:
+#   captured from the Git repository at runtime
+# ============================================================
+
+experiment_tracking:
+  owner: data_science_team
 
 
 # ============================================================
@@ -88,9 +107,9 @@ data:
 
   feedback_table: fwa-mlops-accelerator-demo.fraud_feedback.investigation_results
 
-  experiment_runs_table: fwa-mlops-accelerator-demo.fraud_experiments.model_runs
+  experiment_runs_table: fwa-mlops-accelerator-demo.fraud_experiments.experiment_runs
 
-  experiment_metrics_table: fwa-mlops-accelerator-demo.fraud_experiments.model_metrics
+  experiment_metrics_table: fwa-mlops-accelerator-demo.fraud_experiments.experiment_metrics
 
   batch_input_table: fwa-mlops-accelerator-demo.fraud_features.model_batch_input
 

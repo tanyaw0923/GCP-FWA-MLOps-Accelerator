@@ -1,17 +1,25 @@
 # PIPELINE DEFINITION
 # Name: fraud-model-training
-# Description: Reusable provider-level fraud detection pipeline supporting Random Forest and XGBoost with shared feature engineering, retraining logic, model registration, and manual approval.
+# Description: Reusable provider-level fraud detection pipeline supporting Random Forest and XGBoost with shared feature engineering, retraining logic, experiment tracking, model registration, and manual approval.
 # Inputs:
 #    claims_table: str
 #    current_data_month: str
 #    current_feature_signature: str
 #    current_model_signature: str
 #    data_quality_table: str
+#    dataset_version: str
 #    derived_feature_sql_json: str
+#    experiment_id: str
+#    experiment_metrics_table: str
+#    experiment_name: str
+#    experiment_owner: str
+#    experiment_runs_table: str
 #    feature_columns_json: str
 #    feature_drift_table: str
 #    feature_sql_json: str
 #    feature_table: str
+#    feature_version: str
+#    git_commit: str
 #    model_artifact_uri: str
 #    model_display_name: str
 #    model_name: str
@@ -21,10 +29,13 @@
 #    prediction_drift_table: str
 #    project_id: str
 #    region: str
+#    run_id: str
 #    serving_container_image_uri: str
-#    state_key: str [Default: 'provider_fraud_model_rf']
+#    state_key: str [Default: 'provider_fraud_model']
 #    testing_months: int
+#    training_end: str
 #    training_months: int
+#    training_start: str
 #    training_state_table: str
 components:
   comp-calculate-rolling-window-component:
@@ -68,7 +79,7 @@ components:
         project_id:
           parameterType: STRING
         state_key:
-          defaultValue: provider_fraud_model_rf
+          defaultValue: provider_fraud_model
           isOptional: true
           parameterType: STRING
         training_state_table:
@@ -110,10 +121,26 @@ components:
                 componentInputParameter: pipelinechannel--current_feature_signature
               pipelinechannel--current_model_signature:
                 componentInputParameter: pipelinechannel--current_model_signature
+              pipelinechannel--dataset_version:
+                componentInputParameter: pipelinechannel--dataset_version
+              pipelinechannel--experiment_id:
+                componentInputParameter: pipelinechannel--experiment_id
+              pipelinechannel--experiment_metrics_table:
+                componentInputParameter: pipelinechannel--experiment_metrics_table
+              pipelinechannel--experiment_name:
+                componentInputParameter: pipelinechannel--experiment_name
+              pipelinechannel--experiment_owner:
+                componentInputParameter: pipelinechannel--experiment_owner
+              pipelinechannel--experiment_runs_table:
+                componentInputParameter: pipelinechannel--experiment_runs_table
               pipelinechannel--feature_columns_json:
                 componentInputParameter: pipelinechannel--feature_columns_json
               pipelinechannel--feature_table:
                 componentInputParameter: pipelinechannel--feature_table
+              pipelinechannel--feature_version:
+                componentInputParameter: pipelinechannel--feature_version
+              pipelinechannel--git_commit:
+                componentInputParameter: pipelinechannel--git_commit
               pipelinechannel--model_artifact_uri:
                 componentInputParameter: pipelinechannel--model_artifact_uri
               pipelinechannel--model_display_name:
@@ -128,10 +155,16 @@ components:
                 componentInputParameter: pipelinechannel--project_id
               pipelinechannel--region:
                 componentInputParameter: pipelinechannel--region
+              pipelinechannel--run_id:
+                componentInputParameter: pipelinechannel--run_id
               pipelinechannel--serving_container_image_uri:
                 componentInputParameter: pipelinechannel--serving_container_image_uri
               pipelinechannel--state_key:
                 componentInputParameter: pipelinechannel--state_key
+              pipelinechannel--training_end:
+                componentInputParameter: pipelinechannel--training_end
+              pipelinechannel--training_start:
+                componentInputParameter: pipelinechannel--training_start
               pipelinechannel--training_state_table:
                 componentInputParameter: pipelinechannel--training_state_table
           taskInfo:
@@ -153,10 +186,26 @@ components:
                 componentInputParameter: pipelinechannel--current_feature_signature
               pipelinechannel--current_model_signature:
                 componentInputParameter: pipelinechannel--current_model_signature
+              pipelinechannel--dataset_version:
+                componentInputParameter: pipelinechannel--dataset_version
+              pipelinechannel--experiment_id:
+                componentInputParameter: pipelinechannel--experiment_id
+              pipelinechannel--experiment_metrics_table:
+                componentInputParameter: pipelinechannel--experiment_metrics_table
+              pipelinechannel--experiment_name:
+                componentInputParameter: pipelinechannel--experiment_name
+              pipelinechannel--experiment_owner:
+                componentInputParameter: pipelinechannel--experiment_owner
+              pipelinechannel--experiment_runs_table:
+                componentInputParameter: pipelinechannel--experiment_runs_table
               pipelinechannel--feature_columns_json:
                 componentInputParameter: pipelinechannel--feature_columns_json
               pipelinechannel--feature_table:
                 componentInputParameter: pipelinechannel--feature_table
+              pipelinechannel--feature_version:
+                componentInputParameter: pipelinechannel--feature_version
+              pipelinechannel--git_commit:
+                componentInputParameter: pipelinechannel--git_commit
               pipelinechannel--model_artifact_uri:
                 componentInputParameter: pipelinechannel--model_artifact_uri
               pipelinechannel--model_display_name:
@@ -171,10 +220,16 @@ components:
                 componentInputParameter: pipelinechannel--project_id
               pipelinechannel--region:
                 componentInputParameter: pipelinechannel--region
+              pipelinechannel--run_id:
+                componentInputParameter: pipelinechannel--run_id
               pipelinechannel--serving_container_image_uri:
                 componentInputParameter: pipelinechannel--serving_container_image_uri
               pipelinechannel--state_key:
                 componentInputParameter: pipelinechannel--state_key
+              pipelinechannel--training_end:
+                componentInputParameter: pipelinechannel--training_end
+              pipelinechannel--training_start:
+                componentInputParameter: pipelinechannel--training_start
               pipelinechannel--training_state_table:
                 componentInputParameter: pipelinechannel--training_state_table
           taskInfo:
@@ -182,8 +237,7 @@ components:
           triggerPolicy:
             condition: inputs.parameter_values['pipelinechannel--model_type'] == 'xgboost'
         refresh-provider-features-component:
-          cachingOptions:
-            enableCache: true
+          cachingOptions: {}
           componentRef:
             name: comp-refresh-provider-features-component
           dependentTasks:
@@ -230,13 +284,29 @@ components:
           parameterType: STRING
         pipelinechannel--current_model_signature:
           parameterType: STRING
+        pipelinechannel--dataset_version:
+          parameterType: STRING
         pipelinechannel--derived_feature_sql_json:
+          parameterType: STRING
+        pipelinechannel--experiment_id:
+          parameterType: STRING
+        pipelinechannel--experiment_metrics_table:
+          parameterType: STRING
+        pipelinechannel--experiment_name:
+          parameterType: STRING
+        pipelinechannel--experiment_owner:
+          parameterType: STRING
+        pipelinechannel--experiment_runs_table:
           parameterType: STRING
         pipelinechannel--feature_columns_json:
           parameterType: STRING
         pipelinechannel--feature_sql_json:
           parameterType: STRING
         pipelinechannel--feature_table:
+          parameterType: STRING
+        pipelinechannel--feature_version:
+          parameterType: STRING
+        pipelinechannel--git_commit:
           parameterType: STRING
         pipelinechannel--model_artifact_uri:
           parameterType: STRING
@@ -252,14 +322,20 @@ components:
           parameterType: STRING
         pipelinechannel--region:
           parameterType: STRING
+        pipelinechannel--run_id:
+          parameterType: STRING
         pipelinechannel--serving_container_image_uri:
           parameterType: STRING
         pipelinechannel--state_key:
           parameterType: STRING
         pipelinechannel--testing_months:
           parameterType: NUMBER_INTEGER
+        pipelinechannel--training_end:
+          parameterType: STRING
         pipelinechannel--training_months:
           parameterType: NUMBER_INTEGER
+        pipelinechannel--training_start:
+          parameterType: STRING
         pipelinechannel--training_state_table:
           parameterType: STRING
   comp-condition-2:
@@ -322,16 +398,40 @@ components:
             name: comp-train-random-forest-component
           inputs:
             parameters:
+              dataset_version:
+                componentInputParameter: pipelinechannel--dataset_version
+              experiment_id:
+                componentInputParameter: pipelinechannel--experiment_id
+              experiment_metrics_table:
+                componentInputParameter: pipelinechannel--experiment_metrics_table
+              experiment_name:
+                componentInputParameter: pipelinechannel--experiment_name
+              experiment_owner:
+                componentInputParameter: pipelinechannel--experiment_owner
+              experiment_runs_table:
+                componentInputParameter: pipelinechannel--experiment_runs_table
               feature_columns_json:
                 componentInputParameter: pipelinechannel--feature_columns_json
               feature_table:
                 componentInputParameter: pipelinechannel--feature_table
+              feature_version:
+                componentInputParameter: pipelinechannel--feature_version
+              git_commit:
+                componentInputParameter: pipelinechannel--git_commit
               model_output_uri:
                 componentInputParameter: pipelinechannel--model_output_uri
               model_parameters_json:
                 componentInputParameter: pipelinechannel--model_parameters_json
+              model_type:
+                componentInputParameter: pipelinechannel--model_type
               project_id:
                 componentInputParameter: pipelinechannel--project_id
+              run_id:
+                componentInputParameter: pipelinechannel--run_id
+              training_end:
+                componentInputParameter: pipelinechannel--training_end
+              training_start:
+                componentInputParameter: pipelinechannel--training_start
           taskInfo:
             name: Train Random Forest Candidate
     inputDefinitions:
@@ -344,9 +444,25 @@ components:
           parameterType: STRING
         pipelinechannel--current_model_signature:
           parameterType: STRING
+        pipelinechannel--dataset_version:
+          parameterType: STRING
+        pipelinechannel--experiment_id:
+          parameterType: STRING
+        pipelinechannel--experiment_metrics_table:
+          parameterType: STRING
+        pipelinechannel--experiment_name:
+          parameterType: STRING
+        pipelinechannel--experiment_owner:
+          parameterType: STRING
+        pipelinechannel--experiment_runs_table:
+          parameterType: STRING
         pipelinechannel--feature_columns_json:
           parameterType: STRING
         pipelinechannel--feature_table:
+          parameterType: STRING
+        pipelinechannel--feature_version:
+          parameterType: STRING
+        pipelinechannel--git_commit:
           parameterType: STRING
         pipelinechannel--model_artifact_uri:
           parameterType: STRING
@@ -362,9 +478,15 @@ components:
           parameterType: STRING
         pipelinechannel--region:
           parameterType: STRING
+        pipelinechannel--run_id:
+          parameterType: STRING
         pipelinechannel--serving_container_image_uri:
           parameterType: STRING
         pipelinechannel--state_key:
+          parameterType: STRING
+        pipelinechannel--training_end:
+          parameterType: STRING
+        pipelinechannel--training_start:
           parameterType: STRING
         pipelinechannel--training_state_table:
           parameterType: STRING
@@ -428,16 +550,40 @@ components:
             name: comp-train-xgboost-component
           inputs:
             parameters:
+              dataset_version:
+                componentInputParameter: pipelinechannel--dataset_version
+              experiment_id:
+                componentInputParameter: pipelinechannel--experiment_id
+              experiment_metrics_table:
+                componentInputParameter: pipelinechannel--experiment_metrics_table
+              experiment_name:
+                componentInputParameter: pipelinechannel--experiment_name
+              experiment_owner:
+                componentInputParameter: pipelinechannel--experiment_owner
+              experiment_runs_table:
+                componentInputParameter: pipelinechannel--experiment_runs_table
               feature_columns_json:
                 componentInputParameter: pipelinechannel--feature_columns_json
               feature_table:
                 componentInputParameter: pipelinechannel--feature_table
+              feature_version:
+                componentInputParameter: pipelinechannel--feature_version
+              git_commit:
+                componentInputParameter: pipelinechannel--git_commit
               model_output_uri:
                 componentInputParameter: pipelinechannel--model_output_uri
               model_parameters_json:
                 componentInputParameter: pipelinechannel--model_parameters_json
+              model_type:
+                componentInputParameter: pipelinechannel--model_type
               project_id:
                 componentInputParameter: pipelinechannel--project_id
+              run_id:
+                componentInputParameter: pipelinechannel--run_id
+              training_end:
+                componentInputParameter: pipelinechannel--training_end
+              training_start:
+                componentInputParameter: pipelinechannel--training_start
           taskInfo:
             name: Train XGBoost Candidate
     inputDefinitions:
@@ -450,9 +596,25 @@ components:
           parameterType: STRING
         pipelinechannel--current_model_signature:
           parameterType: STRING
+        pipelinechannel--dataset_version:
+          parameterType: STRING
+        pipelinechannel--experiment_id:
+          parameterType: STRING
+        pipelinechannel--experiment_metrics_table:
+          parameterType: STRING
+        pipelinechannel--experiment_name:
+          parameterType: STRING
+        pipelinechannel--experiment_owner:
+          parameterType: STRING
+        pipelinechannel--experiment_runs_table:
+          parameterType: STRING
         pipelinechannel--feature_columns_json:
           parameterType: STRING
         pipelinechannel--feature_table:
+          parameterType: STRING
+        pipelinechannel--feature_version:
+          parameterType: STRING
+        pipelinechannel--git_commit:
           parameterType: STRING
         pipelinechannel--model_artifact_uri:
           parameterType: STRING
@@ -468,9 +630,15 @@ components:
           parameterType: STRING
         pipelinechannel--region:
           parameterType: STRING
+        pipelinechannel--run_id:
+          parameterType: STRING
         pipelinechannel--serving_container_image_uri:
           parameterType: STRING
         pipelinechannel--state_key:
+          parameterType: STRING
+        pipelinechannel--training_end:
+          parameterType: STRING
+        pipelinechannel--training_start:
           parameterType: STRING
         pipelinechannel--training_state_table:
           parameterType: STRING
@@ -491,7 +659,7 @@ components:
         project_id:
           parameterType: STRING
         state_key:
-          defaultValue: provider_fraud_model_rf
+          defaultValue: provider_fraud_model
           isOptional: true
           parameterType: STRING
         training_state_table:
@@ -513,7 +681,7 @@ components:
         project_id:
           parameterType: STRING
         state_key:
-          defaultValue: provider_fraud_model_rf
+          defaultValue: provider_fraud_model
           isOptional: true
           parameterType: STRING
         training_state_table:
@@ -580,29 +748,77 @@ components:
     executorLabel: exec-train-random-forest-component
     inputDefinitions:
       parameters:
+        dataset_version:
+          parameterType: STRING
+        experiment_id:
+          parameterType: STRING
+        experiment_metrics_table:
+          parameterType: STRING
+        experiment_name:
+          parameterType: STRING
+        experiment_owner:
+          parameterType: STRING
+        experiment_runs_table:
+          parameterType: STRING
         feature_columns_json:
           parameterType: STRING
         feature_table:
+          parameterType: STRING
+        feature_version:
+          parameterType: STRING
+        git_commit:
           parameterType: STRING
         model_output_uri:
           parameterType: STRING
         model_parameters_json:
           parameterType: STRING
+        model_type:
+          parameterType: STRING
         project_id:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+        training_end:
+          parameterType: STRING
+        training_start:
           parameterType: STRING
   comp-train-xgboost-component:
     executorLabel: exec-train-xgboost-component
     inputDefinitions:
       parameters:
+        dataset_version:
+          parameterType: STRING
+        experiment_id:
+          parameterType: STRING
+        experiment_metrics_table:
+          parameterType: STRING
+        experiment_name:
+          parameterType: STRING
+        experiment_owner:
+          parameterType: STRING
+        experiment_runs_table:
+          parameterType: STRING
         feature_columns_json:
           parameterType: STRING
         feature_table:
+          parameterType: STRING
+        feature_version:
+          parameterType: STRING
+        git_commit:
           parameterType: STRING
         model_output_uri:
           parameterType: STRING
         model_parameters_json:
           parameterType: STRING
+        model_type:
+          parameterType: STRING
         project_id:
+          parameterType: STRING
+        run_id:
+          parameterType: STRING
+        training_end:
+          parameterType: STRING
+        training_start:
           parameterType: STRING
 deploymentSpec:
   executors:
@@ -717,7 +933,7 @@ deploymentSpec:
           \    current_data_month: str,\n    current_feature_signature: str,\n   \
           \ current_model_signature: str,\n    current_model_type: str,\n    data_quality_table:\
           \ str,\n    feature_drift_table: str,\n    prediction_drift_table: str,\n\
-          \    training_state_table: str,\n    state_key: str = \"provider_fraud_model_rf\"\
+          \    training_state_table: str,\n    state_key: str = \"provider_fraud_model\"\
           ,\n) -> bool:\n    from datetime import date\n\n    from google.cloud import\
           \ bigquery\n\n    bq = bigquery.Client(\n        project=project_id\n  \
           \  )\n\n    # ---------------------------------------------------------\n\
@@ -862,7 +1078,7 @@ deploymentSpec:
           \ *\n\ndef mark_candidate_pending_component(\n    project_id: str,\n   \
           \ training_state_table: str,\n    current_data_month: str,\n    candidate_model_resource:\
           \ str,\n    candidate_feature_signature: str,\n    candidate_model_signature:\
-          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model_rf\"\
+          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model\"\
           ,\n):\n    from google.cloud import bigquery\n\n    bq = bigquery.Client(\n\
           \        project=project_id\n    )\n\n    query = f\"\"\"\n    MERGE `{training_state_table}`\
           \ AS target\n\n    USING (\n      SELECT\n        @state_key AS model_name,\n\
@@ -947,7 +1163,7 @@ deploymentSpec:
           \ *\n\ndef mark_candidate_pending_component(\n    project_id: str,\n   \
           \ training_state_table: str,\n    current_data_month: str,\n    candidate_model_resource:\
           \ str,\n    candidate_feature_signature: str,\n    candidate_model_signature:\
-          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model_rf\"\
+          \ str,\n    candidate_model_type: str,\n    state_key: str = \"provider_fraud_model\"\
           ,\n):\n    from google.cloud import bigquery\n\n    bq = bigquery.Client(\n\
           \        project=project_id\n    )\n\n    query = f\"\"\"\n    MERGE `{training_state_table}`\
           \ AS target\n\n    USING (\n      SELECT\n        @state_key AS model_name,\n\
@@ -1250,10 +1466,10 @@ deploymentSpec:
           \ str,\n    model_display_name: str,\n    artifact_uri: str,\n    serving_container_image_uri:\
           \ str,\n) -> str:\n    from google.cloud import aiplatform\n\n    aiplatform.init(\n\
           \        project=project_id,\n        location=region,\n    )\n\n    print(\"\
-          =\" * 60)\n    print(\"Registering Random Forest Model\")\n    print(\"\
-          =\" * 60)\n\n    print(\n        f\"Project: \"\n        f\"{project_id}\"\
-          \n    )\n\n    print(\n        f\"Region: \"\n        f\"{region}\"\n  \
-          \  )\n\n    print(\n        f\"Model display name: \"\n        f\"{model_display_name}\"\
+          =\" * 60)\n    print(\"Registering Candidate Model\")\n    print(\"=\" *\
+          \ 60)\n\n    print(\n        f\"Project: \"\n        f\"{project_id}\"\n\
+          \    )\n\n    print(\n        f\"Region: \"\n        f\"{region}\"\n   \
+          \ )\n\n    print(\n        f\"Model display name: \"\n        f\"{model_display_name}\"\
           \n    )\n\n    print(\n        f\"Artifact URI: \"\n        f\"{artifact_uri}\"\
           \n    )\n\n    print(\n        f\"Serving container: \"\n        f\"{serving_container_image_uri}\"\
           \n    )\n\n    model = aiplatform.Model.upload(\n        display_name=model_display_name,\n\
@@ -1293,10 +1509,10 @@ deploymentSpec:
           \ str,\n    model_display_name: str,\n    artifact_uri: str,\n    serving_container_image_uri:\
           \ str,\n) -> str:\n    from google.cloud import aiplatform\n\n    aiplatform.init(\n\
           \        project=project_id,\n        location=region,\n    )\n\n    print(\"\
-          =\" * 60)\n    print(\"Registering Random Forest Model\")\n    print(\"\
-          =\" * 60)\n\n    print(\n        f\"Project: \"\n        f\"{project_id}\"\
-          \n    )\n\n    print(\n        f\"Region: \"\n        f\"{region}\"\n  \
-          \  )\n\n    print(\n        f\"Model display name: \"\n        f\"{model_display_name}\"\
+          =\" * 60)\n    print(\"Registering Candidate Model\")\n    print(\"=\" *\
+          \ 60)\n\n    print(\n        f\"Project: \"\n        f\"{project_id}\"\n\
+          \    )\n\n    print(\n        f\"Region: \"\n        f\"{region}\"\n   \
+          \ )\n\n    print(\n        f\"Model display name: \"\n        f\"{model_display_name}\"\
           \n    )\n\n    print(\n        f\"Artifact URI: \"\n        f\"{artifact_uri}\"\
           \n    )\n\n    print(\n        f\"Serving container: \"\n        f\"{serving_container_image_uri}\"\
           \n    )\n\n    model = aiplatform.Model.upload(\n        display_name=model_display_name,\n\
@@ -1318,6 +1534,30 @@ deploymentSpec:
         - '{{$.inputs.parameters[''model_parameters_json'']}}'
         - --model-output-uri
         - '{{$.inputs.parameters[''model_output_uri'']}}'
+        - --experiment-runs-table
+        - '{{$.inputs.parameters[''experiment_runs_table'']}}'
+        - --experiment-metrics-table
+        - '{{$.inputs.parameters[''experiment_metrics_table'']}}'
+        - --experiment-id
+        - '{{$.inputs.parameters[''experiment_id'']}}'
+        - --run-id
+        - '{{$.inputs.parameters[''run_id'']}}'
+        - --experiment-name
+        - '{{$.inputs.parameters[''experiment_name'']}}'
+        - --experiment-owner
+        - '{{$.inputs.parameters[''experiment_owner'']}}'
+        - --model-type
+        - '{{$.inputs.parameters[''model_type'']}}'
+        - --feature-version
+        - '{{$.inputs.parameters[''feature_version'']}}'
+        - --dataset-version
+        - '{{$.inputs.parameters[''dataset_version'']}}'
+        - --git-commit
+        - '{{$.inputs.parameters[''git_commit'']}}'
+        - --training-start
+        - '{{$.inputs.parameters[''training_start'']}}'
+        - --training-end
+        - '{{$.inputs.parameters[''training_end'']}}'
         image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:v2
     exec-train-xgboost-component:
       container:
@@ -1332,11 +1572,35 @@ deploymentSpec:
         - '{{$.inputs.parameters[''model_parameters_json'']}}'
         - --model-output-uri
         - '{{$.inputs.parameters[''model_output_uri'']}}'
+        - --experiment-runs-table
+        - '{{$.inputs.parameters[''experiment_runs_table'']}}'
+        - --experiment-metrics-table
+        - '{{$.inputs.parameters[''experiment_metrics_table'']}}'
+        - --experiment-id
+        - '{{$.inputs.parameters[''experiment_id'']}}'
+        - --run-id
+        - '{{$.inputs.parameters[''run_id'']}}'
+        - --experiment-name
+        - '{{$.inputs.parameters[''experiment_name'']}}'
+        - --experiment-owner
+        - '{{$.inputs.parameters[''experiment_owner'']}}'
+        - --model-type
+        - '{{$.inputs.parameters[''model_type'']}}'
+        - --feature-version
+        - '{{$.inputs.parameters[''feature_version'']}}'
+        - --dataset-version
+        - '{{$.inputs.parameters[''dataset_version'']}}'
+        - --git-commit
+        - '{{$.inputs.parameters[''git_commit'']}}'
+        - --training-start
+        - '{{$.inputs.parameters[''training_start'']}}'
+        - --training-end
+        - '{{$.inputs.parameters[''training_end'']}}'
         image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-training:v1
 pipelineInfo:
   description: Reusable provider-level fraud detection pipeline supporting Random
-    Forest and XGBoost with shared feature engineering, retraining logic, model registration,
-    and manual approval.
+    Forest and XGBoost with shared feature engineering, retraining logic, experiment
+    tracking, model registration, and manual approval.
   name: fraud-model-training
 root:
   dag:
@@ -1389,14 +1653,30 @@ root:
               componentInputParameter: current_feature_signature
             pipelinechannel--current_model_signature:
               componentInputParameter: current_model_signature
+            pipelinechannel--dataset_version:
+              componentInputParameter: dataset_version
             pipelinechannel--derived_feature_sql_json:
               componentInputParameter: derived_feature_sql_json
+            pipelinechannel--experiment_id:
+              componentInputParameter: experiment_id
+            pipelinechannel--experiment_metrics_table:
+              componentInputParameter: experiment_metrics_table
+            pipelinechannel--experiment_name:
+              componentInputParameter: experiment_name
+            pipelinechannel--experiment_owner:
+              componentInputParameter: experiment_owner
+            pipelinechannel--experiment_runs_table:
+              componentInputParameter: experiment_runs_table
             pipelinechannel--feature_columns_json:
               componentInputParameter: feature_columns_json
             pipelinechannel--feature_sql_json:
               componentInputParameter: feature_sql_json
             pipelinechannel--feature_table:
               componentInputParameter: feature_table
+            pipelinechannel--feature_version:
+              componentInputParameter: feature_version
+            pipelinechannel--git_commit:
+              componentInputParameter: git_commit
             pipelinechannel--model_artifact_uri:
               componentInputParameter: model_artifact_uri
             pipelinechannel--model_display_name:
@@ -1411,14 +1691,20 @@ root:
               componentInputParameter: project_id
             pipelinechannel--region:
               componentInputParameter: region
+            pipelinechannel--run_id:
+              componentInputParameter: run_id
             pipelinechannel--serving_container_image_uri:
               componentInputParameter: serving_container_image_uri
             pipelinechannel--state_key:
               componentInputParameter: state_key
             pipelinechannel--testing_months:
               componentInputParameter: testing_months
+            pipelinechannel--training_end:
+              componentInputParameter: training_end
             pipelinechannel--training_months:
               componentInputParameter: training_months
+            pipelinechannel--training_start:
+              componentInputParameter: training_start
             pipelinechannel--training_state_table:
               componentInputParameter: training_state_table
         taskInfo:
@@ -1438,7 +1724,19 @@ root:
         parameterType: STRING
       data_quality_table:
         parameterType: STRING
+      dataset_version:
+        parameterType: STRING
       derived_feature_sql_json:
+        parameterType: STRING
+      experiment_id:
+        parameterType: STRING
+      experiment_metrics_table:
+        parameterType: STRING
+      experiment_name:
+        parameterType: STRING
+      experiment_owner:
+        parameterType: STRING
+      experiment_runs_table:
         parameterType: STRING
       feature_columns_json:
         parameterType: STRING
@@ -1447,6 +1745,10 @@ root:
       feature_sql_json:
         parameterType: STRING
       feature_table:
+        parameterType: STRING
+      feature_version:
+        parameterType: STRING
+      git_commit:
         parameterType: STRING
       model_artifact_uri:
         parameterType: STRING
@@ -1466,16 +1768,22 @@ root:
         parameterType: STRING
       region:
         parameterType: STRING
+      run_id:
+        parameterType: STRING
       serving_container_image_uri:
         parameterType: STRING
       state_key:
-        defaultValue: provider_fraud_model_rf
+        defaultValue: provider_fraud_model
         isOptional: true
         parameterType: STRING
       testing_months:
         parameterType: NUMBER_INTEGER
+      training_end:
+        parameterType: STRING
       training_months:
         parameterType: NUMBER_INTEGER
+      training_start:
+        parameterType: STRING
       training_state_table:
         parameterType: STRING
 schemaVersion: 2.1.0

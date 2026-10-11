@@ -13,11 +13,15 @@ from src.models.train_xgboost import (
 #
 # Vertex Pipeline
 #       ↓
+# train_xgboost_component.py
+#       ↓
 # Container arguments
 #       ↓
 # This script
 #       ↓
 # train_xgboost()
+#
+# This script is the CLI / container entry-point layer.
 # ============================================================
 
 
@@ -30,12 +34,14 @@ def main():
         )
     )
 
+    # ========================================================
+    # 1. CORE TRAINING INPUTS
+    # ========================================================
+
     parser.add_argument(
         "--project-id",
         required=True,
-        help=(
-            "Google Cloud project ID."
-        ),
+        help="Google Cloud project ID.",
     )
 
     parser.add_argument(
@@ -74,10 +80,124 @@ def main():
         ),
     )
 
+    # ========================================================
+    # 2. EXPERIMENT TRACKING
+    # ========================================================
+
+    parser.add_argument(
+        "--experiment-runs-table",
+        required=True,
+        help=(
+            "BigQuery table used to record "
+            "one row per training run."
+        ),
+    )
+
+    parser.add_argument(
+        "--experiment-metrics-table",
+        required=True,
+        help=(
+            "BigQuery table used to record "
+            "evaluation metrics."
+        ),
+    )
+
+    parser.add_argument(
+        "--experiment-id",
+        required=True,
+        help=(
+            "Stable identifier for the "
+            "experiment."
+        ),
+    )
+
+    parser.add_argument(
+        "--run-id",
+        required=True,
+        help=(
+            "Unique identifier for this "
+            "training execution."
+        ),
+    )
+
+    parser.add_argument(
+        "--experiment-name",
+        required=True,
+        help=(
+            "Human-readable experiment name."
+        ),
+    )
+
+    parser.add_argument(
+        "--experiment-owner",
+        required=True,
+        help=(
+            "Owner or team responsible for "
+            "the experiment."
+        ),
+    )
+
+    parser.add_argument(
+        "--model-type",
+        required=True,
+        help=(
+            "Model type used for this run."
+        ),
+    )
+
+    parser.add_argument(
+        "--feature-version",
+        required=True,
+        help=(
+            "Feature signature used as the "
+            "feature version."
+        ),
+    )
+
+    parser.add_argument(
+        "--dataset-version",
+        required=True,
+        help=(
+            "Dataset version used for "
+            "this training run."
+        ),
+    )
+
+    parser.add_argument(
+        "--git-commit",
+        required=True,
+        help=(
+            "Git commit associated with "
+            "this training run."
+        ),
+    )
+
+    # ========================================================
+    # 3. TRAINING WINDOW
+    # ========================================================
+
+    parser.add_argument(
+        "--training-start",
+        required=True,
+        help=(
+            "Start date of the training "
+            "data window."
+        ),
+    )
+
+    parser.add_argument(
+        "--training-end",
+        required=True,
+        help=(
+            "End date of the training "
+            "data window."
+        ),
+    )
+
     args = parser.parse_args()
 
     # ========================================================
-    # PARSE FEATURES
+    # 4. PARSE FEATURE CONFIGURATION
     # ========================================================
 
     try:
@@ -106,7 +226,7 @@ def main():
         )
 
     # ========================================================
-    # PARSE MODEL PARAMETERS
+    # 5. PARSE MODEL PARAMETERS
     # ========================================================
 
     try:
@@ -130,7 +250,7 @@ def main():
         )
 
     # ========================================================
-    # PRINT CONTAINER INPUT
+    # 6. PRINT CONTAINER INPUT
     # ========================================================
 
     print("=" * 70)
@@ -157,8 +277,55 @@ def main():
         f"{args.model_output_uri}"
     )
 
+    print(
+        f"Experiment ID: "
+        f"{args.experiment_id}"
+    )
+
+    print(
+        f"Run ID: "
+        f"{args.run_id}"
+    )
+
+    print(
+        f"Experiment name: "
+        f"{args.experiment_name}"
+    )
+
+    print(
+        f"Experiment owner: "
+        f"{args.experiment_owner}"
+    )
+
+    print(
+        f"Model type: "
+        f"{args.model_type}"
+    )
+
+    print(
+        f"Feature version: "
+        f"{args.feature_version[:12]}"
+    )
+
+    print(
+        f"Dataset version: "
+        f"{args.dataset_version}"
+    )
+
+    print(
+        f"Git commit: "
+        f"{args.git_commit[:12]}"
+    )
+
+    print(
+        f"Training window: "
+        f"{args.training_start} "
+        f"-> "
+        f"{args.training_end}"
+    )
+
     # ========================================================
-    # TRAIN CANDIDATE
+    # 7. TRAIN CANDIDATE
     # ========================================================
 
     result = train_xgboost(
@@ -181,10 +348,58 @@ def main():
         model_output_uri=(
             args.model_output_uri
         ),
+
+        experiment_runs_table=(
+            args.experiment_runs_table
+        ),
+
+        experiment_metrics_table=(
+            args.experiment_metrics_table
+        ),
+
+        experiment_id=(
+            args.experiment_id
+        ),
+
+        run_id=(
+            args.run_id
+        ),
+
+        experiment_name=(
+            args.experiment_name
+        ),
+
+        experiment_owner=(
+            args.experiment_owner
+        ),
+
+        model_type=(
+            args.model_type
+        ),
+
+        feature_version=(
+            args.feature_version
+        ),
+
+        dataset_version=(
+            args.dataset_version
+        ),
+
+        git_commit=(
+            args.git_commit
+        ),
+
+        training_start=(
+            args.training_start
+        ),
+
+        training_end=(
+            args.training_end
+        ),
     )
 
     # ========================================================
-    # PRINT RESULT
+    # 8. PRINT RESULT
     # ========================================================
 
     print(

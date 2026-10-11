@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pandas as pd
 import xgboost as xgb
 
@@ -16,6 +18,22 @@ def train_xgboost(
     feature_columns,
     model_parameters,
     model_output_uri,
+
+    # Experiment tracking
+    experiment_runs_table,
+    experiment_metrics_table,
+    experiment_id,
+    run_id,
+    experiment_name,
+    experiment_owner,
+    model_type,
+    feature_version,
+    dataset_version,
+    git_commit,
+
+    # Rolling training window
+    training_start,
+    training_end,
 ):
     print("=" * 70)
     print("XGBoost Candidate Training")
@@ -26,6 +44,12 @@ def train_xgboost(
     print(f"Feature count: {len(feature_columns)}")
     print(f"Features: {feature_columns}")
 
+    print(f"Experiment ID: {experiment_id}")
+    print(f"Run ID: {run_id}")
+    print(f"Experiment name: {experiment_name}")
+    print(f"Model type: {model_type}")
+    print(f"Training window: {training_start} -> {training_end}")
+
     print("\nModel parameters:")
 
     for parameter, value in model_parameters.items():
@@ -35,12 +59,26 @@ def train_xgboost(
         )
 
     # ========================================================
-    # 1. LOAD PROVIDER-LEVEL TRAIN / TEST DATA
+    # 1. VALIDATE MODEL TYPE
+    # ========================================================
+
+    if model_type != "xgboost":
+        raise ValueError(
+            "train_xgboost received unexpected "
+            f"model_type={model_type}"
+        )
+
+    # ========================================================
+    # 2. CREATE BIGQUERY CLIENT
     # ========================================================
 
     bq = bigquery.Client(
         project=project_id
     )
+
+    # ========================================================
+    # 3. LOAD PROVIDER-LEVEL TRAIN / TEST DATA
+    # ========================================================
 
     feature_select = ",\n      ".join(
         feature_columns
@@ -73,7 +111,7 @@ def train_xgboost(
         )
 
     # ========================================================
-    # 2. VALIDATE FEATURES
+    # 4. VALIDATE FEATURES
     # ========================================================
 
     missing_features = [
@@ -89,7 +127,7 @@ def train_xgboost(
         )
 
     # ========================================================
-    # 3. SPLIT TRAIN / TEST
+    # 5. SPLIT TRAIN / TEST
     # ========================================================
 
     train_df = (
@@ -119,7 +157,7 @@ def train_xgboost(
         )
 
     # ========================================================
-    # 4. VALIDATE LABELS
+    # 6. VALIDATE LABELS
     # ========================================================
 
     if (
@@ -143,7 +181,7 @@ def train_xgboost(
         )
 
     # ========================================================
-    # 5. VALIDATE NULL VALUES
+    # 7. VALIDATE NULL VALUES
     # ========================================================
 
     if (
@@ -207,7 +245,7 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 6. PREPARE MODEL INPUTS
+    # 8. PREPARE MODEL INPUTS
     # ========================================================
 
     X_train = train_df[
@@ -227,7 +265,7 @@ def train_xgboost(
     ]
 
     # ========================================================
-    # 7. VALIDATE XGBOOST PARAMETERS
+    # 9. VALIDATE XGBOOST PARAMETERS
     # ========================================================
 
     supported_parameters = {
@@ -254,7 +292,7 @@ def train_xgboost(
         )
 
     # ========================================================
-    # 8. BUILD XGBOOST MODEL FROM CONFIG
+    # 10. BUILD MODEL
     # ========================================================
 
     model = xgb.XGBClassifier(
@@ -263,7 +301,7 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 9. TRAIN
+    # 11. TRAIN
     # ========================================================
 
     print(
@@ -276,7 +314,7 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 10. EVALUATE ON TEST
+    # 12. EVALUATE ON TEST
     # ========================================================
 
     print(
@@ -301,14 +339,12 @@ def train_xgboost(
                 test_probabilities,
             )
         ),
-
         "roc_auc": float(
             roc_auc_score(
                 y_test,
                 test_probabilities,
             )
         ),
-
         "precision": float(
             precision_score(
                 y_test,
@@ -316,7 +352,6 @@ def train_xgboost(
                 zero_division=0,
             )
         ),
-
         "recall": float(
             recall_score(
                 y_test,
@@ -339,7 +374,7 @@ def train_xgboost(
         )
 
     # ========================================================
-    # 11. FEATURE IMPORTANCE
+    # 13. FEATURE IMPORTANCE
     # ========================================================
 
     feature_importance = (
@@ -379,11 +414,7 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 12. SAVE MODEL LOCALLY
-    #
-    # Save the Booster artifact because the launcher expects:
-    #
-    #   model.bst
+    # 14. SAVE MODEL LOCALLY
     # ========================================================
 
     local_model_path = (
@@ -400,7 +431,7 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 13. UPLOAD CANDIDATE TO GCS
+    # 15. UPLOAD CANDIDATE TO GCS
     # ========================================================
 
     if not model_output_uri.startswith(
@@ -453,12 +484,169 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 14. RETURN CANDIDATE METADATA
+    # 16. RECORD EXPERIMENT RUN
+    #
+    # Record the experiment only after:
+    #   - training succeeds
+    #   - evaluation succeeds
+    #   - model artifact uploads successfully
+    #
+    # This prevents a failed candidate from being recorded
+    # as a successful experiment.
+    # ========================================================
+
+    created_at = (
+        datetime.now(
+            timezone.utc
+        )
+        .isoformat()
+    )
+
+    experiment_run_row = {
+        "experiment_id": (
+            experiment_id
+        ),
+        "run_id": (
+            run_id
+        ),
+        "experiment_name": (
+            experiment_name
+        ),
+        "owner": (
+            experiment_owner
+        ),
+        "model_type": (
+            model_type
+        ),
+        "feature_version": (
+            feature_version
+        ),
+        "dataset_version": (
+            dataset_version
+        ),
+        "git_commit": (
+            git_commit
+        ),
+        "training_start": (
+            training_start
+        ),
+        "training_end": (
+            training_end
+        ),
+        "status": (
+            "SUCCEEDED"
+        ),
+        "created_at": (
+            created_at
+        ),
+    }
+
+    print(
+        "\nRecording experiment run:"
+    )
+
+    print(
+        experiment_runs_table
+    )
+
+    run_errors = (
+        bq.insert_rows_json(
+            experiment_runs_table,
+            [
+                experiment_run_row
+            ],
+        )
+    )
+
+    if run_errors:
+        raise RuntimeError(
+            "Failed to write experiment run: "
+            f"{run_errors}"
+        )
+
+    print(
+        "Experiment run recorded successfully."
+    )
+
+    # ========================================================
+    # 17. RECORD EXPERIMENT METRICS
+    #
+    # experiment_metrics schema:
+    #
+    #   experiment_id
+    #   run_id
+    #   metric_name
+    #   metric_value
+    #   created_at
+    # ========================================================
+
+    metric_rows = [
+        {
+            "experiment_id": (
+                experiment_id
+            ),
+            "run_id": (
+                run_id
+            ),
+            "metric_name": (
+                metric_name
+            ),
+            "metric_value": (
+                metric_value
+            ),
+            "created_at": (
+                created_at
+            ),
+        }
+        for metric_name, metric_value
+        in metrics.items()
+    ]
+
+    print(
+        "\nRecording experiment metrics:"
+    )
+
+    print(
+        experiment_metrics_table
+    )
+
+    metric_errors = (
+        bq.insert_rows_json(
+            experiment_metrics_table,
+            metric_rows,
+        )
+    )
+
+    if metric_errors:
+        raise RuntimeError(
+            "Failed to write experiment metrics: "
+            f"{metric_errors}"
+        )
+
+    print(
+        "Experiment metrics recorded "
+        "successfully."
+    )
+
+    # ========================================================
+    # 18. RETURN CANDIDATE METADATA
     # ========================================================
 
     result = {
         "model_type": (
-            "xgboost"
+            model_type
+        ),
+
+        "experiment_id": (
+            experiment_id
+        ),
+
+        "run_id": (
+            run_id
+        ),
+
+        "experiment_name": (
+            experiment_name
         ),
 
         "metrics": (
@@ -475,6 +663,26 @@ def train_xgboost(
 
         "test_rows": int(
             len(test_df)
+        ),
+
+        "training_start": (
+            training_start
+        ),
+
+        "training_end": (
+            training_end
+        ),
+
+        "feature_version": (
+            feature_version
+        ),
+
+        "dataset_version": (
+            dataset_version
+        ),
+
+        "git_commit": (
+            git_commit
         ),
 
         "features": (

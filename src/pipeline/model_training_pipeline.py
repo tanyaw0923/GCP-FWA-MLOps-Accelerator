@@ -65,8 +65,8 @@ from src.pipeline.components.train_xgboost_component import (
     description=(
         "Reusable provider-level fraud detection pipeline "
         "supporting Random Forest and XGBoost with shared "
-        "feature engineering, retraining logic, model "
-        "registration, and manual approval."
+        "feature engineering, retraining logic, experiment "
+        "tracking, model registration, and manual approval."
     ),
 )
 def model_training_pipeline(
@@ -78,9 +78,6 @@ def model_training_pipeline(
 
     # --------------------------------------------------------
     # Model configuration
-    #
-    # training_image is intentionally NOT passed here.
-    # KFP requires container images to be known at compile time.
     # --------------------------------------------------------
     model_type: str,
     model_name: str,
@@ -117,6 +114,30 @@ def model_training_pipeline(
     serving_container_image_uri: str,
 
     # --------------------------------------------------------
+    # Experiment tracking
+    # --------------------------------------------------------
+    experiment_runs_table: str,
+    experiment_metrics_table: str,
+    experiment_id: str,
+    run_id: str,
+    experiment_name: str,
+    experiment_owner: str,
+    feature_version: str,
+    dataset_version: str,
+    git_commit: str,
+
+    # --------------------------------------------------------
+    # Experiment metadata
+    #
+    # These are calculated in run_model_training_pipeline.py.
+    # They are pipeline parameters instead of outputs from
+    # Calculate Rolling Window so they do not create extra
+    # task-to-task DAG edges.
+    # --------------------------------------------------------
+    training_start: str,
+    training_end: str,
+
+    # --------------------------------------------------------
     # Monitoring / continuous training state
     # --------------------------------------------------------
     data_quality_table: str,
@@ -126,45 +147,22 @@ def model_training_pipeline(
 
     # --------------------------------------------------------
     # Stable ML product identity
-    #
-    # The state key represents the fraud ML product,
-    # not the individual model algorithm.
-    #
-    # Example:
-    #
-    # approved_model_type = random_forest
-    # candidate_model_type = xgboost
-    #
-    # Both still belong to:
-    # provider_fraud_model
     # --------------------------------------------------------
-    state_key: str = "provider_fraud_model_rf",
+    state_key: str = "provider_fraud_model",
 ):
 
     # ========================================================
     # 1. CHECK WHETHER RETRAINING IS REQUIRED
-    #
-    # Trigger examples:
-    #
-    # Use Case 1:
-    #   New monthly data
-    #
-    # Use Case 2:
-    #   Feature configuration changed
-    #
-    # Use Case 3:
-    #   Model configuration changed
-    #
-    # Monitoring:
-    #   Data quality alert
-    #   Feature drift
-    #   Prediction drift
     # ========================================================
 
     retraining_task = (
         check_retraining_decision_component(
-            project_id=project_id,
-            current_data_month=current_data_month,
+            project_id=(
+                project_id
+            ),
+            current_data_month=(
+                current_data_month
+            ),
             current_feature_signature=(
                 current_feature_signature
             ),
@@ -197,7 +195,7 @@ def model_training_pipeline(
     )
 
     # ========================================================
-    # 2. RUN CANDIDATE PIPELINE ONLY WHEN RETRAINING IS NEEDED
+    # 2. RUN ONLY WHEN RETRAINING IS REQUIRED
     # ========================================================
 
     with dsl.If(
@@ -207,16 +205,6 @@ def model_training_pipeline(
 
         # ====================================================
         # 2A. CALCULATE ROLLING TRAIN / TEST WINDOW
-        #
-        # Example:
-        #
-        # current_data_month = 2026-10-01
-        #
-        # TRAIN:
-        #   Feb 2026 - Jul 2026
-        #
-        # TEST:
-        #   Aug 2026 - Oct 2026
         # ====================================================
 
         rolling_window_task = (
@@ -240,10 +228,8 @@ def model_training_pipeline(
         # ====================================================
         # 2B. REFRESH PROVIDER-LEVEL FEATURES
         #
-        # Both Random Forest and XGBoost consume the same
-        # provider feature table.
-        #
-        # This separates feature engineering from model choice.
+        # This is the only downstream task that directly
+        # consumes rolling-window outputs.
         # ====================================================
 
         refresh_features_task = (
@@ -290,9 +276,8 @@ def model_training_pipeline(
             "Refresh Provider Features"
         )
 
-        refresh_features_task.after(
-            rolling_window_task
-        )
+        refresh_features_task.set_caching_options(False)
+
 
         # ====================================================
         # 3. RANDOM FOREST BRANCH
@@ -305,13 +290,13 @@ def model_training_pipeline(
 
             # ------------------------------------------------
             # 3A. TRAIN RANDOM FOREST CANDIDATE
-            #
-            # The Random Forest image is defined inside
-            # train_random_forest_component.py at compile time.
             # ------------------------------------------------
 
             rf_train_task = (
                 train_random_forest_component(
+                    # ----------------------------------------
+                    # Core training inputs
+                    # ----------------------------------------
                     project_id=(
                         project_id
                     ),
@@ -327,6 +312,53 @@ def model_training_pipeline(
                     model_output_uri=(
                         model_output_uri
                     ),
+
+                    # ----------------------------------------
+                    # Experiment tracking
+                    # ----------------------------------------
+                    experiment_runs_table=(
+                        experiment_runs_table
+                    ),
+                    experiment_metrics_table=(
+                        experiment_metrics_table
+                    ),
+                    experiment_id=(
+                        experiment_id
+                    ),
+                    run_id=(
+                        run_id
+                    ),
+                    experiment_name=(
+                        experiment_name
+                    ),
+                    experiment_owner=(
+                        experiment_owner
+                    ),
+                    model_type=(
+                        model_type
+                    ),
+                    feature_version=(
+                        feature_version
+                    ),
+                    dataset_version=(
+                        dataset_version
+                    ),
+                    git_commit=(
+                        git_commit
+                    ),
+
+                    # ----------------------------------------
+                    # Experiment training-window metadata
+                    #
+                    # These are pipeline parameters.
+                    # They do NOT come from rolling_window_task.
+                    # ----------------------------------------
+                    training_start=(
+                        training_start
+                    ),
+                    training_end=(
+                        training_end
+                    ),
                 )
             )
 
@@ -334,14 +366,14 @@ def model_training_pipeline(
                 "Train Random Forest Candidate"
             )
 
+            # Real dependency:
+            # feature refresh must finish before training.
             rf_train_task.after(
                 refresh_features_task
             )
 
             # ------------------------------------------------
             # 3B. REGISTER RANDOM FOREST CANDIDATE
-            #
-            # Registration does NOT mean production approval.
             # ------------------------------------------------
 
             rf_register_task = (
@@ -374,10 +406,6 @@ def model_training_pipeline(
 
             # ------------------------------------------------
             # 3C. MARK RANDOM FOREST CANDIDATE PENDING
-            #
-            # Candidate fields are updated.
-            #
-            # Approved production state is NOT changed.
             # ------------------------------------------------
 
             rf_pending_task = (
@@ -419,16 +447,6 @@ def model_training_pipeline(
 
         # ====================================================
         # 4. XGBOOST BRANCH
-        #
-        # Same:
-        #   data
-        #   features
-        #   rolling window
-        #   registration
-        #   approval workflow
-        #
-        # Different:
-        #   training algorithm
         # ====================================================
 
         with dsl.If(
@@ -438,13 +456,13 @@ def model_training_pipeline(
 
             # ------------------------------------------------
             # 4A. TRAIN XGBOOST CANDIDATE
-            #
-            # The XGBoost image is defined inside
-            # train_xgboost_component.py at compile time.
             # ------------------------------------------------
 
             xgb_train_task = (
                 train_xgboost_component(
+                    # ----------------------------------------
+                    # Core training inputs
+                    # ----------------------------------------
                     project_id=(
                         project_id
                     ),
@@ -460,6 +478,50 @@ def model_training_pipeline(
                     model_output_uri=(
                         model_output_uri
                     ),
+
+                    # ----------------------------------------
+                    # Experiment tracking
+                    # ----------------------------------------
+                    experiment_runs_table=(
+                        experiment_runs_table
+                    ),
+                    experiment_metrics_table=(
+                        experiment_metrics_table
+                    ),
+                    experiment_id=(
+                        experiment_id
+                    ),
+                    run_id=(
+                        run_id
+                    ),
+                    experiment_name=(
+                        experiment_name
+                    ),
+                    experiment_owner=(
+                        experiment_owner
+                    ),
+                    model_type=(
+                        model_type
+                    ),
+                    feature_version=(
+                        feature_version
+                    ),
+                    dataset_version=(
+                        dataset_version
+                    ),
+                    git_commit=(
+                        git_commit
+                    ),
+
+                    # ----------------------------------------
+                    # Experiment training-window metadata
+                    # ----------------------------------------
+                    training_start=(
+                        training_start
+                    ),
+                    training_end=(
+                        training_end
+                    ),
                 )
             )
 
@@ -467,15 +529,14 @@ def model_training_pipeline(
                 "Train XGBoost Candidate"
             )
 
+            # Real dependency:
+            # feature refresh must finish before training.
             xgb_train_task.after(
                 refresh_features_task
             )
 
             # ------------------------------------------------
             # 4B. REGISTER XGBOOST CANDIDATE
-            #
-            # The current registration component is generic
-            # despite its random_forest filename.
             # ------------------------------------------------
 
             xgb_register_task = (
@@ -508,8 +569,6 @@ def model_training_pipeline(
 
             # ------------------------------------------------
             # 4C. MARK XGBOOST CANDIDATE PENDING
-            #
-            # This uses the same fraud workflow state record.
             # ------------------------------------------------
 
             xgb_pending_task = (
@@ -552,9 +611,6 @@ def model_training_pipeline(
 
 # ============================================================
 # 5. COMPILE PIPELINE
-#
-# Keep the current filename temporarily so the existing
-# launcher continues to find it.
 # ============================================================
 
 if __name__ == "__main__":
