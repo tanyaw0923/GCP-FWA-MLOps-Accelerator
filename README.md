@@ -1,59 +1,55 @@
-# GCP-FWA-MLOps-Accelerator
+# GCP FWA MLOps Accelerator
 
-## Overview
+A reusable Google Cloud MLOps framework for provider-level healthcare fraud, waste, and abuse (FWA) modeling.
 
-This project demonstrates a reusable MLOps architecture for detecting potentially fraudulent healthcare providers/claims using Google Cloud Platform.
+This project is designed as a shared ML accelerator for a team of data scientists. Data scientists can experiment with new data, features, model configurations, and algorithms while reusing the same governed workflow for retraining decisions, feature refresh, training, evaluation, experiment tracking, candidate registration, approval, and production promotion.
 
-### Business goal: 
-A reusable ML product that data scientists can plug in a new dataset, target, features, model techniques, and the same pipeline handles validation, training, evaluation, registration, deployment, monitoring, and retraining. Eventually support rapid experimentation without allowing each data scientist to build a separate production workflow.
+## Business Goal
 
-### Users: 
-The pipeline is designed for a team of talented and innovative data scientists who may experiment with different:
+The goal is to avoid having every data scientist build a separate production workflow.
 
-### Key Design Principles
+The shared MLOps framework manages:
 
-The Shared MLOps Framework manages:
-- data ingestion
-- data validation
-- shared feature generation
-- pipeline orchestration CI/CD, ex. retrain using more recent data
+- rolling train/test windows
+- provider-level feature generation
+- retraining trigger logic
+- reusable Vertex AI orchestration
 - experiment tracking
 - standardized model evaluation
-- model registration
-- production approval with manual approval
-- deployment
-- model monitoring & governance
+- candidate model registration
+- manual approval before production promotion
+- model state tracking
+- monitoring inputs
+- containerized and reproducible model training
 
-Then Data scientists customize:
-- model-specific feature engineering
+Data scientists customize:
+
+- feature definitions
 - algorithm selection
 - hyperparameters
 - preprocessing
-<<<<<<< HEAD
-- training logic
-- feature engineering strategies
-- modeling techniques
-=======
 - model-specific training logic
 - new modeling ideas and experiments
 
-This design allows data, features, and modeling techniques to evolve independently while the same governed MLOps workflow is reused.
+The key design principle is:
+
+> Data, features, and modeling techniques can evolve independently while the same governed MLOps workflow is reused.
 
 ## Demo Scenario
 
-The repository supports three retraining use cases.
+The repository demonstrates three retraining use cases.
 
-<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/31a80327-2da5-4865-9902-bf6b5e9d701d" />
+<img width="1672" height="941" alt="MLOps accelerator architecture" src="https://github.com/user-attachments/assets/31a80327-2da5-4865-9902-bf6b5e9d701d" />
 
 ---
 
-<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/591a8d49-8f89-43c9-a104-74847c37b540" />
+<img width="1672" height="941" alt="MLOps accelerator use cases" src="https://github.com/user-attachments/assets/591a8d49-8f89-43c9-a104-74847c37b540" />
 
 ### Use Case 1 — New Data
 
 A new monthly claims dataset becomes available.
 
-The pipeline detects that the latest data month is newer than the approved production training state and retrains the candidate model using refreshed rolling windows.
+The retraining decision compares the current configured data month with the approved production training state. If the month is newer, the pipeline refreshes the rolling train/test windows and trains a new candidate.
 
 Example:
 
@@ -67,23 +63,39 @@ TRAIN: Feb-Jul
 TEST:  Aug-Oct
 ```
 
-### Use Case 2 — New Features
+### Use Case 2 — New Feature
 
-The data month remains the same, but the configured feature set changes.
+The data month stays the same, but the feature configuration changes.
 
-The launcher generates a feature signature from the configured feature definitions. When the current feature signature differs from the approved production signature, retraining is triggered.
+The launcher generates a feature signature from:
 
-Example feature added in this demo:
+- `feature_sql`
+- `derived_feature_sql`
+- the configured model feature list
+
+If the current feature signature differs from the approved feature signature, retraining is triggered.
+
+The feature introduced in this demo is:
 
 ```text
 avg_member_provider_distance
 ```
 
+It is created from the claim-level field:
+
+```text
+member_provider_distance
+        ↓
+AVG(member_provider_distance)
+        ↓
+avg_member_provider_distance
+```
+
 ### Use Case 3 — New Model Idea
 
-The data and features remain unchanged, but a data scientist wants to test a new modeling approach.
+The data and features remain unchanged, but a data scientist wants to test a different modeling approach.
 
-The demo switches the configured model type from:
+The demo switches:
 
 ```text
 Random Forest
@@ -91,9 +103,7 @@ Random Forest
 XGBoost
 ```
 
-A model signature is generated from the model type, model name, and hyperparameters. When the signature differs from the approved production model signature, the same training pipeline is reused to train and register a new candidate.
-
-This is the primary interview demo scenario because it shows that model experimentation can occur without rebuilding the rest of the MLOps workflow.
+The launcher creates a model signature from the model type, model name, and hyperparameters. If the model signature differs from the approved production signature, the same pipeline trains a new candidate without rebuilding the rest of the MLOps workflow.
 
 ## Continuous Training Flow
 
@@ -115,9 +125,12 @@ This is the primary interview demo scenario because it shows that model experime
               Train               Train
                 |                   |
                 v                   v
-          Evaluate Model      Evaluate Model
+             Evaluate            Evaluate
                 |                   |
                 +---------+---------+
+                          |
+                          v
+                 Experiment Tracking
                           |
                           v
                  Register Candidate
@@ -142,7 +155,7 @@ Production remains unchanged until the candidate is explicitly approved.
 
 ## Retraining Decision
 
-The pipeline can trigger retraining from several independent signals:
+Retraining can be triggered by several independent signals:
 
 ```text
 New monthly data
@@ -175,23 +188,62 @@ provider_fraud_model
         +-- candidate_status
 ```
 
-This allows an approved Random Forest model and an XGBoost candidate to coexist within the same governed workflow.
+This allows, for example, an approved Random Forest model and an XGBoost candidate to coexist in the same governed workflow.
+
+## Experiment Tracking
+
+Each successful training execution records reproducibility metadata and model metrics in BigQuery.
+
+The launcher creates:
+
+```text
+experiment_id
+    stable ID derived from experiment_name
+
+run_id
+    unique ID for one pipeline execution
+
+feature_version
+    current feature signature
+
+dataset_version
+    current_data_month
+
+git_commit
+    current Git commit SHA
+```
+
+The two primary tables are:
+
+```text
+fraud_experiments.experiment_runs
+fraud_experiments.experiment_metrics
+```
+
+A successful run records one experiment-run row plus metric rows such as:
+
+```text
+pr_auc
+roc_auc
+precision
+recall
+```
 
 ## Google Cloud Services
 
 The implementation uses:
 
-- **BigQuery** — claims data, provider-level features, monitoring outputs, and training state
-- **Vertex AI Pipelines** — reusable model training orchestration
+- **BigQuery** — claims data, provider features, experiment tracking, monitoring outputs, and training state
+- **Vertex AI Pipelines** — reusable training orchestration
 - **Vertex AI Model Registry** — candidate model registration
 - **Cloud Storage** — candidate and production model artifacts
-- **Artifact Registry** — custom training container images
-- **Cloud Build** — reproducible Random Forest and XGBoost training image builds
-- **Kubeflow Pipelines SDK** — component and pipeline definitions
+- **Artifact Registry** — custom Random Forest and XGBoost training images
+- **Cloud Build** — reproducible training image builds
+- **Kubeflow Pipelines SDK** — pipeline and component definitions
 
 ## Model Artifacts
 
-Random Forest and XGBoost use separate artifact formats:
+Random Forest and XGBoost use different artifact formats:
 
 ```text
 Random Forest
@@ -203,26 +255,17 @@ models/xgboost/candidate/model.bst
 models/xgboost/production/model.bst
 ```
 
-The model registry stores both:
-
-```text
-artifact_uri
-    → location of the trained model artifact in Cloud Storage
-
-serving_container_image_uri
-    → Vertex AI prediction container capable of loading the model
-```
-
-The custom Docker images in this repository are training images. They are separate from the Vertex AI serving containers used when registering models.
+The custom Docker images in this repository are training images. They are separate from the Vertex AI serving containers referenced when registering models.
 
 ## Repository Structure
 
 ```text
 GCP-FWA-MLOps-Accelerator/
+├── .gitignore
 ├── README.md
-├── model_training_pipeline.yaml
 ├── cloudbuild-random-forest.yaml
 ├── cloudbuild-xgboost.yaml
+├── model_training_pipeline.yaml
 │
 ├── docker/
 │   ├── random_forest/
@@ -237,8 +280,7 @@ GCP-FWA-MLOps-Accelerator/
 │   ├── feedback/
 │   ├── monitoring/
 │   ├── scoring/
-│   ├── validation/
-│   └── supporting SQL scripts
+│   └── validation/
 │
 └── src/
     ├── config/
@@ -246,9 +288,7 @@ GCP-FWA-MLOps-Accelerator/
     │   └── pipeline_config.yaml
     │
     ├── data/
-    │   ├── generate_synthetic_claims.py
-    │   ├── exploratory_analysis.py
-    │   └── isolation_forest_sanity_check.py
+    │   └── generate_synthetic_claims.py
     │
     ├── feedback/
     │   └── simulate_investigation_feedback.py
@@ -276,22 +316,27 @@ GCP-FWA-MLOps-Accelerator/
 
 ## Code Orchestration — How the Files Work Together
 
-For a first-time reader, the easiest way to understand this repository is to follow the execution path from configuration → pipeline orchestration → model training → experiment tracking → model registration → manual promotion.
+For a first-time reader, follow the execution path from configuration to pipeline orchestration, model training, experiment tracking, registration, and approval.
 
 The main runtime entry point is:
 
-\`\`\`text
+```text
 src/pipeline/run_model_training_pipeline.py
-\`\`\`
+```
 
 The file-level orchestration is:
 
-\`\`\`text
+```text
 src/config/pipeline_config.yaml
         |
-        | model type, data month, features,
-        | hyperparameters, BigQuery tables,
-        | artifact paths, experiment settings
+        | model type
+        | data month
+        | rolling-window settings
+        | feature definitions
+        | hyperparameters
+        | BigQuery tables
+        | artifact paths
+        | experiment settings
         v
 src/config/load_config.py
         |
@@ -299,12 +344,13 @@ src/config/load_config.py
 src/pipeline/run_model_training_pipeline.py
         |
         | - loads configuration
-        | - selects RF or XGBoost
-        | - creates feature/model signatures
-        | - creates experiment_id + run_id
+        | - selects Random Forest or XGBoost
+        | - creates feature signature
+        | - creates model signature
+        | - creates experiment_id and run_id
         | - captures Git commit
         | - resolves artifact locations
-        | - submits the compiled Vertex pipeline
+        | - submits the compiled pipeline
         v
 model_training_pipeline.yaml
         ^
@@ -317,13 +363,12 @@ src/pipeline/model_training_pipeline.py
         v
 Check Retraining Decision
         |
-        | src/pipeline/components/
         | check_retraining_decision_component.py
         |
-        | checks:
+        | evaluates:
         | - new data month
         | - feature signature change
-        | - model configuration change
+        | - model signature change
         | - data quality alert
         | - feature drift alert
         | - prediction drift alert
@@ -335,7 +380,9 @@ Calculate Rolling Window
 Refresh Provider Features
         |
         | refresh_provider_features_component.py
-        | rebuilds provider-level TRAIN/TEST data in BigQuery
+        |
+        | rebuilds provider-level TRAIN / TEST
+        | features in BigQuery
         v
      model_type?
       /       \
@@ -359,25 +406,26 @@ training.py
 train_random_   train_xgboost.py
 forest.py
      |             |
-     +------+
+     +------+------+
             |
-            | - load TRAIN/TEST features
-            | - fit model
-            | - evaluate PR-AUC / ROC-AUC /
-            |   precision / recall
-            | - save candidate artifact
-            | - record experiment metadata
-            | - record experiment metrics
+            | - load provider TRAIN / TEST data
+            | - fit candidate model
+            | - evaluate metrics
+            | - save model artifact
+            | - upload artifact to GCS
+            | - write experiment metadata
+            | - write experiment metrics
             v
 BigQuery Experiment Tracking
-     |
-     +-- fraud_experiments.experiment_runs
-     +-- fraud_experiments.experiment_metrics
+            |
+            +-- experiment_runs
+            +-- experiment_metrics
             |
             v
 register_model_component.py
             |
-            | register candidate in Vertex AI Model Registry
+            | register candidate in
+            | Vertex AI Model Registry
             v
 mark_candidate_pending_component.py
             |
@@ -388,21 +436,22 @@ PENDING_APPROVAL
             v
 src/models/promote_model_candidate.py
             |
-            | - find pending candidate
+            | - locate pending candidate
+            | - resolve model artifact type
             | - copy candidate artifact to production
             | - update approved signatures/model type
             | - mark candidate APPROVED
             v
 Production Model
-\`\`\`
+```
 
-### Build-Time vs Run-Time Flow
+## Build-Time vs Run-Time Flow
 
-Training images and pipeline execution are separate concerns:
+Training-image creation and pipeline execution are separate concerns.
 
-\`\`\`text
-BUILD TIME
+### Build time
 
+```text
 cloudbuild-random-forest.yaml
         ↓
 docker/random_forest/Dockerfile
@@ -419,11 +468,11 @@ docker/xgboost/Dockerfile
 XGBoost training image
         ↓
 Artifact Registry
-\`\`\`
+```
 
-At run time:
+### Run time
 
-\`\`\`text
+```text
 pipeline_config.yaml
         ↓
 run_model_training_pipeline.py
@@ -437,26 +486,26 @@ previously built training image
 run_*_training.py
         ↓
 train_*.py
-\`\`\`
+```
 
 In short:
 
-\`\`\`text
+```text
 Cloud Build
-    → builds the training environment
+    → builds the model-training environment
 
 Vertex AI Pipelines
     → orchestrates when and how training runs
 
 train_random_forest.py / train_xgboost.py
-    → contain the actual model-training and evaluation logic
-\`\`\`
+    → contain the model-specific ML logic
+```
 
-### Where to Start Reading the Code
+## Where to Start Reading the Code
 
 For a first pass through the repository, read the files in this order:
 
-\`\`\`text
+```text
 1. src/config/pipeline_config.yaml
    Understand what a data scientist can configure.
 
@@ -464,34 +513,34 @@ For a first pass through the repository, read the files in this order:
    Understand how configuration becomes one pipeline execution.
 
 3. src/pipeline/model_training_pipeline.py
-   Understand the overall Vertex AI orchestration DAG.
+   Understand the overall Vertex AI DAG.
 
 4. src/pipeline/components/check_retraining_decision_component.py
    Understand why retraining is triggered.
 
 5. src/pipeline/components/calculate_rolling_window_component.py
-   Understand how rolling TRAIN / TEST windows are determined.
+   Understand how rolling TRAIN / TEST windows are calculated.
 
 6. src/pipeline/components/refresh_provider_features_component.py
-   Understand the shared provider-level feature engineering layer.
+   Understand the shared feature-engineering layer.
 
 7. src/models/train_random_forest.py
    src/models/train_xgboost.py
-   Understand the actual ML training and evaluation logic.
+   Understand the actual model-training and evaluation logic.
 
 8. src/pipeline/components/register_model_component.py
-   Understand candidate registration in Vertex AI Model Registry.
+   Understand candidate registration.
 
 9. src/pipeline/components/mark_candidate_pending_component.py
-   Understand the manual-approval governance boundary.
+   Understand the manual-approval boundary.
 
 10. src/models/promote_model_candidate.py
     Understand how an approved candidate becomes production.
-\`\`\`
+```
 
 Most of the framework is model-independent:
 
-\`\`\`text
+```text
 Shared
 ────────────────────────────────────────
 pipeline_config.yaml
@@ -516,140 +565,189 @@ or
 train_xgboost_component.py
 run_xgboost_training.py
 train_xgboost.py
-\`\`\`
+```
 
-This separation lets data scientists introduce a new model idea without rebuilding the rest of the governed MLOps workflow.
+This separation lets a data scientist introduce a new model idea without rebuilding the rest of the governed MLOps workflow.
 
 ## Configuration-Driven Experimentation
 
-The primary model configuration lives in:
+The primary configuration lives in:
 
 ```text
 src/config/pipeline_config.yaml
 ```
 
-For Use Case 3, the core experiment can be expressed by changing:
+The currently configured dataset version is controlled by:
+
+```yaml
+data:
+  current_data_month: "2026-10-01"
+```
+
+The active model is controlled by:
+
+```yaml
+model:
+  model_type: random_forest
+```
+
+For Use Case 3, changing only:
 
 ```yaml
 model:
   model_type: xgboost
 ```
 
-The launcher then selects the corresponding:
-- model name
->>>>>>> 07a8a25 (Document code orchestration and reading order)
-- hyperparameters
+causes the launcher to select the corresponding model name, hyperparameters, artifact locations, serving container, and model signature while reusing the rest of the pipeline.
 
----
+The shared provider feature set currently includes:
 
-## Architecture (CD)
 ```text
-                         Git Repository
-                              |
-                    push / merge to branch
-                              |
-                              v
-                         Cloud Build
-                    test + build + package
-                              |
-                              v
-                      Artifact Registry
-                              |
-                              v
-                    Vertex AI Pipeline
-                              |
-           +------------------+------------------+
-           |                  |                  |
-           v                  v                  v
-    Data Validation     Shared Features    Custom Features
-                                                |
-                                                v
-                                             Train
-                                                |
-                                                v
-                                            Evaluate
-                                                |
-                                                v
-                                      Candidate Model Comparison
-                                                |
-                                                v
-                                        Register Candidate
-                                                |
-                                                v
-                                       Vertex Model Registry
-                                                |
-                                                v
-                                        Manual Approval
-                                                |
-                                                v
-                                     Production Deployment
-                                                |
-                                                v
-                                            Monitoring
-
-```
----
-## When new dataset becomes available(CI):
-
-```text 
-
-New File in Cloud Storage
-          |
-          v
-       Eventarc
-          |
-          v
- Cloud Run Function
-          |
-    filename validation
-          |
-          v
- Vertex AI Pipeline
-
+high_acuity_pct
+pct_99214
+pct_99215
+referral_rate
+eye_procedure_pct
+avg_paid_per_claim
+high_acuity_oe_ratio
+avg_member_provider_distance
 ```
 
----
+## Synthetic Demo Data
 
-## Project Structure
-```text 
-fwa-provider-ml/
-|
-├── common/
-│   ├── data_validation/
-│   ├── evaluation/
-│   ├── monitoring/
-│   ├── feature_library/
-│   └── utils/
-|
-├── models/
-│   ├── provider_xgboost/
-│   │   ├── features.py
-│   │   ├── train.py
-│   │   └── config.yaml
-│   |
-│   ├── provider_autoencoder/
-│   │   ├── features.py
-│   │   ├── train.py
-│   │   └── config.yaml
-│   |
-│   └── provider_graph_model/
-│       ├── features.py
-│       ├── train.py
-│       └── config.yaml
-|
-├── pipelines/
-│   └── training_pipeline.py
-|
-├── triggers/
-│   └── storage_trigger/
-|
-├── deployment/
-│   └── deploy_model.py
-|
-├── tests/
-|
-├── cloudbuild.yaml
-├── Dockerfile
-└── README.md
+The repository includes a synthetic claim generator:
 
+```text
+src/data/generate_synthetic_claims.py
 ```
+
+The synthetic data intentionally includes overlap between normal and suspicious provider behavior so model performance is meaningful rather than trivially perfect.
+
+Generate the local CSV with:
+
+```bash
+python -m src.data.generate_synthetic_claims
+```
+
+The generated file can then be loaded into the configured BigQuery claims table.
+
+## Build Training Images
+
+Random Forest:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-random-forest.yaml \
+  .
+```
+
+XGBoost:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-xgboost.yaml \
+  .
+```
+
+Both builds use the repository root as the Docker build context.
+
+## Compile the Vertex AI Pipeline
+
+From the repository root:
+
+```bash
+python -m src.pipeline.model_training_pipeline
+```
+
+This generates:
+
+```text
+model_training_pipeline.yaml
+```
+
+## Run the Candidate Training Pipeline
+
+Run:
+
+```bash
+python -m src.pipeline.run_model_training_pipeline
+```
+
+The launcher:
+
+1. loads `pipeline_config.yaml`
+2. selects the active model configuration
+3. generates feature and model signatures
+4. creates experiment and run identifiers
+5. captures the Git commit
+6. resolves artifact locations and runtime parameters
+7. submits the compiled pipeline to Vertex AI
+8. waits for the pipeline result
+9. records successful training metadata and metrics
+10. leaves the resulting candidate in `PENDING_APPROVAL`
+
+## Manual Candidate Promotion
+
+After reviewing a candidate:
+
+```bash
+python -m src.models.promote_model_candidate
+```
+
+The promotion workflow:
+
+1. finds the pending candidate
+2. determines its model type
+3. selects the appropriate artifact format
+4. copies the candidate artifact to the production path
+5. updates approved feature/model signatures and model type
+6. marks the candidate as approved
+
+Training and production promotion are intentionally separate. A newly trained candidate does not automatically replace the approved production model.
+
+## Original Fraud Modeling Foundation
+
+The project began with an Isolation Forest workflow for identifying anomalous provider behavior without requiring fraud labels.
+
+Investigation feedback was then used to support supervised fraud modeling with Random Forest and XGBoost.
+
+The current architecture preserves that experimentation history while focusing on a reusable, governed continuous-training workflow.
+
+## Current Scope
+
+This repository is a technical MLOps demonstration rather than a complete enterprise production platform.
+
+The current workflow focuses on:
+
+- batch-oriented fraud modeling
+- configurable feature generation
+- retraining decisions
+- model training and evaluation
+- experiment tracking
+- candidate registration
+- manual approval
+- artifact promotion
+- monitoring-driven retraining signals
+
+A larger production implementation could add automated test gates, stronger IAM controls, CI/CD deployment automation, richer experiment comparison, approval workflows, additional model families, and online serving where appropriate.
+
+## Common Code Issue
+
+If Cloud Shell Python ADC fails with:
+
+```text
+Unexpected response from metadata server:
+service account info is missing 'email' field
+```
+
+a local Application Default Credentials login can be used:
+
+```bash
+gcloud auth application-default login
+```
+
+## Key Takeaway
+
+> Data, features, and modeling techniques can evolve independently while the same governed MLOps workflow is reused.
+
+The accelerator lets data scientists spend more time on fraud strategy, feature design, experimentation, and model evaluation while shared infrastructure handles the repeatable MLOps workflow.
