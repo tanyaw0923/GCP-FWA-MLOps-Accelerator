@@ -1,47 +1,17 @@
-import calendar
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
 
-from src.config.load_config import load_config
-
 
 # ============================================================
-# 1. LOAD CONFIGURATION
-# ============================================================
-
-config = load_config()
-
-DATA_CONFIG = config["data"]
-
-CURRENT_DATA_MONTH = str(
-    DATA_CONFIG[
-        "current_data_month"
-    ]
-)
-
-ROLLING_WINDOW_CONFIG = (
-    DATA_CONFIG[
-        "rolling_window"
-    ]
-)
-
-TRAINING_MONTHS = int(
-    ROLLING_WINDOW_CONFIG[
-        "training_months"
-    ]
-)
-
-TESTING_MONTHS = int(
-    ROLLING_WINDOW_CONFIG[
-        "testing_months"
-    ]
-)
-
-
-# ============================================================
-# 2. SYNTHETIC DATA SETTINGS
+# 1. SYNTHETIC DATA SETTINGS
+#
+# Demo data volume:
+#   Jan 1 - Sep 30, 2026: 100,000 claims
+#   Oct 1 - Oct 31, 2026: 12,500 claims (100,000 / 8)
+#
+# Total: 112,500 claims
 # ============================================================
 
 RANDOM_SEED = 42
@@ -50,7 +20,10 @@ rng = np.random.default_rng(
     RANDOM_SEED
 )
 
-N_CLAIMS = 100_000
+BASE_N_CLAIMS = 100_000
+OCTOBER_N_CLAIMS = BASE_N_CLAIMS // 8
+N_CLAIMS = BASE_N_CLAIMS + OCTOBER_N_CLAIMS
+
 N_PROVIDERS = 200
 N_MEMBERS = 20_000
 
@@ -63,102 +36,36 @@ OUTPUT_FILE = (
 
 
 # ============================================================
-# 3. DATE UTILITIES
+# 2. FIXED DEMO DATE WINDOWS
 # ============================================================
 
-def add_months(
-    year: int,
-    month: int,
-    offset: int,
-):
-    month_index = (
-        year * 12
-        + month
-        - 1
-        + offset
-    )
+START_DATE = datetime(
+    2026,
+    1,
+    1,
+)
 
-    new_year = (
-        month_index // 12
-    )
+SEPTEMBER_END_DATE = datetime(
+    2026,
+    9,
+    30,
+)
 
-    new_month = (
-        month_index % 12
-        + 1
-    )
+OCTOBER_START_DATE = datetime(
+    2026,
+    10,
+    1,
+)
 
-    return (
-        new_year,
-        new_month,
-    )
-
-
-def get_month_end(
-    year: int,
-    month: int,
-):
-    final_day = (
-        calendar.monthrange(
-            year,
-            month,
-        )[1]
-    )
-
-    return datetime(
-        year,
-        month,
-        final_day,
-    )
-
-
-def calculate_raw_data_window():
-
-    current_month = (
-        datetime.strptime(
-            CURRENT_DATA_MONTH,
-            "%Y-%m-%d",
-        )
-    )
-
-    total_months = (
-        TRAINING_MONTHS
-        + TESTING_MONTHS
-    )
-
-    start_year, start_month = (
-        add_months(
-            current_month.year,
-            current_month.month,
-            -(total_months - 1),
-        )
-    )
-
-    start_date = datetime(
-        start_year,
-        start_month,
-        1,
-    )
-
-    end_date = (
-        get_month_end(
-            current_month.year,
-            current_month.month,
-        )
-    )
-
-    return (
-        start_date,
-        end_date,
-    )
-
-
-START_DATE, END_DATE = (
-    calculate_raw_data_window()
+END_DATE = datetime(
+    2026,
+    10,
+    31,
 )
 
 
 # ============================================================
-# 4. PROVIDERS
+# 3. PROVIDERS
 # ============================================================
 
 texas_cities = [
@@ -640,28 +547,81 @@ chosen_providers = (
 
 # ============================================================
 # 14. SERVICE DATES
+#
+# Keep the demo volumes explicit:
+#   - exactly 100,000 claims from Jan 1 through Sep 30
+#   - exactly 12,500 claims from Oct 1 through Oct 31
+#
+# Dates are sampled uniformly within each period, then shuffled
+# so claim IDs are not ordered by month.
 # ============================================================
 
-date_range_days = (
-    END_DATE
+base_date_range_days = (
+    SEPTEMBER_END_DATE
     - START_DATE
 ).days + 1
 
 
-service_date_offsets = (
+base_service_date_offsets = (
     rng.integers(
         0,
-        date_range_days,
-        size=N_CLAIMS,
+        base_date_range_days,
+        size=BASE_N_CLAIMS,
     )
 )
 
 
-service_dates = pd.to_datetime(
-    START_DATE
-) + pd.to_timedelta(
-    service_date_offsets,
-    unit="D",
+base_service_dates = (
+    pd.to_datetime(
+        START_DATE
+    )
+    + pd.to_timedelta(
+        base_service_date_offsets,
+        unit="D",
+    )
+)
+
+
+october_date_range_days = (
+    END_DATE
+    - OCTOBER_START_DATE
+).days + 1
+
+
+october_service_date_offsets = (
+    rng.integers(
+        0,
+        october_date_range_days,
+        size=OCTOBER_N_CLAIMS,
+    )
+)
+
+
+october_service_dates = (
+    pd.to_datetime(
+        OCTOBER_START_DATE
+    )
+    + pd.to_timedelta(
+        october_service_date_offsets,
+        unit="D",
+    )
+)
+
+
+service_dates = np.concatenate(
+    [
+        base_service_dates.to_numpy(),
+        october_service_dates.to_numpy(),
+    ]
+)
+
+
+service_dates = (
+    pd.to_datetime(
+        rng.permutation(
+            service_dates
+        )
+    )
 )
 
 
@@ -1276,6 +1236,24 @@ print(
 print(
     f"Rows: "
     f"{len(df):,}"
+)
+
+
+print(
+    f"Jan-Sep claims: "
+    f"{(
+        (df['service_date'] >= pd.Timestamp('2026-01-01'))
+        & (df['service_date'] <= pd.Timestamp('2026-09-30'))
+    ).sum():,}"
+)
+
+
+print(
+    f"October claims: "
+    f"{(
+        (df['service_date'] >= pd.Timestamp('2026-10-01'))
+        & (df['service_date'] <= pd.Timestamp('2026-10-31'))
+    ).sum():,}"
 )
 
 
