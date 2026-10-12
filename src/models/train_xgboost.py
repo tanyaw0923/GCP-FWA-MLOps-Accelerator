@@ -48,11 +48,16 @@ def train_xgboost(
     print(f"Run ID: {run_id}")
     print(f"Experiment name: {experiment_name}")
     print(f"Model type: {model_type}")
-    print(f"Training window: {training_start} -> {training_end}")
+    print(
+        f"Training window: "
+        f"{training_start} -> {training_end}"
+    )
 
     print("\nModel parameters:")
 
-    for parameter, value in model_parameters.items():
+    for parameter, value in (
+        model_parameters.items()
+    ):
         print(
             f"{parameter}: "
             f"{value}"
@@ -274,13 +279,16 @@ def train_xgboost(
         "learning_rate",
         "subsample",
         "colsample_bytree",
+        "scale_pos_weight",
         "eval_metric",
         "random_state",
         "n_jobs",
     }
 
     unsupported_parameters = (
-        set(model_parameters.keys())
+        set(
+            model_parameters.keys()
+        )
         - supported_parameters
     )
 
@@ -327,9 +335,127 @@ def train_xgboost(
         )[:, 1]
     )
 
+    # --------------------------------------------------------
+    # Probability diagnostics
+    # --------------------------------------------------------
+
+    probability_summary = (
+        pd.Series(
+            test_probabilities
+        )
+        .describe(
+            percentiles=[
+                0.50,
+                0.75,
+                0.90,
+                0.95,
+                0.99,
+            ]
+        )
+    )
+
+    print(
+        "\nTEST probability distribution:"
+    )
+
+    print(
+        probability_summary
+    )
+
+    print(
+        "\nMaximum predicted fraud probability: "
+        f"{test_probabilities.max():.4f}"
+    )
+
+    print(
+        "Actual fraud providers in TEST: "
+        f"{int(y_test.sum())}"
+    )
+
+    # --------------------------------------------------------
+    # Threshold analysis
+    #
+    # Fraud models are often used as ranking systems.
+    # Different investigation capacities can support
+    # different operating thresholds.
+    # --------------------------------------------------------
+
+    threshold_results = []
+
+    print(
+        "\nThreshold analysis:"
+    )
+
+    print(
+        "-" * 70
+    )
+
+    for threshold in [
+        0.20,
+        0.30,
+        0.40,
+        0.50,
+    ]:
+
+        threshold_predictions = (
+            test_probabilities
+            >= threshold
+        ).astype(int)
+
+        threshold_precision = float(
+            precision_score(
+                y_test,
+                threshold_predictions,
+                zero_division=0,
+            )
+        )
+
+        threshold_recall = float(
+            recall_score(
+                y_test,
+                threshold_predictions,
+                zero_division=0,
+            )
+        )
+
+        predicted_positive_count = int(
+            threshold_predictions.sum()
+        )
+
+        threshold_results.append(
+            {
+                "threshold": threshold,
+                "predicted_fraud":
+                    predicted_positive_count,
+                "precision":
+                    threshold_precision,
+                "recall":
+                    threshold_recall,
+            }
+        )
+
+        print(
+            f"threshold={threshold:.2f} | "
+            f"predicted_fraud="
+            f"{predicted_positive_count} | "
+            f"precision="
+            f"{threshold_precision:.4f} | "
+            f"recall="
+            f"{threshold_recall:.4f}"
+        )
+
+    # --------------------------------------------------------
+    # Standard stored metrics
+    #
+    # Keep 0.50 as the standard classification threshold
+    # so experiment metrics remain comparable across runs.
+    # --------------------------------------------------------
+
+    classification_threshold = 0.50
+
     test_predictions = (
         test_probabilities
-        >= 0.5
+        >= classification_threshold
     ).astype(int)
 
     metrics = {
@@ -339,12 +465,14 @@ def train_xgboost(
                 test_probabilities,
             )
         ),
+
         "roc_auc": float(
             roc_auc_score(
                 y_test,
                 test_probabilities,
             )
         ),
+
         "precision": float(
             precision_score(
                 y_test,
@@ -352,6 +480,7 @@ def train_xgboost(
                 zero_division=0,
             )
         ),
+
         "recall": float(
             recall_score(
                 y_test,
@@ -362,7 +491,9 @@ def train_xgboost(
     }
 
     print(
-        "\nCandidate TEST metrics:"
+        "\nCandidate TEST metrics "
+        f"@ threshold "
+        f"{classification_threshold:.2f}:"
     )
 
     for metric_name, metric_value in (
@@ -380,12 +511,11 @@ def train_xgboost(
     feature_importance = (
         pd.DataFrame(
             {
-                "feature": (
-                    feature_columns
-                ),
-                "importance": (
-                    model.feature_importances_
-                ),
+                "feature":
+                    feature_columns,
+
+                "importance":
+                    model.feature_importances_,
             }
         )
         .sort_values(
@@ -463,12 +593,16 @@ def train_xgboost(
         )
     )
 
-    bucket = storage_client.bucket(
-        bucket_name
+    bucket = (
+        storage_client.bucket(
+            bucket_name
+        )
     )
 
-    blob = bucket.blob(
-        blob_path
+    blob = (
+        bucket.blob(
+            blob_path
+        )
     )
 
     blob.upload_from_filename(
@@ -485,14 +619,6 @@ def train_xgboost(
 
     # ========================================================
     # 16. RECORD EXPERIMENT RUN
-    #
-    # Record the experiment only after:
-    #   - training succeeds
-    #   - evaluation succeeds
-    #   - model artifact uploads successfully
-    #
-    # This prevents a failed candidate from being recorded
-    # as a successful experiment.
     # ========================================================
 
     created_at = (
@@ -503,42 +629,41 @@ def train_xgboost(
     )
 
     experiment_run_row = {
-        "experiment_id": (
-            experiment_id
-        ),
-        "run_id": (
-            run_id
-        ),
-        "experiment_name": (
-            experiment_name
-        ),
-        "owner": (
-            experiment_owner
-        ),
-        "model_type": (
-            model_type
-        ),
-        "feature_version": (
-            feature_version
-        ),
-        "dataset_version": (
-            dataset_version
-        ),
-        "git_commit": (
-            git_commit
-        ),
-        "training_start": (
-            training_start
-        ),
-        "training_end": (
-            training_end
-        ),
-        "status": (
-            "SUCCEEDED"
-        ),
-        "created_at": (
-            created_at
-        ),
+        "experiment_id":
+            experiment_id,
+
+        "run_id":
+            run_id,
+
+        "experiment_name":
+            experiment_name,
+
+        "owner":
+            experiment_owner,
+
+        "model_type":
+            model_type,
+
+        "feature_version":
+            feature_version,
+
+        "dataset_version":
+            dataset_version,
+
+        "git_commit":
+            git_commit,
+
+        "training_start":
+            training_start,
+
+        "training_end":
+            training_end,
+
+        "status":
+            "SUCCEEDED",
+
+        "created_at":
+            created_at,
     }
 
     print(
@@ -570,35 +695,30 @@ def train_xgboost(
 
     # ========================================================
     # 17. RECORD EXPERIMENT METRICS
-    #
-    # experiment_metrics schema:
-    #
-    #   experiment_id
-    #   run_id
-    #   metric_name
-    #   metric_value
-    #   created_at
     # ========================================================
 
     metric_rows = [
         {
-            "experiment_id": (
-                experiment_id
-            ),
-            "run_id": (
-                run_id
-            ),
-            "metric_name": (
-                metric_name
-            ),
-            "metric_value": (
-                metric_value
-            ),
-            "created_at": (
-                created_at
-            ),
+            "experiment_id":
+                experiment_id,
+
+            "run_id":
+                run_id,
+
+            "metric_name":
+                metric_name,
+
+            "metric_value":
+                metric_value,
+
+            "created_at":
+                created_at,
         }
-        for metric_name, metric_value
+
+        for (
+            metric_name,
+            metric_value,
+        )
         in metrics.items()
     ]
 
@@ -633,72 +753,68 @@ def train_xgboost(
     # ========================================================
 
     result = {
-        "model_type": (
-            model_type
-        ),
+        "model_type":
+            model_type,
 
-        "experiment_id": (
-            experiment_id
-        ),
+        "experiment_id":
+            experiment_id,
 
-        "run_id": (
-            run_id
-        ),
+        "run_id":
+            run_id,
 
-        "experiment_name": (
-            experiment_name
-        ),
+        "experiment_name":
+            experiment_name,
 
-        "metrics": (
-            metrics
-        ),
+        "metrics":
+            metrics,
 
-        "model_output_uri": (
-            model_output_uri
-        ),
+        "model_output_uri":
+            model_output_uri,
 
-        "training_rows": int(
-            len(train_df)
-        ),
+        "training_rows":
+            int(
+                len(train_df)
+            ),
 
-        "test_rows": int(
-            len(test_df)
-        ),
+        "test_rows":
+            int(
+                len(test_df)
+            ),
 
-        "training_start": (
-            training_start
-        ),
+        "training_start":
+            training_start,
 
-        "training_end": (
-            training_end
-        ),
+        "training_end":
+            training_end,
 
-        "feature_version": (
-            feature_version
-        ),
+        "feature_version":
+            feature_version,
 
-        "dataset_version": (
-            dataset_version
-        ),
+        "dataset_version":
+            dataset_version,
 
-        "git_commit": (
-            git_commit
-        ),
+        "git_commit":
+            git_commit,
 
-        "features": (
-            feature_columns
-        ),
+        "classification_threshold":
+            classification_threshold,
 
-        "model_parameters": (
-            model_parameters
-        ),
+        "threshold_analysis":
+            threshold_results,
 
-        "feature_importance": (
-            feature_importance
-            .to_dict(
-                orient="records"
-            )
-        ),
+        "features":
+            feature_columns,
+
+        "model_parameters":
+            model_parameters,
+
+        "feature_importance":
+            (
+                feature_importance
+                .to_dict(
+                    orient="records"
+                )
+            ),
     }
 
     return result

@@ -50,3 +50,4 @@ __pycache__/
 *.pyc
 
 # Local temporary Dockerfile
+synthetic_claims.csv
