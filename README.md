@@ -229,6 +229,62 @@ precision
 recall
 ```
 
+## Demo Data Exports
+
+The `data_exports/` folder contains CSV snapshots of the key BigQuery tables used throughout the demo so reviewers can inspect the data flow without needing access to the GCP project.
+
+The exports cover the main stages of the pipeline:
+
+```text
+Raw claims
+    ↓
+claims.csv
+
+Provider-level feature engineering
+    ↓
+provider_eye_features.csv
+
+Investigation feedback
+    ↓
+investigation_results.csv
+
+Experiment tracking
+    ↓
+experiment_runs.csv
+experiment_metrics.csv
+
+Model scoring
+    ↓
+provider_predictions.csv
+
+Monitoring
+    ↓
+model_data_quality.csv
+model_feature_drift.csv
+model_prediction_drift.csv
+
+Model governance / approval state
+    ↓
+model_training_state.csv
+```
+
+These files are demo snapshots of the corresponding BigQuery tables:
+
+| Export | BigQuery table | Purpose |
+| --- | --- | --- |
+| `claims.csv` | `fwa_claims.claims` | Synthetic claim-level source data |
+| `provider_eye_features.csv` | `fraud_features.provider_eye_features` | Provider-level TRAIN / TEST feature snapshot |
+| `investigation_results.csv` | `fraud_feedback.investigation_results` | Investigator feedback and confirmed labels |
+| `experiment_runs.csv` | `fraud_experiments.experiment_runs` | Experiment lineage and run metadata |
+| `experiment_metrics.csv` | `fraud_experiments.experiment_metrics` | PR-AUC, ROC-AUC, precision, recall, and other run metrics |
+| `provider_predictions.csv` | `fraud_experiments.provider_predictions` | Provider-level prediction output |
+| `model_data_quality.csv` | `fraud_monitoring.model_data_quality` | Latest data-quality monitoring results |
+| `model_feature_drift.csv` | `fraud_monitoring.model_feature_drift` | Feature-drift monitoring results |
+| `model_prediction_drift.csv` | `fraud_monitoring.model_prediction_drift` | Prediction-drift monitoring results |
+| `model_training_state.csv` | `fraud_monitoring.model_training_state` | Approved and candidate model state, signatures, and approval status |
+
+The CSV files are for demonstration and repository review only. BigQuery remains the runtime source of truth for pipeline execution.
+
 ## Google Cloud Services
 
 The implementation uses:
@@ -266,6 +322,18 @@ GCP-FWA-MLOps-Accelerator/
 ├── cloudbuild-random-forest.yaml
 ├── cloudbuild-xgboost.yaml
 ├── model_training_pipeline.yaml
+│
+├── data_exports/
+│   ├── claims.csv
+│   ├── provider_eye_features.csv
+│   ├── investigation_results.csv
+│   ├── experiment_runs.csv
+│   ├── experiment_metrics.csv
+│   ├── provider_predictions.csv
+│   ├── model_data_quality.csv
+│   ├── model_feature_drift.csv
+│   ├── model_prediction_drift.csv
+│   └── model_training_state.csv
 │
 ├── docker/
 │   ├── random_forest/
