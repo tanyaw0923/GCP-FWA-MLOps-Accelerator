@@ -6,6 +6,7 @@ import xgboost as xgb
 from google.cloud import bigquery, storage
 from sklearn.metrics import (
     average_precision_score,
+    f1_score,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -374,10 +375,6 @@ def train_xgboost(
 
     # --------------------------------------------------------
     # Threshold analysis
-    #
-    # Fraud models are often used as ranking systems.
-    # Different investigation capacities can support
-    # different operating thresholds.
     # --------------------------------------------------------
 
     threshold_results = []
@@ -418,19 +415,34 @@ def train_xgboost(
             )
         )
 
+        threshold_f1 = float(
+            f1_score(
+                y_test,
+                threshold_predictions,
+                zero_division=0,
+            )
+        )
+
         predicted_positive_count = int(
             threshold_predictions.sum()
         )
 
         threshold_results.append(
             {
-                "threshold": threshold,
+                "threshold":
+                    threshold,
+
                 "predicted_fraud":
                     predicted_positive_count,
+
                 "precision":
                     threshold_precision,
+
                 "recall":
                     threshold_recall,
+
+                "f1_score":
+                    threshold_f1,
             }
         )
 
@@ -441,7 +453,9 @@ def train_xgboost(
             f"precision="
             f"{threshold_precision:.4f} | "
             f"recall="
-            f"{threshold_recall:.4f}"
+            f"{threshold_recall:.4f} | "
+            f"f1="
+            f"{threshold_f1:.4f}"
         )
 
     # --------------------------------------------------------
@@ -483,6 +497,14 @@ def train_xgboost(
 
         "recall": float(
             recall_score(
+                y_test,
+                test_predictions,
+                zero_division=0,
+            )
+        ),
+
+        "f1_score": float(
+            f1_score(
                 y_test,
                 test_predictions,
                 zero_division=0,
@@ -695,6 +717,14 @@ def train_xgboost(
 
     # ========================================================
     # 17. RECORD EXPERIMENT METRICS
+    #
+    # One row is written for each metric:
+    #
+    #   pr_auc
+    #   roc_auc
+    #   precision
+    #   recall
+    #   f1_score
     # ========================================================
 
     metric_rows = [

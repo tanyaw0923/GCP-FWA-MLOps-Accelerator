@@ -7,6 +7,7 @@ from google.cloud import bigquery, storage
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     average_precision_score,
+    f1_score,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -49,11 +50,16 @@ def train_random_forest(
     print(f"Run ID: {run_id}")
     print(f"Experiment name: {experiment_name}")
     print(f"Model type: {model_type}")
-    print(f"Training window: {training_start} -> {training_end}")
+    print(
+        f"Training window: "
+        f"{training_start} -> {training_end}"
+    )
 
     print("\nModel parameters:")
 
-    for parameter, value in model_parameters.items():
+    for parameter, value in (
+        model_parameters.items()
+    ):
         print(
             f"{parameter}: "
             f"{value}"
@@ -279,7 +285,9 @@ def train_random_forest(
     }
 
     unsupported_parameters = (
-        set(model_parameters.keys())
+        set(
+            model_parameters.keys()
+        )
         - supported_parameters
     )
 
@@ -327,9 +335,11 @@ def train_random_forest(
         )[:, 1]
     )
 
+    classification_threshold = 0.50
+
     test_predictions = (
         test_probabilities
-        >= 0.5
+        >= classification_threshold
     ).astype(int)
 
     metrics = {
@@ -339,12 +349,14 @@ def train_random_forest(
                 test_probabilities,
             )
         ),
+
         "roc_auc": float(
             roc_auc_score(
                 y_test,
                 test_probabilities,
             )
         ),
+
         "precision": float(
             precision_score(
                 y_test,
@@ -352,8 +364,17 @@ def train_random_forest(
                 zero_division=0,
             )
         ),
+
         "recall": float(
             recall_score(
+                y_test,
+                test_predictions,
+                zero_division=0,
+            )
+        ),
+
+        "f1_score": float(
+            f1_score(
                 y_test,
                 test_predictions,
                 zero_division=0,
@@ -362,7 +383,9 @@ def train_random_forest(
     }
 
     print(
-        "\nCandidate TEST metrics:"
+        "\nCandidate TEST metrics "
+        f"@ threshold "
+        f"{classification_threshold:.2f}:"
     )
 
     for metric_name, metric_value in (
@@ -380,12 +403,11 @@ def train_random_forest(
     feature_importance = (
         pd.DataFrame(
             {
-                "feature": (
-                    feature_columns
-                ),
-                "importance": (
-                    model.feature_importances_
-                ),
+                "feature":
+                    feature_columns,
+
+                "importance":
+                    model.feature_importances_,
             }
         )
         .sort_values(
@@ -464,12 +486,16 @@ def train_random_forest(
         )
     )
 
-    bucket = storage_client.bucket(
-        bucket_name
+    bucket = (
+        storage_client.bucket(
+            bucket_name
+        )
     )
 
-    blob = bucket.blob(
-        blob_path
+    blob = (
+        bucket.blob(
+            blob_path
+        )
     )
 
     blob.upload_from_filename(
@@ -486,11 +512,6 @@ def train_random_forest(
 
     # ========================================================
     # 16. RECORD EXPERIMENT RUN
-    #
-    # Record only after:
-    #   - training succeeds
-    #   - evaluation succeeds
-    #   - model artifact uploads successfully
     # ========================================================
 
     created_at = (
@@ -501,42 +522,41 @@ def train_random_forest(
     )
 
     experiment_run_row = {
-        "experiment_id": (
-            experiment_id
-        ),
-        "run_id": (
-            run_id
-        ),
-        "experiment_name": (
-            experiment_name
-        ),
-        "owner": (
-            experiment_owner
-        ),
-        "model_type": (
-            model_type
-        ),
-        "feature_version": (
-            feature_version
-        ),
-        "dataset_version": (
-            dataset_version
-        ),
-        "git_commit": (
-            git_commit
-        ),
-        "training_start": (
-            training_start
-        ),
-        "training_end": (
-            training_end
-        ),
-        "status": (
-            "SUCCEEDED"
-        ),
-        "created_at": (
-            created_at
-        ),
+        "experiment_id":
+            experiment_id,
+
+        "run_id":
+            run_id,
+
+        "experiment_name":
+            experiment_name,
+
+        "owner":
+            experiment_owner,
+
+        "model_type":
+            model_type,
+
+        "feature_version":
+            feature_version,
+
+        "dataset_version":
+            dataset_version,
+
+        "git_commit":
+            git_commit,
+
+        "training_start":
+            training_start,
+
+        "training_end":
+            training_end,
+
+        "status":
+            "SUCCEEDED",
+
+        "created_at":
+            created_at,
     }
 
     print(
@@ -569,34 +589,37 @@ def train_random_forest(
     # ========================================================
     # 17. RECORD EXPERIMENT METRICS
     #
-    # experiment_metrics schema:
+    # One row is written for each metric:
     #
-    #   experiment_id
-    #   run_id
-    #   metric_name
-    #   metric_value
-    #   created_at
+    #   pr_auc
+    #   roc_auc
+    #   precision
+    #   recall
+    #   f1_score
     # ========================================================
 
     metric_rows = [
         {
-            "experiment_id": (
-                experiment_id
-            ),
-            "run_id": (
-                run_id
-            ),
-            "metric_name": (
-                metric_name
-            ),
-            "metric_value": (
-                metric_value
-            ),
-            "created_at": (
-                created_at
-            ),
+            "experiment_id":
+                experiment_id,
+
+            "run_id":
+                run_id,
+
+            "metric_name":
+                metric_name,
+
+            "metric_value":
+                metric_value,
+
+            "created_at":
+                created_at,
         }
-        for metric_name, metric_value
+
+        for (
+            metric_name,
+            metric_value,
+        )
         in metrics.items()
     ]
 
@@ -631,72 +654,65 @@ def train_random_forest(
     # ========================================================
 
     result = {
-        "model_type": (
-            model_type
-        ),
+        "model_type":
+            model_type,
 
-        "experiment_id": (
-            experiment_id
-        ),
+        "experiment_id":
+            experiment_id,
 
-        "run_id": (
-            run_id
-        ),
+        "run_id":
+            run_id,
 
-        "experiment_name": (
-            experiment_name
-        ),
+        "experiment_name":
+            experiment_name,
 
-        "metrics": (
-            metrics
-        ),
+        "metrics":
+            metrics,
 
-        "model_output_uri": (
-            model_output_uri
-        ),
+        "model_output_uri":
+            model_output_uri,
 
-        "training_rows": int(
-            len(train_df)
-        ),
+        "training_rows":
+            int(
+                len(train_df)
+            ),
 
-        "test_rows": int(
-            len(test_df)
-        ),
+        "test_rows":
+            int(
+                len(test_df)
+            ),
 
-        "training_start": (
-            training_start
-        ),
+        "training_start":
+            training_start,
 
-        "training_end": (
-            training_end
-        ),
+        "training_end":
+            training_end,
 
-        "feature_version": (
-            feature_version
-        ),
+        "feature_version":
+            feature_version,
 
-        "dataset_version": (
-            dataset_version
-        ),
+        "dataset_version":
+            dataset_version,
 
-        "git_commit": (
-            git_commit
-        ),
+        "git_commit":
+            git_commit,
 
-        "features": (
-            feature_columns
-        ),
+        "classification_threshold":
+            classification_threshold,
 
-        "model_parameters": (
-            model_parameters
-        ),
+        "features":
+            feature_columns,
 
-        "feature_importance": (
-            feature_importance
-            .to_dict(
-                orient="records"
-            )
-        ),
+        "model_parameters":
+            model_parameters,
+
+        "feature_importance":
+            (
+                feature_importance
+                .to_dict(
+                    orient="records"
+                )
+            ),
     }
 
     return result
