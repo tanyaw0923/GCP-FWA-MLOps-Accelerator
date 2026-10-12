@@ -1,9 +1,11 @@
 CREATE OR REPLACE TABLE
-`fwa-mlops-accelerator-demo.fraud_features.random_forest_retraining_dataset` AS
+`fwa-mlops-accelerator-demo.fraud_features.model_retraining_dataset` AS
 
 WITH latest_feedback AS (
+
   SELECT *
   FROM (
+
     SELECT
       provider_id,
       confirmed_fraud,
@@ -15,21 +17,26 @@ WITH latest_feedback AS (
 
       ROW_NUMBER() OVER (
         PARTITION BY provider_id
-        ORDER BY investigation_date DESC, created_at DESC
+        ORDER BY
+          investigation_date DESC,
+          created_at DESC
       ) AS rn
 
     FROM
       `fwa-mlops-accelerator-demo.fraud_feedback.investigation_results`
 
-    WHERE confirmed_fraud IS NOT NULL
+    WHERE
+      confirmed_fraud IS NOT NULL
   )
 
-  WHERE rn = 1
+  WHERE
+    rn = 1
 )
 
 SELECT
   f.provider_id,
 
+  -- Shared provider-level features
   f.high_acuity_pct,
   f.pct_99214,
   f.pct_99215,
@@ -37,29 +44,49 @@ SELECT
   f.eye_procedure_pct,
   f.avg_paid_per_claim,
   f.high_acuity_oe_ratio,
+  f.avg_member_provider_distance,
 
-  CAST(feedback.confirmed_fraud AS INT64) AS fraud_label,
+  -- Investigation feedback becomes supervised label
+  CAST(
+    feedback.confirmed_fraud
+    AS INT64
+  ) AS fraud_label,
 
+  -- Investigation metadata
   feedback.investigation_result,
   feedback.investigator,
   feedback.investigation_date,
-  feedback.run_id AS source_run_id
+  feedback.run_id
+    AS source_run_id
 
 FROM
   `fwa-mlops-accelerator-demo.fraud_features.provider_eye_features` f
 
-JOIN latest_feedback feedback
-USING(provider_id)
+JOIN
+  latest_feedback feedback
+
+USING (
+  provider_id
+)
 
 WHERE
   f.dataset_split = 'TEST';
 
 
---check re-train dataset label distribution
+
+-- ============================================================
+-- QA: LABEL DISTRIBUTION
+-- ============================================================
+
 SELECT
   fraud_label,
   COUNT(*) AS provider_count
+
 FROM
-  `fwa-mlops-accelerator-demo.fraud_features.random_forest_retraining_dataset`
-GROUP BY fraud_label
-ORDER BY fraud_label;
+  `fwa-mlops-accelerator-demo.fraud_features.model_retraining_dataset`
+
+GROUP BY
+  fraud_label
+
+ORDER BY
+  fraud_label;
