@@ -194,6 +194,16 @@ def main():
         ),
     )
 
+
+    parser.add_argument(
+        "--result-output-path",
+        required=True,
+        help=(
+            "KFP-generated output path used "
+            "to return the serialized training result."
+        ),
+    )
+
     args = parser.parse_args()
 
     # ========================================================
@@ -419,6 +429,42 @@ def main():
         json.dumps(
             result,
             indent=2,
+        )
+    )
+
+
+    # ========================================================
+    # 9. RETURN TRAINING RESULT TO KFP
+    # ========================================================
+
+    from pathlib import Path
+
+    result_output_path = Path(
+        args.result_output_path
+    )
+
+    result_output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with result_output_path.open(
+        "w"
+    ) as output_file:
+        json.dump(
+            json.dumps(
+                result
+            ),
+            output_file,
+        )
+
+    print(
+        "\nKFP training result written to:"
+    )
+
+    print(
+        str(
+            result_output_path
         )
     )
 
