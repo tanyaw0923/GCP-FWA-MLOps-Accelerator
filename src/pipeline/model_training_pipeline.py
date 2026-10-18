@@ -9,6 +9,9 @@ from src.pipeline.components.check_retraining_decision_component import (
 from src.pipeline.components.mark_candidate_pending_component import (
     mark_candidate_pending_component,
 )
+from src.pipeline.components.publish_training_metadata_component import (
+    publish_training_metadata_component,
+)
 from src.pipeline.components.refresh_provider_features_component import (
     refresh_provider_features_component,
 )
@@ -303,6 +306,11 @@ def model_training_pipeline(
                     feature_table=(
                         feature_table
                     ),
+                    feature_dataset=(
+                        refresh_features_task.outputs[
+                            "feature_dataset"
+                        ]
+                    ),
                     feature_columns_json=(
                         feature_columns_json
                     ),
@@ -373,7 +381,36 @@ def model_training_pipeline(
             )
 
             # ------------------------------------------------
-            # 3B. REGISTER RANDOM FOREST CANDIDATE
+            # 3B. PUBLISH RANDOM FOREST ML METADATA
+            #
+            # Converts the training result into first-class KFP
+            # Model and Metrics artifacts for Vertex lineage.
+            # ------------------------------------------------
+
+            rf_metadata_task = (
+                publish_training_metadata_component(
+                    feature_dataset=(
+                        refresh_features_task.outputs[
+                            "feature_dataset"
+                        ]
+                    ),
+                    training_result_json=(
+                        rf_train_task.outputs[
+                            "training_result_json"
+                        ]
+                    ),
+                    model_artifact_uri=(
+                        model_artifact_uri
+                    ),
+                )
+            )
+
+            rf_metadata_task.set_display_name(
+                "Publish Random Forest Metadata"
+            )
+
+            # ------------------------------------------------
+            # 3C. REGISTER RANDOM FOREST CANDIDATE
             # ------------------------------------------------
 
             rf_register_task = (
@@ -386,6 +423,11 @@ def model_training_pipeline(
                     ),
                     model_display_name=(
                         model_display_name
+                    ),
+                    candidate_model=(
+                        rf_metadata_task.outputs[
+                            "model"
+                        ]
                     ),
                     artifact_uri=(
                         model_artifact_uri
@@ -401,11 +443,11 @@ def model_training_pipeline(
             )
 
             rf_register_task.after(
-                rf_train_task
+                rf_metadata_task
             )
 
             # ------------------------------------------------
-            # 3C. MARK RANDOM FOREST CANDIDATE PENDING
+            # 3D. MARK RANDOM FOREST CANDIDATE PENDING
             # ------------------------------------------------
 
             rf_pending_task = (
@@ -468,6 +510,11 @@ def model_training_pipeline(
                     ),
                     feature_table=(
                         feature_table
+                    ),
+                    feature_dataset=(
+                        refresh_features_task.outputs[
+                            "feature_dataset"
+                        ]
                     ),
                     feature_columns_json=(
                         feature_columns_json
@@ -536,7 +583,33 @@ def model_training_pipeline(
             )
 
             # ------------------------------------------------
-            # 4B. REGISTER XGBOOST CANDIDATE
+            # 4B. PUBLISH XGBOOST ML METADATA
+            # ------------------------------------------------
+
+            xgb_metadata_task = (
+                publish_training_metadata_component(
+                    feature_dataset=(
+                        refresh_features_task.outputs[
+                            "feature_dataset"
+                        ]
+                    ),
+                    training_result_json=(
+                        xgb_train_task.outputs[
+                            "training_result_json"
+                        ]
+                    ),
+                    model_artifact_uri=(
+                        model_artifact_uri
+                    ),
+                )
+            )
+
+            xgb_metadata_task.set_display_name(
+                "Publish XGBoost Metadata"
+            )
+
+            # ------------------------------------------------
+            # 4C. REGISTER XGBOOST CANDIDATE
             # ------------------------------------------------
 
             xgb_register_task = (
@@ -549,6 +622,11 @@ def model_training_pipeline(
                     ),
                     model_display_name=(
                         model_display_name
+                    ),
+                    candidate_model=(
+                        xgb_metadata_task.outputs[
+                            "model"
+                        ]
                     ),
                     artifact_uri=(
                         model_artifact_uri
@@ -564,11 +642,11 @@ def model_training_pipeline(
             )
 
             xgb_register_task.after(
-                xgb_train_task
+                xgb_metadata_task
             )
 
             # ------------------------------------------------
-            # 4C. MARK XGBOOST CANDIDATE PENDING
+            # 4D. MARK XGBOOST CANDIDATE PENDING
             # ------------------------------------------------
 
             xgb_pending_task = (
