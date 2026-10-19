@@ -451,11 +451,10 @@ def main():
     with result_output_path.open(
         "w"
     ) as output_file:
-        json.dump(
+        output_file.write(
             json.dumps(
                 result
-            ),
-            output_file,
+            )
         )
 
     print(
