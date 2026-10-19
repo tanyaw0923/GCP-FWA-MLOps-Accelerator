@@ -436,9 +436,9 @@ def main():
     # ========================================================
     # 9. RETURN TRAINING RESULT TO KFP
     #
-    # OutputPath(str) expects the file contents to be JSON
-    # representing a string. The inner string is itself the
-    # serialized training-result object consumed downstream.
+    # The downstream component expects one JSON object encoded
+    # as a string. Write that serialized object directly so it
+    # is decoded exactly once by json.loads downstream.
     # ========================================================
 
     from pathlib import Path
@@ -455,11 +455,10 @@ def main():
     with result_output_path.open(
         "w"
     ) as output_file:
-        json.dump(
+        output_file.write(
             json.dumps(
                 result
-            ),
-            output_file,
+            )
         )
 
     print(
