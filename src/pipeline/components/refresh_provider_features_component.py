@@ -1,4 +1,5 @@
 from kfp import dsl
+from kfp.dsl import Dataset, Output
 
 
 @dsl.component(
@@ -17,6 +18,7 @@ def refresh_provider_features_component(
     train_end_date: str,
     test_start_date: str,
     test_end_date: str,
+    feature_dataset: Output[Dataset],
 ):
     import json
     import re
@@ -641,5 +643,79 @@ def refresh_provider_features_component(
     print(
         "No NULL values found in "
         "configured model features."
+    )
+
+
+    # ============================================================
+    # 13. PUBLISH DATASET ARTIFACT TO ML METADATA
+    #
+    # The physical feature data remains in BigQuery. The KFP
+    # Dataset artifact records its URI and descriptive metadata so
+    # Vertex ML Metadata can build dataset -> model lineage.
+    # ============================================================
+
+    feature_dataset.uri = (
+        "bq://"
+        + output_feature_table.replace(
+            ".",
+            "/",
+        )
+    )
+
+    feature_dataset.metadata[
+        "bigquery_table"
+    ] = output_feature_table
+
+    feature_dataset.metadata[
+        "train_start_date"
+    ] = train_start_date
+
+    feature_dataset.metadata[
+        "train_end_date"
+    ] = train_end_date
+
+    feature_dataset.metadata[
+        "test_start_date"
+    ] = test_start_date
+
+    feature_dataset.metadata[
+        "test_end_date"
+    ] = test_end_date
+
+    feature_dataset.metadata[
+        "feature_count"
+    ] = len(
+        all_model_features
+    )
+
+    feature_dataset.metadata[
+        "features"
+    ] = ",".join(
+        all_model_features
+    )
+
+    for row in rows:
+        split_key = (
+            row.dataset_split.lower()
+        )
+
+        feature_dataset.metadata[
+            f"{split_key}_provider_rows"
+        ] = int(
+            row.provider_rows
+        )
+
+        feature_dataset.metadata[
+            f"{split_key}_claims_used"
+        ] = int(
+            row.claims_used
+        )
+
+    print(
+        "\nDataset artifact published to ML Metadata:"
+    )
+
+    print(
+        feature_dataset.uri
     )
 

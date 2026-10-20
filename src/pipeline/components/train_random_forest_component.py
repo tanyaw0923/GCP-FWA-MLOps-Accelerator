@@ -1,4 +1,5 @@
 from kfp import dsl
+from kfp.dsl import Dataset, Input
 
 
 # ============================================================
@@ -23,6 +24,7 @@ def train_random_forest_component(
     # --------------------------------------------------------
     project_id: str,
     feature_table: str,
+    feature_dataset: Input[Dataset],
     feature_columns_json: str,
     model_parameters_json: str,
     model_output_uri: str,
@@ -46,6 +48,11 @@ def train_random_forest_component(
     # --------------------------------------------------------
     training_start: str,
     training_end: str,
+
+    # --------------------------------------------------------
+    # KFP metadata bridge
+    # --------------------------------------------------------
+    training_result_json: dsl.OutputPath(str),
 ):
 
     return dsl.ContainerSpec(
@@ -119,5 +126,13 @@ def train_random_forest_component(
 
             "--training-end",
             training_end,
+
+
+            # ------------------------------------------------
+            # KFP output parameter used by metadata publisher
+            # ------------------------------------------------
+
+            "--result-output-path",
+            training_result_json,
         ],
     )

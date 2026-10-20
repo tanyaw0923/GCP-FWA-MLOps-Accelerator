@@ -1,4 +1,5 @@
 from kfp import dsl
+from kfp.dsl import Input, Model
 
 
 @dsl.component(
@@ -11,6 +12,7 @@ def register_model_component(
     project_id: str,
     region: str,
     model_display_name: str,
+    candidate_model: Input[Model],
     artifact_uri: str,
     serving_container_image_uri: str,
 ) -> str:
@@ -45,12 +47,23 @@ def register_model_component(
         f"{artifact_uri}"
     )
 
+
+    print(
+        f"KFP Model artifact URI: "
+        f"{candidate_model.uri}"
+    )
+
+    print(
+        f"KFP Model metadata: "
+        f"{candidate_model.metadata}"
+    )
+
     print(
         f"Serving container: "
         f"{serving_container_image_uri}"
     )
 
-    model = aiplatform.Model.upload(
+    registered_model = aiplatform.Model.upload(
         display_name=model_display_name,
         artifact_uri=artifact_uri,
         serving_container_image_uri=serving_container_image_uri,
@@ -61,7 +74,7 @@ def register_model_component(
 
     print(
         f"Model resource name: "
-        f"{model.resource_name}"
+        f"{registered_model.resource_name}"
     )
 
-    return model.resource_name
+    return registered_model.resource_name
