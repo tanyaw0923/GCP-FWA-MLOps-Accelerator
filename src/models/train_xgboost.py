@@ -49,6 +49,7 @@ def train_xgboost(
     print(f"Run ID: {run_id}")
     print(f"Experiment name: {experiment_name}")
     print(f"Model type: {model_type}")
+
     print(
         f"Training window: "
         f"{training_start} -> {training_end}"
@@ -56,9 +57,7 @@ def train_xgboost(
 
     print("\nModel parameters:")
 
-    for parameter, value in (
-        model_parameters.items()
-    ):
+    for parameter, value in model_parameters.items():
         print(
             f"{parameter}: "
             f"{value}"
@@ -75,7 +74,31 @@ def train_xgboost(
         )
 
     # ========================================================
-    # 2. CREATE BIGQUERY CLIENT
+    # 2. VALIDATE ARTIFACT URI
+    #
+    # Vertex's XGBoost prebuilt serving container expects
+    # the native Booster artifact to be named exactly:
+    #
+    #   model.bst
+    # ========================================================
+
+    if not model_output_uri.startswith(
+        "gs://"
+    ):
+        raise ValueError(
+            "model_output_uri must start with gs://"
+        )
+
+    if not model_output_uri.endswith(
+        "/model.bst"
+    ):
+        raise ValueError(
+            "Native XGBoost artifact must be named "
+            "model.bst for Vertex prebuilt serving."
+        )
+
+    # ========================================================
+    # 3. BIGQUERY CLIENT
     # ========================================================
 
     bq = bigquery.Client(
@@ -83,7 +106,7 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 3. LOAD PROVIDER-LEVEL TRAIN / TEST DATA
+    # 4. LOAD TRAIN / TEST DATA
     # ========================================================
 
     feature_select = ",\n      ".join(
@@ -96,18 +119,22 @@ def train_xgboost(
       dataset_split,
       CAST(fraud_label AS INT64) AS fraud_label,
       {feature_select}
+
     FROM `{feature_table}`
-    WHERE dataset_split IN ('TRAIN', 'TEST')
+
+    WHERE
+      dataset_split IN ('TRAIN', 'TEST')
       AND fraud_label IS NOT NULL
     """
 
     print(
-        "\nLoading provider-level "
-        "TRAIN / TEST data..."
+        "\nLoading provider-level TRAIN / TEST data..."
     )
 
     df = (
-        bq.query(query)
+        bq.query(
+            query
+        )
         .to_dataframe()
     )
 
@@ -117,7 +144,7 @@ def train_xgboost(
         )
 
     # ========================================================
-    # 4. VALIDATE FEATURES
+    # 5. VALIDATE FEATURES
     # ========================================================
 
     missing_features = [
@@ -133,7 +160,7 @@ def train_xgboost(
         )
 
     # ========================================================
-    # 5. SPLIT TRAIN / TEST
+    # 6. SPLIT TRAIN / TEST
     # ========================================================
 
     train_df = (
@@ -163,31 +190,33 @@ def train_xgboost(
         )
 
     # ========================================================
-    # 6. VALIDATE LABELS
+    # 7. VALIDATE LABELS
     # ========================================================
 
     if (
-        train_df["fraud_label"]
+        train_df[
+            "fraud_label"
+        ]
         .nunique()
         < 2
     ):
         raise ValueError(
-            "TRAIN dataset must contain "
-            "both fraud classes."
+            "TRAIN dataset must contain both fraud classes."
         )
 
     if (
-        test_df["fraud_label"]
+        test_df[
+            "fraud_label"
+        ]
         .nunique()
         < 2
     ):
         raise ValueError(
-            "TEST dataset must contain "
-            "both fraud classes."
+            "TEST dataset must contain both fraud classes."
         )
 
     # ========================================================
-    # 7. VALIDATE NULL VALUES
+    # 8. VALIDATE NULLS
     # ========================================================
 
     if (
@@ -199,8 +228,7 @@ def train_xgboost(
         .any()
     ):
         raise ValueError(
-            "Null values detected in "
-            "TRAIN features."
+            "Null values detected in TRAIN features."
         )
 
     if (
@@ -212,8 +240,7 @@ def train_xgboost(
         .any()
     ):
         raise ValueError(
-            "Null values detected in "
-            "TEST features."
+            "Null values detected in TEST features."
         )
 
     print(
@@ -251,27 +278,41 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 8. PREPARE MODEL INPUTS
+    # 9. PREPARE MODEL INPUTS
+    #
+    # Preserve configured feature order exactly.
     # ========================================================
 
-    X_train = train_df[
-        feature_columns
-    ]
+    X_train = (
+        train_df[
+            feature_columns
+        ]
+        .copy()
+    )
 
-    y_train = train_df[
-        "fraud_label"
-    ]
+    y_train = (
+        train_df[
+            "fraud_label"
+        ]
+        .copy()
+    )
 
-    X_test = test_df[
-        feature_columns
-    ]
+    X_test = (
+        test_df[
+            feature_columns
+        ]
+        .copy()
+    )
 
-    y_test = test_df[
-        "fraud_label"
-    ]
+    y_test = (
+        test_df[
+            "fraud_label"
+        ]
+        .copy()
+    )
 
     # ========================================================
-    # 9. VALIDATE XGBOOST PARAMETERS
+    # 10. VALIDATE XGBOOST PARAMETERS
     # ========================================================
 
     supported_parameters = {
@@ -295,23 +336,23 @@ def train_xgboost(
 
     if unsupported_parameters:
         raise ValueError(
-            "Unsupported XGBoost "
-            "parameter(s): "
+            "Unsupported XGBoost parameter(s): "
             f"{sorted(unsupported_parameters)}"
         )
 
     # ========================================================
-    # 10. BUILD MODEL
+    # 11. TRAIN XGBClassifier
+    #
+    # We still use XGBClassifier for convenient training and
+    # offline probability evaluation.
+    #
+    # For serving, however, we export the underlying Booster.
     # ========================================================
 
     model = xgb.XGBClassifier(
         objective="binary:logistic",
         **model_parameters,
     )
-
-    # ========================================================
-    # 11. TRAIN
-    # ========================================================
 
     print(
         "\nTraining XGBoost candidate..."
@@ -323,7 +364,7 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 12. EVALUATE ON TEST
+    # 12. OFFLINE TEST EVALUATION
     # ========================================================
 
     print(
@@ -335,10 +376,6 @@ def train_xgboost(
             X_test
         )[:, 1]
     )
-
-    # --------------------------------------------------------
-    # Probability diagnostics
-    # --------------------------------------------------------
 
     probability_summary = (
         pd.Series(
@@ -373,9 +410,9 @@ def train_xgboost(
         f"{int(y_test.sum())}"
     )
 
-    # --------------------------------------------------------
-    # Threshold analysis
-    # --------------------------------------------------------
+    # ========================================================
+    # 13. THRESHOLD ANALYSIS
+    # ========================================================
 
     threshold_results = []
 
@@ -458,12 +495,9 @@ def train_xgboost(
             f"{threshold_f1:.4f}"
         )
 
-    # --------------------------------------------------------
-    # Standard stored metrics
-    #
-    # Keep 0.50 as the standard classification threshold
-    # so experiment metrics remain comparable across runs.
-    # --------------------------------------------------------
+    # ========================================================
+    # 14. STANDARD METRICS @ 0.50
+    # ========================================================
 
     classification_threshold = 0.50
 
@@ -518,16 +552,18 @@ def train_xgboost(
         f"{classification_threshold:.2f}:"
     )
 
-    for metric_name, metric_value in (
-        metrics.items()
-    ):
+    for (
+        metric_name,
+        metric_value,
+    ) in metrics.items():
+
         print(
             f"{metric_name}: "
             f"{metric_value:.4f}"
         )
 
     # ========================================================
-    # 13. FEATURE IMPORTANCE
+    # 15. FEATURE IMPORTANCE
     # ========================================================
 
     feature_importance = (
@@ -566,33 +602,219 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 14. SAVE MODEL LOCALLY
+    # 16. EXTRACT NATIVE BOOSTER
+    # ========================================================
+
+    booster = (
+        model.get_booster()
+    )
+
+    # ========================================================
+    # 17. SAVE NATIVE BOOSTER
+    #
+    # Vertex XGBoost prebuilt prediction container expects:
+    #
+    #   model.bst
+    #
+    # This is intentionally NOT joblib and NOT the sklearn
+    # XGBClassifier wrapper.
     # ========================================================
 
     local_model_path = (
         "/tmp/model.bst"
     )
 
-    model.get_booster().save_model(
+    booster.save_model(
         local_model_path
     )
 
     print(
-        f"\nLocal model saved: "
+        f"\nNative Booster saved: "
         f"{local_model_path}"
     )
 
     # ========================================================
-    # 15. UPLOAD CANDIDATE TO GCS
+    # 18. RELOAD EXACT SAVED BOOSTER
+    #
+    # This validates the artifact itself before upload.
     # ========================================================
 
-    if not model_output_uri.startswith(
-        "gs://"
-    ):
-        raise ValueError(
-            "model_output_uri must "
-            "start with gs://"
+    reloaded_booster = (
+        xgb.Booster()
+    )
+
+    reloaded_booster.load_model(
+        local_model_path
+    )
+
+    # ========================================================
+    # 19. SERVING-STYLE DMatrix CONSISTENCY TEST
+    #
+    # The Vertex XGBoost serving container passes a DMatrix
+    # into a native Booster. Reproduce that behavior locally.
+    # ========================================================
+
+    test_dmatrix = (
+        xgb.DMatrix(
+            X_test,
+            feature_names=(
+                feature_columns
+            ),
         )
+    )
+
+    booster_probabilities = (
+        reloaded_booster.predict(
+            test_dmatrix
+        )
+    )
+
+    booster_predictions = (
+        booster_probabilities
+        >= classification_threshold
+    ).astype(int)
+
+    booster_precision = float(
+        precision_score(
+            y_test,
+            booster_predictions,
+            zero_division=0,
+        )
+    )
+
+    booster_recall = float(
+        recall_score(
+            y_test,
+            booster_predictions,
+            zero_division=0,
+        )
+    )
+
+    booster_f1 = float(
+        f1_score(
+            y_test,
+            booster_predictions,
+            zero_division=0,
+        )
+    )
+
+    print(
+        "\n"
+        + "=" * 70
+    )
+
+    print(
+        "Native Booster Consistency Check"
+    )
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        f"Predicted fraud: "
+        f"{int(booster_predictions.sum())}"
+    )
+
+    print(
+        f"Predicted normal: "
+        f"{len(booster_predictions) - int(booster_predictions.sum())}"
+    )
+
+    print(
+        f"Precision: "
+        f"{booster_precision:.4f}"
+    )
+
+    print(
+        f"Recall: "
+        f"{booster_recall:.4f}"
+    )
+
+    print(
+        f"F1: "
+        f"{booster_f1:.4f}"
+    )
+
+    print(
+        f"Min probability: "
+        f"{booster_probabilities.min():.6f}"
+    )
+
+    print(
+        f"Max probability: "
+        f"{booster_probabilities.max():.6f}"
+    )
+
+    # ========================================================
+    # 20. COMPARE CLASSIFIER VS BOOSTER
+    #
+    # They should produce effectively identical probabilities.
+    # ========================================================
+
+    max_probability_difference = float(
+        abs(
+            test_probabilities
+            - booster_probabilities
+        )
+        .max()
+    )
+
+    print(
+        "\nMaximum classifier vs Booster "
+        "probability difference:"
+    )
+
+    print(
+        f"{max_probability_difference:.12f}"
+    )
+
+    tolerance = 1e-6
+
+    if (
+        max_probability_difference
+        > tolerance
+    ):
+        raise RuntimeError(
+            "Saved native Booster predictions do not "
+            "match XGBClassifier predictions."
+        )
+
+    # ========================================================
+    # 21. VERIFY METRICS MATCH
+    # ========================================================
+
+    metric_tolerance = 1e-9
+
+    if (
+        abs(
+            booster_precision
+            - metrics["precision"]
+        )
+        > metric_tolerance
+        or abs(
+            booster_recall
+            - metrics["recall"]
+        )
+        > metric_tolerance
+        or abs(
+            booster_f1
+            - metrics["f1_score"]
+        )
+        > metric_tolerance
+    ):
+        raise RuntimeError(
+            "Native Booster artifact does not reproduce "
+            "offline TEST metrics."
+        )
+
+    print(
+        "\nNative Booster artifact verified successfully."
+    )
+
+    # ========================================================
+    # 22. UPLOAD model.bst TO GCS
+    # ========================================================
 
     uri_without_prefix = (
         model_output_uri.replace(
@@ -640,7 +862,7 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 16. RECORD EXPERIMENT RUN
+    # 23. RECORD EXPERIMENT RUN
     # ========================================================
 
     created_at = (
@@ -716,15 +938,7 @@ def train_xgboost(
     )
 
     # ========================================================
-    # 17. RECORD EXPERIMENT METRICS
-    #
-    # One row is written for each metric:
-    #
-    #   pr_auc
-    #   roc_auc
-    #   precision
-    #   recall
-    #   f1_score
+    # 24. RECORD EXPERIMENT METRICS
     # ========================================================
 
     metric_rows = [
@@ -774,12 +988,11 @@ def train_xgboost(
         )
 
     print(
-        "Experiment metrics recorded "
-        "successfully."
+        "Experiment metrics recorded successfully."
     )
 
     # ========================================================
-    # 18. RETURN CANDIDATE METADATA
+    # 25. RETURN CANDIDATE METADATA
     # ========================================================
 
     result = {
@@ -800,6 +1013,12 @@ def train_xgboost(
 
         "model_output_uri":
             model_output_uri,
+
+        "artifact_format":
+            "native_xgboost_booster",
+
+        "artifact_filename":
+            "model.bst",
 
         "training_rows":
             int(
@@ -845,6 +1064,25 @@ def train_xgboost(
                     orient="records"
                 )
             ),
+
+        "booster_consistency": {
+            "predicted_fraud":
+                int(
+                    booster_predictions.sum()
+                ),
+
+            "precision":
+                booster_precision,
+
+            "recall":
+                booster_recall,
+
+            "f1_score":
+                booster_f1,
+
+            "max_probability_difference":
+                max_probability_difference,
+        },
     }
 
     return result

@@ -23,99 +23,47 @@ from src.pipeline.components.train_xgboost_component import (
 )
 
 
-# ============================================================
-# REUSABLE FRAUD MODEL CONTINUOUS TRAINING PIPELINE
-#
-# Use Case 1:
-#   New monthly data triggers retraining.
-#
-# Use Case 2:
-#   A new feature configuration triggers retraining.
-#
-# Use Case 3:
-#   A new model type or model configuration triggers retraining.
-#
-# Shared workflow:
-#
-#   Retraining Decision
-#          |
-#          v
-#   Rolling Window
-#          |
-#          v
-#   Provider Feature Refresh
-#          |
-#          +-----------------------+
-#          |                       |
-#          v                       v
-#   Random Forest              XGBoost
-#          |                       |
-#          v                       v
-#   Register Candidate       Register Candidate
-#          |                       |
-#          v                       v
-#   Pending Approval        Pending Approval
-#
-# Production remains unchanged until manual approval.
-# ============================================================
-
-
 @dsl.pipeline(
     name="fraud-model-training",
     description=(
-        "Reusable provider-level fraud detection pipeline "
-        "supporting Random Forest and XGBoost with shared "
-        "feature engineering, retraining logic, experiment "
-        "tracking, model registration, and manual approval."
+        "Reusable provider-level fraud training pipeline "
+        "with monitoring-driven retraining, experiment tracking, "
+        "model registration, and manual promotion."
     ),
 )
 def model_training_pipeline(
-    # --------------------------------------------------------
     # Project
-    # --------------------------------------------------------
     project_id: str,
     region: str,
 
-    # --------------------------------------------------------
     # Model configuration
-    # --------------------------------------------------------
     model_type: str,
     model_name: str,
     model_parameters_json: str,
     current_model_signature: str,
 
-    # --------------------------------------------------------
-    # Data / continuous training
-    # --------------------------------------------------------
+    # Data and rolling window
     claims_table: str,
     current_data_month: str,
     current_feature_signature: str,
     training_months: int,
     testing_months: int,
 
-    # --------------------------------------------------------
     # Feature engineering
-    # --------------------------------------------------------
     feature_table: str,
     feature_sql_json: str,
     derived_feature_sql_json: str,
     feature_columns_json: str,
 
-    # --------------------------------------------------------
-    # Candidate model artifact
-    # --------------------------------------------------------
+    # Candidate artifact
     model_output_uri: str,
     model_artifact_uri: str,
 
-    # --------------------------------------------------------
     # Vertex Model Registry
-    # --------------------------------------------------------
     model_display_name: str,
     serving_container_image_uri: str,
 
-    # --------------------------------------------------------
     # Experiment tracking
-    # --------------------------------------------------------
     experiment_runs_table: str,
     experiment_metrics_table: str,
     experiment_id: str,
@@ -125,53 +73,31 @@ def model_training_pipeline(
     feature_version: str,
     dataset_version: str,
     git_commit: str,
-
-    # --------------------------------------------------------
-    # Experiment metadata
-    #
-    # These are calculated in run_model_training_pipeline.py.
-    # They are pipeline parameters instead of outputs from
-    # Calculate Rolling Window so they do not create extra
-    # task-to-task DAG edges.
-    # --------------------------------------------------------
     training_start: str,
     training_end: str,
 
-    # --------------------------------------------------------
-    # Monitoring / continuous training state
-    # --------------------------------------------------------
+    # Monitoring
     data_quality_table: str,
     feature_drift_table: str,
     prediction_drift_table: str,
+    performance_degradation_table: str,
     training_state_table: str,
 
-    # --------------------------------------------------------
-    # Stable ML product identity
-    # --------------------------------------------------------
+    # Stable identity for the fraud-model workflow
     state_key: str = "provider_fraud_model",
 ):
-
-    # ========================================================
-    # 1. CHECK WHETHER RETRAINING IS REQUIRED
-    # ========================================================
-
+    # Decide whether a new candidate is needed.
     retraining_task = (
         check_retraining_decision_component(
-            project_id=(
-                project_id
-            ),
-            current_data_month=(
-                current_data_month
-            ),
+            project_id=project_id,
+            current_data_month=current_data_month,
             current_feature_signature=(
                 current_feature_signature
             ),
             current_model_signature=(
                 current_model_signature
             ),
-            current_model_type=(
-                model_type
-            ),
+            current_model_type=model_type,
             data_quality_table=(
                 data_quality_table
             ),
@@ -181,12 +107,13 @@ def model_training_pipeline(
             prediction_drift_table=(
                 prediction_drift_table
             ),
+            performance_degradation_table=(
+                performance_degradation_table
+            ),
             training_state_table=(
                 training_state_table
             ),
-            state_key=(
-                state_key
-            ),
+            state_key=state_key,
         )
     )
 
@@ -194,19 +121,12 @@ def model_training_pipeline(
         "Check Retraining Decision"
     )
 
-    # ========================================================
-    # 2. RUN ONLY WHEN RETRAINING IS REQUIRED
-    # ========================================================
-
+    # Everything below runs only when one of the retraining
+    # triggers fires.
     with dsl.If(
         retraining_task.output == True,
         name="retraining-required",
     ):
-
-        # ====================================================
-        # 2A. CALCULATE ROLLING TRAIN / TEST WINDOW
-        # ====================================================
-
         rolling_window_task = (
             calculate_rolling_window_component(
                 current_data_month=(
@@ -225,21 +145,12 @@ def model_training_pipeline(
             "Calculate Rolling Window"
         )
 
-        # ====================================================
-        # 2B. REFRESH PROVIDER-LEVEL FEATURES
-        #
-        # This is the only downstream task that directly
-        # consumes rolling-window outputs.
-        # ====================================================
-
+        # Rebuild the provider-level feature table for the
+        # current train/test window.
         refresh_features_task = (
             refresh_provider_features_component(
-                project_id=(
-                    project_id
-                ),
-                claims_table=(
-                    claims_table
-                ),
+                project_id=project_id,
+                claims_table=claims_table,
                 output_feature_table=(
                     feature_table
                 ),
@@ -276,33 +187,24 @@ def model_training_pipeline(
             "Refresh Provider Features"
         )
 
-        refresh_features_task.set_caching_options(False)
+        # This component writes to BigQuery, so we do not want
+        # Vertex to reuse an old cached execution.
+        refresh_features_task.set_caching_options(
+            False
+        )
 
-
-        # ====================================================
-        # 3. RANDOM FOREST BRANCH
-        # ====================================================
+        # ----------------------------------------------------
+        # Random Forest
+        # ----------------------------------------------------
 
         with dsl.If(
             model_type == "random_forest",
             name="random-forest-model",
         ):
-
-            # ------------------------------------------------
-            # 3A. TRAIN RANDOM FOREST CANDIDATE
-            # ------------------------------------------------
-
             rf_train_task = (
                 train_random_forest_component(
-                    # ----------------------------------------
-                    # Core training inputs
-                    # ----------------------------------------
-                    project_id=(
-                        project_id
-                    ),
-                    feature_table=(
-                        feature_table
-                    ),
+                    project_id=project_id,
+                    feature_table=feature_table,
                     feature_columns_json=(
                         feature_columns_json
                     ),
@@ -313,52 +215,33 @@ def model_training_pipeline(
                         model_output_uri
                     ),
 
-                    # ----------------------------------------
-                    # Experiment tracking
-                    # ----------------------------------------
                     experiment_runs_table=(
                         experiment_runs_table
                     ),
                     experiment_metrics_table=(
                         experiment_metrics_table
                     ),
-                    experiment_id=(
-                        experiment_id
-                    ),
-                    run_id=(
-                        run_id
-                    ),
+                    experiment_id=experiment_id,
+                    run_id=run_id,
                     experiment_name=(
                         experiment_name
                     ),
                     experiment_owner=(
                         experiment_owner
                     ),
-                    model_type=(
-                        model_type
-                    ),
+                    model_type=model_type,
                     feature_version=(
                         feature_version
                     ),
                     dataset_version=(
                         dataset_version
                     ),
-                    git_commit=(
-                        git_commit
-                    ),
+                    git_commit=git_commit,
 
-                    # ----------------------------------------
-                    # Experiment training-window metadata
-                    #
-                    # These are pipeline parameters.
-                    # They do NOT come from rolling_window_task.
-                    # ----------------------------------------
                     training_start=(
                         training_start
                     ),
-                    training_end=(
-                        training_end
-                    ),
+                    training_end=training_end,
                 )
             )
 
@@ -366,24 +249,14 @@ def model_training_pipeline(
                 "Train Random Forest Candidate"
             )
 
-            # Real dependency:
-            # feature refresh must finish before training.
             rf_train_task.after(
                 refresh_features_task
             )
 
-            # ------------------------------------------------
-            # 3B. REGISTER RANDOM FOREST CANDIDATE
-            # ------------------------------------------------
-
             rf_register_task = (
                 register_model_component(
-                    project_id=(
-                        project_id
-                    ),
-                    region=(
-                        region
-                    ),
+                    project_id=project_id,
+                    region=region,
                     model_display_name=(
                         model_display_name
                     ),
@@ -404,15 +277,9 @@ def model_training_pipeline(
                 rf_train_task
             )
 
-            # ------------------------------------------------
-            # 3C. MARK RANDOM FOREST CANDIDATE PENDING
-            # ------------------------------------------------
-
             rf_pending_task = (
                 mark_candidate_pending_component(
-                    project_id=(
-                        project_id
-                    ),
+                    project_id=project_id,
                     training_state_table=(
                         training_state_table
                     ),
@@ -431,9 +298,7 @@ def model_training_pipeline(
                     candidate_model_type=(
                         model_type
                     ),
-                    state_key=(
-                        state_key
-                    ),
+                    state_key=state_key,
                 )
             )
 
@@ -445,30 +310,18 @@ def model_training_pipeline(
                 rf_register_task
             )
 
-        # ====================================================
-        # 4. XGBOOST BRANCH
-        # ====================================================
+        # ----------------------------------------------------
+        # XGBoost
+        # ----------------------------------------------------
 
         with dsl.If(
             model_type == "xgboost",
             name="xgboost-model",
         ):
-
-            # ------------------------------------------------
-            # 4A. TRAIN XGBOOST CANDIDATE
-            # ------------------------------------------------
-
             xgb_train_task = (
                 train_xgboost_component(
-                    # ----------------------------------------
-                    # Core training inputs
-                    # ----------------------------------------
-                    project_id=(
-                        project_id
-                    ),
-                    feature_table=(
-                        feature_table
-                    ),
+                    project_id=project_id,
+                    feature_table=feature_table,
                     feature_columns_json=(
                         feature_columns_json
                     ),
@@ -479,49 +332,33 @@ def model_training_pipeline(
                         model_output_uri
                     ),
 
-                    # ----------------------------------------
-                    # Experiment tracking
-                    # ----------------------------------------
                     experiment_runs_table=(
                         experiment_runs_table
                     ),
                     experiment_metrics_table=(
                         experiment_metrics_table
                     ),
-                    experiment_id=(
-                        experiment_id
-                    ),
-                    run_id=(
-                        run_id
-                    ),
+                    experiment_id=experiment_id,
+                    run_id=run_id,
                     experiment_name=(
                         experiment_name
                     ),
                     experiment_owner=(
                         experiment_owner
                     ),
-                    model_type=(
-                        model_type
-                    ),
+                    model_type=model_type,
                     feature_version=(
                         feature_version
                     ),
                     dataset_version=(
                         dataset_version
                     ),
-                    git_commit=(
-                        git_commit
-                    ),
+                    git_commit=git_commit,
 
-                    # ----------------------------------------
-                    # Experiment training-window metadata
-                    # ----------------------------------------
                     training_start=(
                         training_start
                     ),
-                    training_end=(
-                        training_end
-                    ),
+                    training_end=training_end,
                 )
             )
 
@@ -529,24 +366,14 @@ def model_training_pipeline(
                 "Train XGBoost Candidate"
             )
 
-            # Real dependency:
-            # feature refresh must finish before training.
             xgb_train_task.after(
                 refresh_features_task
             )
 
-            # ------------------------------------------------
-            # 4B. REGISTER XGBOOST CANDIDATE
-            # ------------------------------------------------
-
             xgb_register_task = (
                 register_model_component(
-                    project_id=(
-                        project_id
-                    ),
-                    region=(
-                        region
-                    ),
+                    project_id=project_id,
+                    region=region,
                     model_display_name=(
                         model_display_name
                     ),
@@ -567,15 +394,9 @@ def model_training_pipeline(
                 xgb_train_task
             )
 
-            # ------------------------------------------------
-            # 4C. MARK XGBOOST CANDIDATE PENDING
-            # ------------------------------------------------
-
             xgb_pending_task = (
                 mark_candidate_pending_component(
-                    project_id=(
-                        project_id
-                    ),
+                    project_id=project_id,
                     training_state_table=(
                         training_state_table
                     ),
@@ -594,9 +415,7 @@ def model_training_pipeline(
                     candidate_model_type=(
                         model_type
                     ),
-                    state_key=(
-                        state_key
-                    ),
+                    state_key=state_key,
                 )
             )
 
@@ -609,12 +428,7 @@ def model_training_pipeline(
             )
 
 
-# ============================================================
-# 5. COMPILE PIPELINE
-# ============================================================
-
 if __name__ == "__main__":
-
     output_file = (
         "model_training_pipeline.yaml"
     )
@@ -629,9 +443,6 @@ if __name__ == "__main__":
     )
 
     print(
-        "Pipeline compiled successfully:"
-    )
-
-    print(
-        output_file
+        f"Pipeline compiled successfully: "
+        f"{output_file}"
     )

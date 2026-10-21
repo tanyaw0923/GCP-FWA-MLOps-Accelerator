@@ -111,8 +111,10 @@ data:
   experiment_runs_table: fwa-mlops-accelerator-demo.fraud_experiments.experiment_runs
 
   experiment_metrics_table: fwa-mlops-accelerator-demo.fraud_experiments.experiment_metrics
+  
+  random_forest_batch_input_table: fwa-mlops-accelerator-demo.fraud_features.random_forest_batch_input
 
-  batch_input_table: fwa-mlops-accelerator-demo.fraud_features.model_batch_input
+  xgboost_batch_input_table: fwa-mlops-accelerator-demo.fraud_features.xgboost_batch_input  
 
   provider_prediction_table: fwa-mlops-accelerator-demo.fraud_experiments.provider_predictions
 
@@ -194,6 +196,14 @@ monitoring:
   prediction_drift_table: fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift
 
   training_state_table: fwa-mlops-accelerator-demo.fraud_monitoring.model_training_state
+
+  performance_degradation_table: fwa-mlops-accelerator-demo.fraud_monitoring.model_performance_degradation
+
+  performance_min_completed_cases: 20
+
+  precision_degradation_threshold: 0.10
+  recall_degradation_threshold: 0.10
+  f1_degradation_threshold: 0.10
 
 
 # ============================================================

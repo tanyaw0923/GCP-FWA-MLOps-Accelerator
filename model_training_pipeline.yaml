@@ -1,6 +1,6 @@
 # PIPELINE DEFINITION
 # Name: fraud-model-training
-# Description: Reusable provider-level fraud detection pipeline supporting Random Forest and XGBoost with shared feature engineering, retraining logic, experiment tracking, model registration, and manual approval.
+# Description: Reusable provider-level fraud training pipeline with monitoring-driven retraining, experiment tracking, model registration, and manual promotion.
 # Inputs:
 #    claims_table: str
 #    current_data_month: str
@@ -26,6 +26,7 @@
 #    model_output_uri: str
 #    model_parameters_json: str
 #    model_type: str
+#    performance_degradation_table: str
 #    prediction_drift_table: str
 #    project_id: str
 #    region: str
@@ -73,6 +74,8 @@ components:
         data_quality_table:
           parameterType: STRING
         feature_drift_table:
+          parameterType: STRING
+        performance_degradation_table:
           parameterType: STRING
         prediction_drift_table:
           parameterType: STRING
@@ -933,120 +936,120 @@ deploymentSpec:
           \    current_data_month: str,\n    current_feature_signature: str,\n   \
           \ current_model_signature: str,\n    current_model_type: str,\n    data_quality_table:\
           \ str,\n    feature_drift_table: str,\n    prediction_drift_table: str,\n\
-          \    training_state_table: str,\n    state_key: str = \"provider_fraud_model\"\
-          ,\n) -> bool:\n    from datetime import date\n\n    from google.cloud import\
-          \ bigquery\n\n    bq = bigquery.Client(\n        project=project_id\n  \
-          \  )\n\n    # ---------------------------------------------------------\n\
-          \    # 1. Data quality trigger\n    # ---------------------------------------------------------\n\
-          \n    data_quality_query = f\"\"\"\n    SELECT\n      monitoring_status\n\
-          \    FROM `{data_quality_table}`\n    ORDER BY monitoring_timestamp DESC\n\
-          \    LIMIT 1\n    \"\"\"\n\n    data_quality_rows = list(\n        bq.query(\n\
-          \            data_quality_query\n        ).result()\n    )\n\n    data_quality_status\
-          \ = (\n        data_quality_rows[0].monitoring_status\n        if data_quality_rows\n\
-          \        else \"PASS\"\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 2. Feature drift trigger\n    #\n    # Evaluate only the latest monitoring\
-          \ run.\n    # ---------------------------------------------------------\n\
-          \n    feature_drift_query = f\"\"\"\n    SELECT\n      COUNTIF(\n      \
-          \  monitoring_status = 'ALERT'\n      ) AS alert_count\n    FROM `{feature_drift_table}`\n\
-          \    WHERE monitoring_timestamp = (\n      SELECT\n        MAX(monitoring_timestamp)\n\
-          \      FROM `{feature_drift_table}`\n    )\n    \"\"\"\n\n    feature_drift_rows\
-          \ = list(\n        bq.query(\n            feature_drift_query\n        ).result()\n\
-          \    )\n\n    feature_alert_count = (\n        feature_drift_rows[0].alert_count\n\
-          \        if feature_drift_rows\n        else 0\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 3. Prediction drift trigger\n    #\n    # prediction_drift uses:\n\
-          \    #   status\n    #   check_date\n    # ---------------------------------------------------------\n\
-          \n    prediction_drift_query = f\"\"\"\n    SELECT\n      status\n    FROM\
-          \ `{prediction_drift_table}`\n    ORDER BY check_date DESC\n    LIMIT 1\n\
-          \    \"\"\"\n\n    prediction_drift_rows = list(\n        bq.query(\n  \
-          \          prediction_drift_query\n        ).result()\n    )\n\n    prediction_drift_status\
-          \ = (\n        prediction_drift_rows[0].status\n        if prediction_drift_rows\n\
-          \        else \"PASS\"\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 4. Read approved production state\n    #\n    # state_key identifies\
-          \ the fraud workflow, not an algorithm.\n    #\n    # Random Forest and\
-          \ XGBoost therefore compare against the\n    # same approved production\
-          \ baseline.\n    # ---------------------------------------------------------\n\
-          \n    training_state_query = f\"\"\"\n    SELECT\n      last_training_data_month,\n\
+          \    performance_degradation_table: str,\n    training_state_table: str,\n\
+          \    state_key: str = \"provider_fraud_model\",\n) -> bool:\n    from datetime\
+          \ import date\n\n    from google.cloud import bigquery\n\n    bq = bigquery.Client(project=project_id)\n\
+          \n    def normalize_status(value, default=\"PASS\"):\n        if value is\
+          \ None:\n            return default\n\n        return str(value).strip().upper()\n\
+          \n    # Latest data quality result\n    data_quality_rows = list(\n    \
+          \    bq.query(\n            f\"\"\"\n            SELECT monitoring_status\n\
+          \            FROM `{data_quality_table}`\n            ORDER BY monitoring_timestamp\
+          \ DESC\n            LIMIT 1\n            \"\"\"\n        ).result()\n  \
+          \  )\n\n    data_quality_status = normalize_status(\n        data_quality_rows[0].monitoring_status\n\
+          \        if data_quality_rows\n        else None\n    )\n\n    # Feature\
+          \ drift writes one row per feature, so check whether\n    # any feature\
+          \ was flagged in the latest monitoring run.\n    feature_drift_rows = list(\n\
+          \        bq.query(\n            f\"\"\"\n            SELECT\n          \
+          \    COUNTIF(monitoring_status = 'ALERT') AS alert_count\n            FROM\
+          \ `{feature_drift_table}`\n            WHERE monitoring_timestamp = (\n\
+          \              SELECT MAX(monitoring_timestamp)\n              FROM `{feature_drift_table}`\n\
+          \            )\n            \"\"\"\n        ).result()\n    )\n\n    feature_alert_count\
+          \ = (\n        int(feature_drift_rows[0].alert_count or 0)\n        if feature_drift_rows\n\
+          \        else 0\n    )\n\n    # Latest prediction drift result\n    prediction_drift_rows\
+          \ = list(\n        bq.query(\n            f\"\"\"\n            SELECT status\n\
+          \            FROM `{prediction_drift_table}`\n            ORDER BY check_date\
+          \ DESC\n            LIMIT 1\n            \"\"\"\n        ).result()\n  \
+          \  )\n\n    prediction_drift_status = normalize_status(\n        prediction_drift_rows[0].status\n\
+          \        if prediction_drift_rows\n        else None\n    )\n\n    # Latest\
+          \ performance monitoring result based on completed\n    # investigator feedback.\n\
+          \    performance_rows = list(\n        bq.query(\n            f\"\"\"\n\
+          \            SELECT\n              monitoring_status,\n              model_name,\n\
+          \              model_version,\n              run_id,\n              alert_reason,\n\
+          \              evaluation_timestamp\n            FROM `{performance_degradation_table}`\n\
+          \            ORDER BY evaluation_timestamp DESC\n            LIMIT 1\n \
+          \           \"\"\"\n        ).result()\n    )\n\n    if performance_rows:\n\
+          \        performance = performance_rows[0]\n\n        performance_status\
+          \ = normalize_status(\n            performance.monitoring_status\n     \
+          \   )\n\n        performance_model_name = (\n            performance.model_name\n\
+          \        )\n\n        performance_model_version = (\n            performance.model_version\n\
+          \        )\n\n        performance_run_id = (\n            performance.run_id\n\
+          \        )\n\n        performance_alert_reason = (\n            performance.alert_reason\n\
+          \        )\n\n        performance_timestamp = (\n            performance.evaluation_timestamp\n\
+          \        )\n\n    else:\n        performance_status = \"PASS\"\n       \
+          \ performance_model_name = None\n        performance_model_version = None\n\
+          \        performance_run_id = None\n        performance_alert_reason = None\n\
+          \        performance_timestamp = None\n\n    # Read the currently approved\
+          \ production state.\n    state_query = f\"\"\"\n    SELECT\n      last_training_data_month,\n\
           \      approved_feature_signature,\n      approved_model_signature,\n  \
           \    approved_model_type\n    FROM `{training_state_table}`\n    WHERE model_name\
-          \ = @state_key\n    LIMIT 1\n    \"\"\"\n\n    job_config = bigquery.QueryJobConfig(\n\
+          \ = @state_key\n    LIMIT 1\n    \"\"\"\n\n    state_config = bigquery.QueryJobConfig(\n\
           \        query_parameters=[\n            bigquery.ScalarQueryParameter(\n\
           \                \"state_key\",\n                \"STRING\",\n         \
-          \       state_key,\n            )\n        ]\n    )\n\n    training_state_rows\
-          \ = list(\n        bq.query(\n            training_state_query,\n      \
-          \      job_config=job_config,\n        ).result()\n    )\n\n    if training_state_rows:\n\
-          \        state = training_state_rows[0]\n\n        last_training_data_month\
-          \ = (\n            state.last_training_data_month\n        )\n\n       \
-          \ approved_feature_signature = (\n            state.approved_feature_signature\n\
+          \       state_key,\n            )\n        ]\n    )\n\n    state_rows =\
+          \ list(\n        bq.query(\n            state_query,\n            job_config=state_config,\n\
+          \        ).result()\n    )\n\n    if state_rows:\n        state = state_rows[0]\n\
+          \n        last_training_data_month = (\n            state.last_training_data_month\n\
+          \        )\n\n        approved_feature_signature = (\n            state.approved_feature_signature\n\
           \        )\n\n        approved_model_signature = (\n            state.approved_model_signature\n\
           \        )\n\n        approved_model_type = (\n            state.approved_model_type\n\
           \        )\n\n    else:\n        last_training_data_month = None\n     \
           \   approved_feature_signature = None\n        approved_model_signature\
-          \ = None\n        approved_model_type = None\n\n    # ---------------------------------------------------------\n\
-          \    # 5. Use Case 1\n    #\n    # New monthly data becomes available.\n\
-          \    # ---------------------------------------------------------\n\n   \
-          \ current_data_month_date = (\n        date.fromisoformat(\n           \
-          \ current_data_month\n        )\n    )\n\n    new_month_available = (\n\
-          \        last_training_data_month is None\n        or current_data_month_date\n\
-          \        > last_training_data_month\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 6. Use Case 2\n    #\n    # Feature configuration changed.\n    #\
-          \ ---------------------------------------------------------\n\n    feature_set_changed\
-          \ = (\n        approved_feature_signature is not None\n        and current_feature_signature\n\
-          \        != approved_feature_signature\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 7. Use Case 3\n    #\n    # Model type or model parameters changed.\n\
-          \    #\n    # The model signature contains:\n    #   model_type\n    # \
-          \  model_name\n    #   hyperparameters\n    #\n    # Example:\n    #\n \
-          \   # random_forest\n    #       \u2193\n    # xgboost\n    #\n    # produces\
-          \ a different signature.\n    # ---------------------------------------------------------\n\
-          \n    model_configuration_changed = (\n        approved_model_signature\
+          \ = None\n        approved_model_type = None\n\n    # New data month\n \
+          \   current_data_month_date = date.fromisoformat(\n        current_data_month\n\
+          \    )\n\n    new_month_available = (\n        last_training_data_month\
+          \ is None\n        or current_data_month_date\n        > last_training_data_month\n\
+          \    )\n\n    # Feature definition changed\n    feature_set_changed = (\n\
+          \        approved_feature_signature is not None\n        and current_feature_signature\n\
+          \        != approved_feature_signature\n    )\n\n    # Model type, hyperparameters,\
+          \ serving configuration, etc.\n    # changed compared with the approved\
+          \ model.\n    model_configuration_changed = (\n        approved_model_signature\
           \ is not None\n        and current_model_signature\n        != approved_model_signature\n\
-          \    )\n\n    # ---------------------------------------------------------\n\
-          \    # 8. Final retraining decision\n    # ---------------------------------------------------------\n\
-          \n    should_retrain = (\n        data_quality_status == \"ALERT\"\n   \
-          \     or feature_alert_count > 0\n        or prediction_drift_status ==\
-          \ \"ALERT\"\n        or new_month_available\n        or feature_set_changed\n\
-          \        or model_configuration_changed\n    )\n\n    # ---------------------------------------------------------\n\
-          \    # 9. Collect retraining reasons\n    # ---------------------------------------------------------\n\
-          \n    reasons = []\n\n    if data_quality_status == \"ALERT\":\n       \
-          \ reasons.append(\n            \"data_quality_alert\"\n        )\n\n   \
-          \ if feature_alert_count > 0:\n        reasons.append(\n            \"feature_drift_alert\"\
-          \n        )\n\n    if prediction_drift_status == \"ALERT\":\n        reasons.append(\n\
-          \            \"prediction_drift_alert\"\n        )\n\n    if new_month_available:\n\
-          \        reasons.append(\n            \"new_month_data\"\n        )\n\n\
-          \    if feature_set_changed:\n        reasons.append(\n            \"feature_set_changed\"\
-          \n        )\n\n    if model_configuration_changed:\n        reasons.append(\n\
-          \            \"model_configuration_changed\"\n        )\n\n    # ---------------------------------------------------------\n\
-          \    # 10. Decision summary\n    # ---------------------------------------------------------\n\
-          \n    print(\"=\" * 70)\n    print(\"FWA Retraining Decision\")\n    print(\"\
-          =\" * 70)\n\n    print(\n        f\"State key: \"\n        f\"{state_key}\"\
-          \n    )\n\n    print(\"\\nMONITORING\")\n    print(\"-\" * 70)\n\n    print(\n\
-          \        f\"Data Quality Status: \"\n        f\"{data_quality_status}\"\n\
-          \    )\n\n    print(\n        f\"Feature Drift Alert Count: \"\n       \
-          \ f\"{feature_alert_count}\"\n    )\n\n    print(\n        f\"Prediction\
-          \ Drift Status: \"\n        f\"{prediction_drift_status}\"\n    )\n\n  \
-          \  print(\"\\nUSE CASE 1 - DATA\")\n    print(\"-\" * 70)\n\n    print(\n\
-          \        f\"Current Data Month: \"\n        f\"{current_data_month_date}\"\
-          \n    )\n\n    print(\n        f\"Last Training Data Month: \"\n       \
-          \ f\"{last_training_data_month}\"\n    )\n\n    print(\n        f\"New Month\
-          \ Available: \"\n        f\"{new_month_available}\"\n    )\n\n    print(\"\
-          \\nUSE CASE 2 - FEATURES\")\n    print(\"-\" * 70)\n\n    print(\n     \
-          \   \"Approved Feature Signature: \"\n        f\"{approved_feature_signature}\"\
-          \n    )\n\n    print(\n        \"Current Feature Signature: \"\n       \
-          \ f\"{current_feature_signature}\"\n    )\n\n    print(\n        f\"Feature\
-          \ Set Changed: \"\n        f\"{feature_set_changed}\"\n    )\n\n    print(\"\
-          \\nUSE CASE 3 - MODEL\")\n    print(\"-\" * 70)\n\n    print(\n        f\"\
-          Approved Model Type: \"\n        f\"{approved_model_type}\"\n    )\n\n \
-          \   print(\n        f\"Current Model Type: \"\n        f\"{current_model_type}\"\
-          \n    )\n\n    print(\n        \"Approved Model Signature: \"\n        f\"\
-          {approved_model_signature}\"\n    )\n\n    print(\n        \"Current Model\
-          \ Signature: \"\n        f\"{current_model_signature}\"\n    )\n\n    print(\n\
-          \        f\"Model Configuration Changed: \"\n        f\"{model_configuration_changed}\"\
-          \n    )\n\n    print(\"\\n\" + \"=\" * 70)\n\n    print(\n        f\"Should\
-          \ Retrain: \"\n        f\"{should_retrain}\"\n    )\n\n    if reasons:\n\
-          \        print(\n            \"\\nRetraining trigger(s):\"\n        )\n\n\
-          \        for reason in reasons:\n            print(\n                f\"\
-          \  - {reason}\"\n            )\n\n    else:\n        print(\n          \
-          \  \"\\nNo retraining triggers detected.\"\n        )\n\n    return should_retrain\n\
-          \n"
+          \    )\n\n    data_quality_alert = (\n        data_quality_status == \"\
+          ALERT\"\n    )\n\n    feature_drift_alert = (\n        feature_alert_count\
+          \ > 0\n    )\n\n    prediction_drift_alert = (\n        prediction_drift_status\
+          \ == \"ALERT\"\n    )\n\n    performance_degradation_alert = (\n       \
+          \ performance_status == \"ALERT\"\n    )\n\n    reasons = []\n\n    if data_quality_alert:\n\
+          \        reasons.append(\n            \"data_quality_alert\"\n        )\n\
+          \n    if feature_drift_alert:\n        reasons.append(\n            \"feature_drift_alert\"\
+          \n        )\n\n    if prediction_drift_alert:\n        reasons.append(\n\
+          \            \"prediction_drift_alert\"\n        )\n\n    if performance_degradation_alert:\n\
+          \        reasons.append(\n            \"performance_degradation_alert\"\n\
+          \        )\n\n    if new_month_available:\n        reasons.append(\n   \
+          \         \"new_month_data\"\n        )\n\n    if feature_set_changed:\n\
+          \        reasons.append(\n            \"feature_set_changed\"\n        )\n\
+          \n    if model_configuration_changed:\n        reasons.append(\n       \
+          \     \"model_configuration_changed\"\n        )\n\n    should_retrain =\
+          \ bool(reasons)\n\n    print(\"=\" * 60)\n    print(\"FWA Retraining Decision\"\
+          )\n    print(\"=\" * 60)\n\n    print(f\"State key: {state_key}\")\n\n \
+          \   print(\"\\nMonitoring\")\n    print(\"-\" * 60)\n    print(\n      \
+          \  f\"Data quality: \"\n        f\"{data_quality_status}\"\n    )\n    print(\n\
+          \        f\"Feature drift alerts: \"\n        f\"{feature_alert_count}\"\
+          \n    )\n    print(\n        f\"Prediction drift: \"\n        f\"{prediction_drift_status}\"\
+          \n    )\n    print(\n        f\"Performance degradation: \"\n        f\"\
+          {performance_status}\"\n    )\n\n    if performance_rows:\n        print(\n\
+          \            f\"Performance model: \"\n            f\"{performance_model_name}\"\
+          \n        )\n        print(\n            f\"Performance version: \"\n  \
+          \          f\"{performance_model_version}\"\n        )\n        print(\n\
+          \            f\"Performance run: \"\n            f\"{performance_run_id}\"\
+          \n        )\n        print(\n            f\"Performance evaluated at: \"\
+          \n            f\"{performance_timestamp}\"\n        )\n        print(\n\
+          \            f\"Performance alert reason: \"\n            f\"{performance_alert_reason}\"\
+          \n        )\n\n    print(\"\\nCurrent vs approved state\")\n    print(\"\
+          -\" * 60)\n    print(\n        f\"Current data month: \"\n        f\"{current_data_month_date}\"\
+          \n    )\n    print(\n        f\"Last training data month: \"\n        f\"\
+          {last_training_data_month}\"\n    )\n    print(\n        f\"New month available:\
+          \ \"\n        f\"{new_month_available}\"\n    )\n\n    print(\n        f\"\
+          Feature set changed: \"\n        f\"{feature_set_changed}\"\n    )\n\n \
+          \   print(\n        f\"Approved model type: \"\n        f\"{approved_model_type}\"\
+          \n    )\n    print(\n        f\"Current model type: \"\n        f\"{current_model_type}\"\
+          \n    )\n    print(\n        f\"Model configuration changed: \"\n      \
+          \  f\"{model_configuration_changed}\"\n    )\n\n    print(\"\\nDecision\"\
+          )\n    print(\"-\" * 60)\n    print(\n        f\"Should retrain: \"\n  \
+          \      f\"{should_retrain}\"\n    )\n\n    if reasons:\n        print(\"\
+          Reasons:\")\n\n        for reason in reasons:\n            print(\n    \
+          \            f\"  - {reason}\"\n            )\n\n    else:\n        print(\n\
+          \            \"No retraining triggers detected.\"\n        )\n\n    return\
+          \ should_retrain\n\n"
         image: python:3.11
     exec-mark-candidate-pending-component:
       container:
@@ -1598,9 +1601,8 @@ deploymentSpec:
         - '{{$.inputs.parameters[''training_end'']}}'
         image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-training:v1
 pipelineInfo:
-  description: Reusable provider-level fraud detection pipeline supporting Random
-    Forest and XGBoost with shared feature engineering, retraining logic, experiment
-    tracking, model registration, and manual approval.
+  description: Reusable provider-level fraud training pipeline with monitoring-driven
+    retraining, experiment tracking, model registration, and manual promotion.
   name: fraud-model-training
 root:
   dag:
@@ -1624,6 +1626,8 @@ root:
               componentInputParameter: data_quality_table
             feature_drift_table:
               componentInputParameter: feature_drift_table
+            performance_degradation_table:
+              componentInputParameter: performance_degradation_table
             prediction_drift_table:
               componentInputParameter: prediction_drift_table
             project_id:
@@ -1761,6 +1765,8 @@ root:
       model_parameters_json:
         parameterType: STRING
       model_type:
+        parameterType: STRING
+      performance_degradation_table:
         parameterType: STRING
       prediction_drift_table:
         parameterType: STRING

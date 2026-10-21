@@ -2,12 +2,10 @@ import hashlib
 import json
 import subprocess
 import time
-import yaml
-
 from datetime import datetime, timezone
 
+import yaml
 from dateutil.relativedelta import relativedelta
-
 from google.cloud import aiplatform_v1
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct, Value
@@ -15,363 +13,212 @@ from google.protobuf.struct_pb2 import Struct, Value
 from src.config.load_config import load_config
 
 
-# ============================================================
-# 1. LOAD CONFIGURATION
-# ============================================================
-
+# Load project configuration
 config = load_config()
 
 PROJECT_ID = config["project_id"]
 REGION = config["region"]
 BUCKET = config["bucket"]
 
-DATA_CONFIG = config["data"]
-MODEL_CONFIG = config["model"]
-MONITORING_CONFIG = config["monitoring"]
-PROMOTION_CONFIG = config["promotion"]
+data_config = config["data"]
+model_config = config["model"]
+monitoring_config = config["monitoring"]
+promotion_config = config["promotion"]
 
 
-# ============================================================
-# 2. SELECT ACTIVE MODEL
-#
-# Use Case 3:
-#
-# Change only:
-#
-#   model_type: random_forest
-#
-# to:
-#
-#   model_type: xgboost
-#
-# The rest of the workflow stays reusable.
-# ============================================================
+# ------------------------------------------------------------------
+# Active model
+# ------------------------------------------------------------------
 
-MODEL_TYPE = MODEL_CONFIG[
-    "model_type"
-]
+MODEL_TYPE = model_config["model_type"]
 
-
-if MODEL_TYPE not in MODEL_CONFIG:
-
+if MODEL_TYPE not in model_config:
     raise ValueError(
-        f"Unsupported model_type: "
-        f"{MODEL_TYPE}"
+        f"Unsupported model_type: {MODEL_TYPE}"
     )
 
+active_model = model_config[MODEL_TYPE]
 
-ACTIVE_MODEL_CONFIG = (
-    MODEL_CONFIG[
-        MODEL_TYPE
-    ]
-)
-
-
-MODEL_NAME = (
-    ACTIVE_MODEL_CONFIG[
-        "model_name"
-    ]
-)
-
-
-EXPERIMENT_NAME = (
-    ACTIVE_MODEL_CONFIG[
-        "experiment_name"
-    ]
-)
-
-
-MODEL_PARAMETERS = (
-    ACTIVE_MODEL_CONFIG[
-        "parameters"
-    ]
-)
-
+MODEL_NAME = active_model["model_name"]
+EXPERIMENT_NAME = active_model["experiment_name"]
+MODEL_PARAMETERS = active_model["parameters"]
 
 SERVING_CONTAINER_IMAGE_URI = (
-    ACTIVE_MODEL_CONFIG[
-        "serving_container_image_uri"
-    ]
+    active_model["serving_container_image_uri"]
     .strip()
 )
 
 
-# ============================================================
-# 3. FEATURES
-# ============================================================
+# ------------------------------------------------------------------
+# Artifact format
+# ------------------------------------------------------------------
 
-FEATURE_COLUMNS = (
-    config[
-        "features"
-    ]
-)
+if MODEL_TYPE == "random_forest":
+    MODEL_ARTIFACT_FORMAT = "joblib"
+    MODEL_FILENAME = "model.joblib"
 
+elif MODEL_TYPE == "xgboost":
+    MODEL_ARTIFACT_FORMAT = (
+        "native_xgboost_booster"
+    )
+    MODEL_FILENAME = "model.bst"
 
-FEATURE_SQL = (
-    config[
-        "feature_sql"
-    ]
-)
-
-
-DERIVED_FEATURE_SQL = (
-    config[
-        "derived_feature_sql"
-    ]
-)
+else:
+    raise ValueError(
+        f"Unsupported model_type: {MODEL_TYPE}"
+    )
 
 
-# ============================================================
-# 4. FEATURE SIGNATURE
-#
-# Used for Use Case 2.
-#
-# Any change to:
-#   feature SQL
-#   derived feature SQL
-#   feature list
-#
-# generates a new feature signature.
-# ============================================================
+# ------------------------------------------------------------------
+# Feature configuration
+# ------------------------------------------------------------------
 
-feature_signature_payload = {
-    "feature_sql": (
-        FEATURE_SQL
-    ),
-    "derived_feature_sql": (
-        DERIVED_FEATURE_SQL
-    ),
-    "features": (
-        FEATURE_COLUMNS
-    ),
-}
+FEATURE_COLUMNS = config["features"]
+FEATURE_SQL = config["feature_sql"]
+DERIVED_FEATURE_SQL = config[
+    "derived_feature_sql"
+]
 
 
-feature_signature_json = (
-    json.dumps(
-        feature_signature_payload,
+def build_signature(payload):
+    """Create a stable SHA-256 signature for configuration changes."""
+
+    serialized = json.dumps(
+        payload,
         sort_keys=True,
     )
+
+    return hashlib.sha256(
+        serialized.encode("utf-8")
+    ).hexdigest()
+
+
+CURRENT_FEATURE_SIGNATURE = build_signature(
+    {
+        "feature_sql": FEATURE_SQL,
+        "derived_feature_sql": (
+            DERIVED_FEATURE_SQL
+        ),
+        "features": FEATURE_COLUMNS,
+    }
 )
 
 
-CURRENT_FEATURE_SIGNATURE = (
-    hashlib.sha256(
-        feature_signature_json.encode(
-            "utf-8"
-        )
-    )
-    .hexdigest()
+# The model signature is used by the retraining decision.
+# Changes to the algorithm, parameters, artifact format, or
+# serving configuration should create a new candidate.
+CURRENT_MODEL_SIGNATURE = build_signature(
+    {
+        "model_type": MODEL_TYPE,
+        "model_name": MODEL_NAME,
+        "parameters": MODEL_PARAMETERS,
+        "artifact_format": (
+            MODEL_ARTIFACT_FORMAT
+        ),
+        "serving_container_image_uri": (
+            SERVING_CONTAINER_IMAGE_URI
+        ),
+    }
 )
 
 
-# ============================================================
-# 5. MODEL SIGNATURE
-#
-# Used for Use Case 3.
-#
-# Any change to:
-#   model type
-#   model name
-#   hyperparameters
-#
-# generates a new model signature.
-# ============================================================
-
-model_signature_payload = {
-    "model_type": (
-        MODEL_TYPE
-    ),
-    "model_name": (
-        MODEL_NAME
-    ),
-    "parameters": (
-        MODEL_PARAMETERS
-    ),
-}
-
-
-model_signature_json = (
-    json.dumps(
-        model_signature_payload,
-        sort_keys=True,
-    )
-)
-
-
-CURRENT_MODEL_SIGNATURE = (
-    hashlib.sha256(
-        model_signature_json.encode(
-            "utf-8"
-        )
-    )
-    .hexdigest()
-)
-
-
-# ============================================================
-# 6. DATA CONFIGURATION
-# ============================================================
+# ------------------------------------------------------------------
+# Data configuration
+# ------------------------------------------------------------------
 
 CURRENT_DATA_MONTH = str(
-    DATA_CONFIG[
-        "current_data_month"
-    ]
+    data_config["current_data_month"]
 )
 
-
-ROLLING_WINDOW = (
-    DATA_CONFIG[
-        "rolling_window"
-    ]
-)
-
+rolling_window = data_config[
+    "rolling_window"
+]
 
 TRAINING_MONTHS = int(
-    ROLLING_WINDOW[
-        "training_months"
-    ]
+    rolling_window["training_months"]
 )
-
 
 TESTING_MONTHS = int(
-    ROLLING_WINDOW[
-        "testing_months"
-    ]
+    rolling_window["testing_months"]
 )
 
+CLAIMS_TABLE = data_config[
+    "claims_table"
+]
 
-CLAIMS_TABLE = (
-    DATA_CONFIG[
-        "claims_table"
-    ]
+FEATURE_TABLE = data_config[
+    "feature_table"
+]
+
+EXPERIMENT_RUNS_TABLE = data_config[
+    "experiment_runs_table"
+]
+
+EXPERIMENT_METRICS_TABLE = data_config[
+    "experiment_metrics_table"
+]
+
+
+# ------------------------------------------------------------------
+# Training-window metadata
+#
+# The pipeline calculates the real rolling window again for
+# feature generation. These values are passed separately only
+# for experiment metadata.
+# ------------------------------------------------------------------
+
+current_month = datetime.strptime(
+    CURRENT_DATA_MONTH,
+    "%Y-%m-%d",
 )
-
-
-FEATURE_TABLE = (
-    DATA_CONFIG[
-        "feature_table"
-    ]
-)
-
-
-EXPERIMENT_RUNS_TABLE = (
-    DATA_CONFIG[
-        "experiment_runs_table"
-    ]
-)
-
-
-EXPERIMENT_METRICS_TABLE = (
-    DATA_CONFIG[
-        "experiment_metrics_table"
-    ]
-)
-
-
-# ============================================================
-# 7. EXPERIMENT TRAINING WINDOW
-#
-# These dates are calculated here only for experiment metadata.
-#
-# The pipeline still uses Calculate Rolling Window for the
-# actual feature-engineering workflow.
-#
-# Keeping these as pipeline parameters prevents extra DAG
-# dependencies from Rolling Window directly to model training.
-# ============================================================
-
-current_month_date = (
-    datetime.strptime(
-        CURRENT_DATA_MONTH,
-        "%Y-%m-%d",
-    )
-)
-
-
-# Example:
-#
-# current month = 2026-09-01
-# testing months = 3
-#
-# TEST:
-#   2026-07-01 -> 2026-09-30
-#
-# TRAIN:
-#   2026-01-01 -> 2026-06-30
 
 test_start_month = (
-    current_month_date
+    current_month
     - relativedelta(
-        months=(
-            TESTING_MONTHS - 1
-        )
+        months=TESTING_MONTHS - 1
     )
 )
-
 
 training_end_month = (
     test_start_month
-    - relativedelta(
-        months=1
-    )
+    - relativedelta(months=1)
 )
-
 
 training_start_month = (
     training_end_month
     - relativedelta(
-        months=(
-            TRAINING_MONTHS - 1
-        )
+        months=TRAINING_MONTHS - 1
     )
 )
-
 
 EXPERIMENT_TRAINING_START = (
     training_start_month
-    .replace(
-        day=1
-    )
-    .strftime(
-        "%Y-%m-%d"
-    )
+    .replace(day=1)
+    .strftime("%Y-%m-%d")
 )
-
 
 EXPERIMENT_TRAINING_END = (
     (
         test_start_month
-        - relativedelta(
-            days=1
-        )
+        - relativedelta(days=1)
     )
-    .strftime(
-        "%Y-%m-%d"
-    )
+    .strftime("%Y-%m-%d")
 )
 
 
-# ============================================================
-# 8. EXPERIMENT TRACKING
-# ============================================================
+# ------------------------------------------------------------------
+# Experiment metadata
+# ------------------------------------------------------------------
 
 EXPERIMENT_OWNER = (
-    config.get(
-        "experiment_tracking",
-        {},
-    )
+    config
+    .get("experiment_tracking", {})
     .get(
         "owner",
         "data_science_team",
     )
 )
 
-
-# Stable experiment ID.
-#
-# The same experiment_name always produces the same
-# experiment_id.
 EXPERIMENT_ID = (
     hashlib.sha256(
         EXPERIMENT_NAME.encode(
@@ -381,41 +228,27 @@ EXPERIMENT_ID = (
     .hexdigest()[:16]
 )
 
-
-# One timestamp per pipeline execution.
 RUN_TIMESTAMP = (
-    datetime.now(
-        timezone.utc
-    )
-    .strftime(
-        "%Y%m%d%H%M%S"
-    )
+    datetime.now(timezone.utc)
+    .strftime("%Y%m%d%H%M%S")
 )
 
-
-# Unique run ID.
 RUN_ID = (
     f"{MODEL_TYPE}-"
     f"{CURRENT_DATA_MONTH.replace('-', '')}-"
     f"{RUN_TIMESTAMP}"
 )
 
-
-# Feature signature becomes the feature version.
 FEATURE_VERSION = (
     CURRENT_FEATURE_SIGNATURE
 )
 
-
-# Current data month represents the dataset version.
 DATASET_VERSION = (
     CURRENT_DATA_MONTH
 )
 
 
-# Capture Git commit for reproducibility.
 try:
-
     GIT_COMMIT = (
         subprocess.check_output(
             [
@@ -429,102 +262,69 @@ try:
     )
 
 except Exception:
-
-    GIT_COMMIT = (
-        "unknown"
-    )
+    GIT_COMMIT = "unknown"
 
 
-# ============================================================
-# 9. MONITORING / TRAINING STATE
-# ============================================================
+# ------------------------------------------------------------------
+# Monitoring tables
+# ------------------------------------------------------------------
 
 DATA_QUALITY_TABLE = (
-    MONITORING_CONFIG[
+    monitoring_config[
         "data_quality_table"
     ]
 )
 
-
 FEATURE_DRIFT_TABLE = (
-    MONITORING_CONFIG[
+    monitoring_config[
         "feature_drift_table"
     ]
 )
 
-
 PREDICTION_DRIFT_TABLE = (
-    MONITORING_CONFIG[
+    monitoring_config[
         "prediction_drift_table"
     ]
 )
 
+PERFORMANCE_DEGRADATION_TABLE = (
+    monitoring_config[
+        "performance_degradation_table"
+    ]
+)
 
 TRAINING_STATE_TABLE = (
-    MONITORING_CONFIG[
+    monitoring_config[
         "training_state_table"
     ]
 )
 
 
-# ============================================================
-# 10. MODEL-SPECIFIC PROMOTION CONFIG
-# ============================================================
+# ------------------------------------------------------------------
+# Candidate and production artifact locations
+# ------------------------------------------------------------------
 
-if MODEL_TYPE not in PROMOTION_CONFIG:
-
+if MODEL_TYPE not in promotion_config:
     raise ValueError(
         "No promotion configuration found "
         f"for model_type={MODEL_TYPE}"
     )
 
-
-MODEL_PROMOTION_CONFIG = (
-    PROMOTION_CONFIG[
-        MODEL_TYPE
-    ]
+active_promotion = (
+    promotion_config[MODEL_TYPE]
 )
 
-
 CANDIDATE_ARTIFACT_PATH = (
-    MODEL_PROMOTION_CONFIG[
+    active_promotion[
         "candidate_artifact_path"
     ]
 )
 
-
 PRODUCTION_ARTIFACT_PATH = (
-    MODEL_PROMOTION_CONFIG[
+    active_promotion[
         "production_artifact_path"
     ]
 )
-
-
-# ============================================================
-# 11. MODEL ARTIFACT FORMAT
-# ============================================================
-
-if MODEL_TYPE == "random_forest":
-
-    MODEL_FILENAME = (
-        "model.joblib"
-    )
-
-
-elif MODEL_TYPE == "xgboost":
-
-    MODEL_FILENAME = (
-        "model.bst"
-    )
-
-
-else:
-
-    raise ValueError(
-        f"Unsupported model_type: "
-        f"{MODEL_TYPE}"
-    )
-
 
 MODEL_OUTPUT_URI = (
     f"gs://{BUCKET}/"
@@ -532,16 +332,10 @@ MODEL_OUTPUT_URI = (
     f"{MODEL_FILENAME}"
 )
 
-
 MODEL_ARTIFACT_URI = (
     f"gs://{BUCKET}/"
     f"{CANDIDATE_ARTIFACT_PATH.rstrip('/')}/"
 )
-
-
-# ============================================================
-# 12. VERTEX MODEL REGISTRY CONFIGURATION
-# ============================================================
 
 MODEL_DISPLAY_NAME = (
     f"fwa-"
@@ -550,18 +344,13 @@ MODEL_DISPLAY_NAME = (
 )
 
 
-# ============================================================
-# 13. SERIALIZE CONFIGURATION
-#
-# Complex Python objects are passed into KFP as JSON strings.
-# ============================================================
+# ------------------------------------------------------------------
+# Serialize configuration passed to KFP
+# ------------------------------------------------------------------
 
-FEATURE_SQL_JSON = (
-    json.dumps(
-        FEATURE_SQL
-    )
+FEATURE_SQL_JSON = json.dumps(
+    FEATURE_SQL
 )
-
 
 DERIVED_FEATURE_SQL_JSON = (
     json.dumps(
@@ -569,13 +358,11 @@ DERIVED_FEATURE_SQL_JSON = (
     )
 )
 
-
 FEATURE_COLUMNS_JSON = (
     json.dumps(
         FEATURE_COLUMNS
     )
 )
-
 
 MODEL_PARAMETERS_JSON = (
     json.dumps(
@@ -584,66 +371,44 @@ MODEL_PARAMETERS_JSON = (
 )
 
 
-# ============================================================
-# 14. COMPILED PIPELINE
-# ============================================================
+# ------------------------------------------------------------------
+# Pipeline configuration
+# ------------------------------------------------------------------
 
 PIPELINE_TEMPLATE = (
     "model_training_pipeline.yaml"
 )
-
 
 PIPELINE_ARTIFACT_BUCKET = (
     "fwa-mlops-accelerator-demo-"
     "pipeline-artifacts"
 )
 
-
 PIPELINE_ROOT = (
     f"gs://{PIPELINE_ARTIFACT_BUCKET}/"
-    "pipeline_root/"
-    "model_training"
+    "pipeline_root/model_training"
 )
 
 
-# ============================================================
-# 15. RUNTIME PARAMETERS
-#
-# These values are passed into the compiled Vertex pipeline.
-# ============================================================
+# ------------------------------------------------------------------
+# Vertex runtime parameters
+# ------------------------------------------------------------------
 
 runtime_parameter_values = {
-
-    # --------------------------------------------------------
-    # Project
-    # --------------------------------------------------------
-
     "project_id": Value(
-        string_value=(
-            PROJECT_ID
-        )
+        string_value=PROJECT_ID
     ),
 
     "region": Value(
-        string_value=(
-            REGION
-        )
+        string_value=REGION
     ),
 
-    # --------------------------------------------------------
-    # Model
-    # --------------------------------------------------------
-
     "model_type": Value(
-        string_value=(
-            MODEL_TYPE
-        )
+        string_value=MODEL_TYPE
     ),
 
     "model_name": Value(
-        string_value=(
-            MODEL_NAME
-        )
+        string_value=MODEL_NAME
     ),
 
     "model_parameters_json": Value(
@@ -658,14 +423,8 @@ runtime_parameter_values = {
         )
     ),
 
-    # --------------------------------------------------------
-    # Data
-    # --------------------------------------------------------
-
     "claims_table": Value(
-        string_value=(
-            CLAIMS_TABLE
-        )
+        string_value=CLAIMS_TABLE
     ),
 
     "current_data_month": Value(
@@ -681,31 +440,19 @@ runtime_parameter_values = {
     ),
 
     "training_months": Value(
-        number_value=(
-            TRAINING_MONTHS
-        )
+        number_value=TRAINING_MONTHS
     ),
 
     "testing_months": Value(
-        number_value=(
-            TESTING_MONTHS
-        )
+        number_value=TESTING_MONTHS
     ),
 
-    # --------------------------------------------------------
-    # Features
-    # --------------------------------------------------------
-
     "feature_table": Value(
-        string_value=(
-            FEATURE_TABLE
-        )
+        string_value=FEATURE_TABLE
     ),
 
     "feature_sql_json": Value(
-        string_value=(
-            FEATURE_SQL_JSON
-        )
+        string_value=FEATURE_SQL_JSON
     ),
 
     "derived_feature_sql_json": Value(
@@ -720,30 +467,16 @@ runtime_parameter_values = {
         )
     ),
 
-    # --------------------------------------------------------
-    # Candidate model artifacts
-    # --------------------------------------------------------
-
     "model_output_uri": Value(
-        string_value=(
-            MODEL_OUTPUT_URI
-        )
+        string_value=MODEL_OUTPUT_URI
     ),
 
     "model_artifact_uri": Value(
-        string_value=(
-            MODEL_ARTIFACT_URI
-        )
+        string_value=MODEL_ARTIFACT_URI
     ),
 
-    # --------------------------------------------------------
-    # Vertex Model Registry
-    # --------------------------------------------------------
-
     "model_display_name": Value(
-        string_value=(
-            MODEL_DISPLAY_NAME
-        )
+        string_value=MODEL_DISPLAY_NAME
     ),
 
     "serving_container_image_uri": Value(
@@ -751,10 +484,6 @@ runtime_parameter_values = {
             SERVING_CONTAINER_IMAGE_URI
         )
     ),
-
-    # --------------------------------------------------------
-    # Experiment tracking
-    # --------------------------------------------------------
 
     "experiment_runs_table": Value(
         string_value=(
@@ -769,54 +498,32 @@ runtime_parameter_values = {
     ),
 
     "experiment_id": Value(
-        string_value=(
-            EXPERIMENT_ID
-        )
+        string_value=EXPERIMENT_ID
     ),
 
     "run_id": Value(
-        string_value=(
-            RUN_ID
-        )
+        string_value=RUN_ID
     ),
 
     "experiment_name": Value(
-        string_value=(
-            EXPERIMENT_NAME
-        )
+        string_value=EXPERIMENT_NAME
     ),
 
     "experiment_owner": Value(
-        string_value=(
-            EXPERIMENT_OWNER
-        )
+        string_value=EXPERIMENT_OWNER
     ),
 
     "feature_version": Value(
-        string_value=(
-            FEATURE_VERSION
-        )
+        string_value=FEATURE_VERSION
     ),
 
     "dataset_version": Value(
-        string_value=(
-            DATASET_VERSION
-        )
+        string_value=DATASET_VERSION
     ),
 
     "git_commit": Value(
-        string_value=(
-            GIT_COMMIT
-        )
+        string_value=GIT_COMMIT
     ),
-
-    # --------------------------------------------------------
-    # Experiment training window
-    #
-    # These are ordinary pipeline parameters rather than
-    # outputs from Calculate Rolling Window. This keeps the
-    # Vertex DAG visually clean.
-    # --------------------------------------------------------
 
     "training_start": Value(
         string_value=(
@@ -829,10 +536,6 @@ runtime_parameter_values = {
             EXPERIMENT_TRAINING_END
         )
     ),
-
-    # --------------------------------------------------------
-    # Monitoring
-    # --------------------------------------------------------
 
     "data_quality_table": Value(
         string_value=(
@@ -852,6 +555,12 @@ runtime_parameter_values = {
         )
     ),
 
+    "performance_degradation_table": Value(
+        string_value=(
+            PERFORMANCE_DEGRADATION_TABLE
+        )
+    ),
+
     "training_state_table": Value(
         string_value=(
             TRAINING_STATE_TABLE
@@ -860,41 +569,26 @@ runtime_parameter_values = {
 }
 
 
-# ============================================================
-# 16. LOAD COMPILED KFP PIPELINE
-# ============================================================
+# ------------------------------------------------------------------
+# Load the compiled KFP spec
+# ------------------------------------------------------------------
 
 with open(
     PIPELINE_TEMPLATE,
     "r",
-) as f:
-
+) as file:
     compiled_pipeline = (
-        yaml.safe_load(
-            f
-        )
+        yaml.safe_load(file)
     )
 
-
-if "pipelineSpec" in compiled_pipeline:
-
-    pipeline_spec_dict = (
-        compiled_pipeline[
-            "pipelineSpec"
-        ]
+pipeline_spec_dict = (
+    compiled_pipeline.get(
+        "pipelineSpec",
+        compiled_pipeline,
     )
-
-else:
-
-    pipeline_spec_dict = (
-        compiled_pipeline
-    )
-
-
-pipeline_spec = (
-    Struct()
 )
 
+pipeline_spec = Struct()
 
 json_format.ParseDict(
     pipeline_spec_dict,
@@ -902,9 +596,9 @@ json_format.ParseDict(
 )
 
 
-# ============================================================
-# 17. VERTEX RUNTIME CONFIG
-# ============================================================
+# ------------------------------------------------------------------
+# Build the Vertex PipelineJob
+# ------------------------------------------------------------------
 
 runtime_config = (
     aiplatform_v1.types
@@ -919,28 +613,26 @@ runtime_config = (
     )
 )
 
-
-# ============================================================
-# 18. PIPELINE JOB METADATA
-# ============================================================
-
 data_month_label = (
-    CURRENT_DATA_MONTH
-    .replace(
+    CURRENT_DATA_MONTH.replace(
         "-",
         "",
     )
 )
 
-
 model_label = (
-    MODEL_TYPE
-    .replace(
+    MODEL_TYPE.replace(
         "_",
         "-",
     )
 )
 
+job_id = (
+    f"{model_label}-"
+    f"candidate-"
+    f"{data_month_label}-"
+    f"{RUN_TIMESTAMP}"
+)
 
 pipeline_job = (
     aiplatform_v1.types
@@ -959,11 +651,6 @@ pipeline_job = (
     )
 )
 
-
-# ============================================================
-# 19. VERTEX AI CLIENT
-# ============================================================
-
 client = (
     aiplatform_v1
     .PipelineServiceClient(
@@ -976,162 +663,62 @@ client = (
     )
 )
 
-
-# ============================================================
-# 20. UNIQUE PIPELINE JOB ID
-#
-# Reuse RUN_TIMESTAMP so the Vertex job and experiment run
-# clearly belong to the same execution.
-# ============================================================
-
-job_id = (
-    f"{model_label}-"
-    f"candidate-"
-    f"{data_month_label}-"
-    f"{RUN_TIMESTAMP}"
-)
-
-
 parent = (
     f"projects/{PROJECT_ID}/"
     f"locations/{REGION}"
 )
 
 
-# ============================================================
-# 21. PRINT PIPELINE CONFIGURATION
-# ============================================================
+# ------------------------------------------------------------------
+# Print configuration before submission
+# ------------------------------------------------------------------
 
 print("=" * 70)
-
-print(
-    "FWA Continuous Training Pipeline"
-)
-
+print("FWA Continuous Training Pipeline")
 print("=" * 70)
 
-
-print(
-    f"Model type: "
-    f"{MODEL_TYPE}"
-)
-
-
-print(
-    f"Model name: "
-    f"{MODEL_NAME}"
-)
-
-
-print(
-    f"Experiment: "
-    f"{EXPERIMENT_NAME}"
-)
-
-
-print(
-    f"Experiment ID: "
-    f"{EXPERIMENT_ID}"
-)
-
-
-print(
-    f"Run ID: "
-    f"{RUN_ID}"
-)
-
-
+print(f"Model type: {MODEL_TYPE}")
+print(f"Model name: {MODEL_NAME}")
+print(f"Experiment: {EXPERIMENT_NAME}")
+print(f"Experiment ID: {EXPERIMENT_ID}")
+print(f"Run ID: {RUN_ID}")
 print(
     f"Current data month: "
     f"{CURRENT_DATA_MONTH}"
 )
-
-
 print(
     f"Feature count: "
     f"{len(FEATURE_COLUMNS)}"
 )
-
-
 print(
     f"Feature signature: "
     f"{CURRENT_FEATURE_SIGNATURE[:12]}"
 )
-
-
 print(
     f"Model signature: "
     f"{CURRENT_MODEL_SIGNATURE[:12]}"
 )
-
-
+print(
+    f"Artifact format: "
+    f"{MODEL_ARTIFACT_FORMAT}"
+)
 print(
     f"Git commit: "
     f"{GIT_COMMIT[:12]}"
 )
 
-
-# ============================================================
-# 22. MODEL PARAMETERS
-# ============================================================
-
-print(
-    "\nMODEL PARAMETERS"
-)
-
+print("\nModel parameters")
 print("-" * 70)
 
-
-for parameter, value in (
+for name, value in (
     MODEL_PARAMETERS.items()
 ):
-
     print(
-        f"{parameter}: "
-        f"{value}"
+        f"{name}: {value}"
     )
 
-
-# ============================================================
-# 23. EXPERIMENT TRACKING
-# ============================================================
-
-print(
-    "\nEXPERIMENT TRACKING"
-)
-
+print("\nExperiment")
 print("-" * 70)
-
-
-print(
-    f"Experiment runs table: "
-    f"{EXPERIMENT_RUNS_TABLE}"
-)
-
-
-print(
-    f"Experiment metrics table: "
-    f"{EXPERIMENT_METRICS_TABLE}"
-)
-
-
-print(
-    f"Experiment owner: "
-    f"{EXPERIMENT_OWNER}"
-)
-
-
-print(
-    f"Feature version: "
-    f"{FEATURE_VERSION[:12]}"
-)
-
-
-print(
-    f"Dataset version: "
-    f"{DATASET_VERSION}"
-)
-
 
 print(
     f"Training window: "
@@ -1140,29 +727,56 @@ print(
     f"{EXPERIMENT_TRAINING_END}"
 )
 
-
-# ============================================================
-# 24. MODEL ARTIFACTS
-# ============================================================
-
 print(
-    "\nMODEL ARTIFACTS"
+    f"Feature version: "
+    f"{FEATURE_VERSION[:12]}"
 )
 
+print(
+    f"Dataset version: "
+    f"{DATASET_VERSION}"
+)
+
+print("\nMonitoring")
 print("-" * 70)
 
+print(
+    f"Data quality: "
+    f"{DATA_QUALITY_TABLE}"
+)
+
+print(
+    f"Feature drift: "
+    f"{FEATURE_DRIFT_TABLE}"
+)
+
+print(
+    f"Prediction drift: "
+    f"{PREDICTION_DRIFT_TABLE}"
+)
+
+print(
+    f"Performance degradation: "
+    f"{PERFORMANCE_DEGRADATION_TABLE}"
+)
+
+print(
+    f"Training state: "
+    f"{TRAINING_STATE_TABLE}"
+)
+
+print("\nArtifacts")
+print("-" * 70)
 
 print(
     f"Candidate model: "
     f"{MODEL_OUTPUT_URI}"
 )
 
-
 print(
     f"Candidate directory: "
     f"{MODEL_ARTIFACT_URI}"
 )
-
 
 print(
     f"Production path: "
@@ -1170,112 +784,61 @@ print(
     f"{PRODUCTION_ARTIFACT_PATH}"
 )
 
-
 print(
-    f"Serving container: "
+    f"Registry serving container: "
     f"{SERVING_CONTAINER_IMAGE_URI}"
 )
 
 
-# ============================================================
-# 25. RETRAINING USE CASES
-# ============================================================
-
-print(
-    "\nRETRAINING TRIGGERS"
-)
-
-print("-" * 70)
-
-
-print(
-    "Use Case 1: "
-    "New monthly data"
-)
-
-
-print(
-    "Use Case 2: "
-    "Feature configuration change"
-)
-
-
-print(
-    "Use Case 3: "
-    "Model configuration change"
-)
-
-
-# ============================================================
-# 26. SUBMIT PIPELINE
-# ============================================================
+# ------------------------------------------------------------------
+# Submit
+# ------------------------------------------------------------------
 
 request = (
     aiplatform_v1.types
     .CreatePipelineJobRequest(
-        parent=(
-            parent
-        ),
-        pipeline_job=(
-            pipeline_job
-        ),
-        pipeline_job_id=(
-            job_id
-        ),
+        parent=parent,
+        pipeline_job=pipeline_job,
+        pipeline_job_id=job_id,
     )
 )
 
-
 print(
-    "\n" + "=" * 70
+    "\nSubmitting candidate pipeline..."
 )
-
-print(
-    "Submitting candidate pipeline..."
-)
-
-print("=" * 70)
-
 
 response = (
     client.create_pipeline_job(
-        request=(
-            request
-        )
+        request=request
     )
 )
 
-
 print(
-    f"\nPipeline submitted: "
+    f"Pipeline submitted: "
     f"{response.name}"
 )
 
 
-# ============================================================
-# 27. WAIT FOR PIPELINE COMPLETION
-# ============================================================
+# ------------------------------------------------------------------
+# Wait for completion
+# ------------------------------------------------------------------
 
 terminal_states = {
-
     (
         aiplatform_v1.types
         .PipelineState
         .PIPELINE_STATE_SUCCEEDED
     ),
-
     (
         aiplatform_v1.types
         .PipelineState
         .PIPELINE_STATE_FAILED
     ),
-
     (
         aiplatform_v1.types
         .PipelineState
         .PIPELINE_STATE_CANCELLED
     ),
-
     (
         aiplatform_v1.types
         .PipelineState
@@ -1283,35 +846,21 @@ terminal_states = {
     ),
 }
 
-
-last_state = (
-    None
-)
-
+last_state = None
 
 while True:
-
-    pipeline_job_status = (
+    pipeline_status = (
         client.get_pipeline_job(
-            name=(
-                response.name
-            )
+            name=response.name
         )
     )
 
-
-    state = (
-        pipeline_job_status.state
-    )
-
+    state = pipeline_status.state
 
     if state != last_state:
-
         current_time = (
             datetime.now()
-            .strftime(
-                "%H:%M:%S"
-            )
+            .strftime("%H:%M:%S")
         )
 
         print(
@@ -1319,68 +868,59 @@ while True:
             f"{state.name}"
         )
 
-        last_state = (
-            state
-        )
-
+        last_state = state
 
     if state in terminal_states:
-
         break
 
-
-    time.sleep(
-        30
-    )
+    time.sleep(30)
 
 
-# ============================================================
-# 28. FINAL RESULT
-# ============================================================
+# ------------------------------------------------------------------
+# Final result
+# ------------------------------------------------------------------
 
-print(
-    "\n" + "=" * 70
-)
-
+print("\n" + "=" * 70)
 
 if (
-    pipeline_job_status.state
+    pipeline_status.state
     ==
     aiplatform_v1.types
     .PipelineState
     .PIPELINE_STATE_SUCCEEDED
 ):
-
-    print(
-        "CANDIDATE PIPELINE COMPLETED"
-    )
-
+    print("CANDIDATE PIPELINE COMPLETED")
     print("=" * 70)
-
 
     print(
         f"Model type: "
         f"{MODEL_TYPE}"
     )
 
+    print(
+        f"Artifact format: "
+        f"{MODEL_ARTIFACT_FORMAT}"
+    )
+
+    print(
+        f"Candidate artifact: "
+        f"{MODEL_OUTPUT_URI}"
+    )
 
     print(
         f"Experiment ID: "
         f"{EXPERIMENT_ID}"
     )
 
-
     print(
         f"Run ID: "
         f"{RUN_ID}"
     )
 
-
     print(
         f"Data month: "
         f"{CURRENT_DATA_MONTH}"
     )
-
 
     print(
         f"Training window: "
@@ -1389,67 +929,51 @@ if (
         f"{EXPERIMENT_TRAINING_END}"
     )
 
-
     print(
         f"Features used: "
         f"{len(FEATURE_COLUMNS)}"
     )
-
 
     print(
         f"Feature signature: "
         f"{CURRENT_FEATURE_SIGNATURE[:12]}"
     )
 
-
     print(
         f"Model signature: "
         f"{CURRENT_MODEL_SIGNATURE[:12]}"
     )
-
 
     print(
         "\nProduction remains unchanged "
         "until manual approval."
     )
 
-
 else:
-
-    print(
-        "CANDIDATE PIPELINE FAILED"
-    )
-
+    print("CANDIDATE PIPELINE FAILED")
     print("=" * 70)
-
 
     print(
         f"Experiment ID: "
         f"{EXPERIMENT_ID}"
     )
 
-
     print(
         f"Run ID: "
         f"{RUN_ID}"
     )
 
-
     print(
         f"State: "
-        f"{pipeline_job_status.state.name}"
+        f"{pipeline_status.state.name}"
     )
 
-
-    if pipeline_job_status.error:
-
+    if pipeline_status.error:
         print(
             f"Error: "
-            f"{pipeline_job_status.error}"
+            f"{pipeline_status.error}"
         )
 
-
     raise RuntimeError(
-        "Vertex AI candidate "
-        "pipeline failed."
+        "Vertex AI candidate pipeline failed."
     )
