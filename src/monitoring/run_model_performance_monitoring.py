@@ -1,76 +1,42 @@
+import os
+import smtplib
 from datetime import datetime, timezone
+from email.message import EmailMessage
 
 from google.cloud import bigquery
 
 from src.config.load_config import load_config
 
 
-# ============================================================
-# CONSTANTS
-# ============================================================
-
-STATE_KEY = "provider_fraud_model"
-
 MIN_COMPLETED_CASES = 20
 
-# Relative degradation thresholds
 PRECISION_DEGRADATION_THRESHOLD = 0.10
 RECALL_DEGRADATION_THRESHOLD = 0.15
 F1_DEGRADATION_THRESHOLD = 0.10
 
 
-# ============================================================
-# LOAD CONFIG
-# ============================================================
-
 config = load_config()
 
-PROJECT_ID = config[
-    "project_id"
-]
+PROJECT_ID = config["project_id"]
 
 PREDICTIONS_TABLE = (
-    config[
-        "data"
-    ][
-        "provider_prediction_table"
-    ]
+    config["data"]["provider_prediction_table"]
 )
 
 FEEDBACK_TABLE = (
-    config[
-        "data"
-    ][
-        "feedback_table"
-    ]
+    config["data"]["feedback_table"]
 )
 
 EXPERIMENT_METRICS_TABLE = (
-    config[
-        "data"
-    ][
-        "experiment_metrics_table"
-    ]
-)
-
-EXPERIMENT_RUNS_TABLE = (
-    config[
-        "data"
-    ][
-        "experiment_runs_table"
-    ]
+    config["data"]["experiment_metrics_table"]
 )
 
 PERFORMANCE_TABLE = (
-    f"{PROJECT_ID}."
-    "fraud_monitoring."
-    "model_performance_degradation"
+    config["monitoring"][
+        "performance_degradation_table"
+    ]
 )
 
-
-# ============================================================
-# INITIALIZE
-# ============================================================
 
 client = bigquery.Client(
     project=PROJECT_ID
@@ -81,10 +47,131 @@ evaluation_timestamp = datetime.now(
 )
 
 
-# ============================================================
-# 1. CREATE MONITORING TABLE IF NEEDED
-# ============================================================
+def relative_change(current, baseline):
+    if baseline is None or baseline == 0:
+        return None
 
+    return (
+        current - baseline
+    ) / baseline
+
+
+def point_change(current, baseline):
+    if current is None or baseline is None:
+        return None
+
+    return current - baseline
+
+
+def format_percent(value):
+    if value is None:
+        return "N/A"
+
+    return f"{value:.2%}"
+
+
+def format_percentage_points(value):
+    if value is None:
+        return "N/A"
+
+    return f"{value * 100:+.2f} percentage points"
+
+
+def format_relative_change(value):
+    if value is None:
+        return "N/A"
+
+    return f"{value:+.2%}"
+
+
+def format_number(value):
+    if value is None:
+        return "N/A"
+
+    return f"{value:.4f}"
+
+
+def format_currency(value):
+    if value is None:
+        return "$0.00"
+
+    return f"${value:,.2f}"
+
+
+def send_monitoring_email(
+    subject,
+    body,
+):
+    sender = os.environ.get(
+        "EMAIL_ADDRESS"
+    )
+
+    password = os.environ.get(
+        "EMAIL_PASSWORD"
+    )
+
+    recipient = os.environ.get(
+        "MONITORING_EMAIL"
+    )
+
+    if not sender or not password or not recipient:
+        print(
+            "\nEmail not sent because email "
+            "environment variables are not configured."
+        )
+        return
+
+    message = EmailMessage()
+
+    message["Subject"] = subject
+    message["From"] = sender
+    message["To"] = recipient
+    message.set_content(body)
+
+    try:
+        with smtplib.SMTP(
+            "smtp.gmail.com",
+            587,
+            timeout=30,
+        ) as smtp:
+
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.ehlo()
+
+            smtp.login(
+                sender,
+                password,
+            )
+
+            smtp.send_message(
+                message
+            )
+
+        print(
+            f"Monitoring email sent to "
+            f"{recipient}"
+        )
+
+    except Exception as exc:
+        print(
+            "\nEmail sending failed."
+        )
+
+        print(
+            f"Error type: "
+            f"{type(exc).__name__}"
+        )
+
+        print(
+            f"Error: "
+            f"{exc}"
+        )
+
+        raise
+
+
+# Create the monitoring table if it does not exist.
 create_table_query = f"""
 CREATE TABLE IF NOT EXISTS `{PERFORMANCE_TABLE}`
 (
@@ -128,43 +215,30 @@ client.query(
 ).result()
 
 
-# ============================================================
-# 2. FIND LATEST MODEL RUN WITH INVESTIGATION RESULTS
-#
-# Do not rely on approved_model_type for the current demo.
-#
-# We evaluate whichever prediction run most recently received
-# completed investigation outcomes.
-# ============================================================
-
+# Find the most recent model/run with completed investigation feedback.
 latest_run_query = f"""
 SELECT
-    f.model_name,
-    f.model_version,
-    f.run_id,
+    model_name,
+    model_version,
+    run_id,
+    MAX(created_at) AS latest_feedback_timestamp
 
-    MAX(
-        f.created_at
-    ) AS latest_feedback_timestamp
-
-FROM `{FEEDBACK_TABLE}` f
+FROM `{FEEDBACK_TABLE}`
 
 WHERE
-    f.run_id IS NOT NULL
+    run_id IS NOT NULL
+    AND model_name IS NOT NULL
+    AND model_version IS NOT NULL
 
-    AND f.model_name IS NOT NULL
-
-    AND f.model_version IS NOT NULL
-
-    AND f.investigation_result IN (
+    AND investigation_result IN (
         'CONFIRMED_FRAUD',
         'CONFIRMED_NORMAL'
     )
 
 GROUP BY
-    f.model_name,
-    f.model_version,
-    f.run_id
+    model_name,
+    model_version,
+    run_id
 
 ORDER BY
     latest_feedback_timestamp DESC
@@ -180,74 +254,62 @@ latest_run_rows = list(
 
 if not latest_run_rows:
     raise RuntimeError(
-        "No completed investigation results "
-        "were found."
+        "No completed investigation results were found."
     )
 
 latest_run = latest_run_rows[0]
 
-model_name = (
-    latest_run.model_name
-)
+model_name = latest_run.model_name
+model_version = latest_run.model_version
+run_id = latest_run.run_id
 
-model_version = (
-    latest_run.model_version
-)
 
-run_id = (
-    latest_run.run_id
-)
-
+print("=" * 60)
+print("PRODUCTION PERFORMANCE MONITORING")
+print("=" * 60)
 
 print(
-    "\n=============================================="
+    f"Model: {model_name}"
 )
 
 print(
-    "PRODUCTION PERFORMANCE MONITORING"
+    f"Model version: {model_version}"
 )
 
 print(
-    "=============================================="
-)
-
-print(
-    f"Model: "
-    f"{model_name}"
-)
-
-print(
-    f"Model version: "
-    f"{model_version}"
-)
-
-print(
-    f"Run ID: "
-    f"{run_id}"
+    f"Run ID: {run_id}"
 )
 
 
-# ============================================================
-# 3. JOIN PREDICTIONS TO INVESTIGATION OUTCOMES
-#
-# Exact lineage:
-#
-# provider_id
-# +
-# run_id
-# +
-# model_version
-#
-# This prevents feedback from one model/run from being used
-# to evaluate another.
-# ============================================================
+query_parameters = [
+    bigquery.ScalarQueryParameter(
+        "model_name",
+        "STRING",
+        model_name,
+    ),
+    bigquery.ScalarQueryParameter(
+        "model_version",
+        "STRING",
+        model_version,
+    ),
+    bigquery.ScalarQueryParameter(
+        "run_id",
+        "STRING",
+        run_id,
+    ),
+]
 
+job_config = bigquery.QueryJobConfig(
+    query_parameters=query_parameters
+)
+
+
+# Join predictions to completed investigator outcomes.
 performance_query = f"""
 WITH evaluated AS (
 
     SELECT
         p.provider_id,
-
         p.fraud_score,
 
         CASE
@@ -288,8 +350,7 @@ WITH evaluated AS (
 )
 
 SELECT
-    COUNT(*)
-        AS evaluated_cases,
+    COUNT(*) AS evaluated_cases,
 
     COUNTIF(
         actual_fraud = 1
@@ -322,43 +383,14 @@ SELECT
 FROM evaluated
 """
 
-performance_job_config = (
-    bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter(
-                "model_name",
-                "STRING",
-                model_name,
-            ),
-
-            bigquery.ScalarQueryParameter(
-                "model_version",
-                "STRING",
-                model_version,
-            ),
-
-            bigquery.ScalarQueryParameter(
-                "run_id",
-                "STRING",
-                run_id,
-            ),
-        ]
-    )
-)
-
 performance_rows = list(
     client.query(
         performance_query,
-        job_config=performance_job_config,
+        job_config=job_config,
     ).result()
 )
 
 metrics = performance_rows[0]
-
-
-# ============================================================
-# 4. EXTRACT CONFUSION MATRIX
-# ============================================================
 
 evaluated_cases = int(
     metrics.evaluated_cases
@@ -389,18 +421,92 @@ fn = int(
 )
 
 
+# Build the investigator summary for the email.
+investigation_summary_query = f"""
+SELECT
+    COUNT(*) AS providers_reviewed,
+
+    COUNTIF(
+        confirmed_fraud
+    ) AS confirmed_fraud,
+
+    COUNTIF(
+        NOT confirmed_fraud
+    ) AS confirmed_normal,
+
+    SAFE_DIVIDE(
+        COUNTIF(confirmed_fraud),
+        COUNT(*)
+    ) AS fraud_yield,
+
+    SUM(
+        CASE
+            WHEN confirmed_fraud
+                THEN COALESCE(fraud_amount, 0)
+            ELSE 0
+        END
+    ) AS confirmed_fraud_amount
+
+FROM `{FEEDBACK_TABLE}`
+
+WHERE
+    model_name = @model_name
+
+    AND model_version = @model_version
+
+    AND run_id = @run_id
+
+    AND investigation_result IN (
+        'CONFIRMED_FRAUD',
+        'CONFIRMED_NORMAL'
+    )
+"""
+
+investigation_rows = list(
+    client.query(
+        investigation_summary_query,
+        job_config=job_config,
+    ).result()
+)
+
+investigation = investigation_rows[0]
+
+providers_reviewed = int(
+    investigation.providers_reviewed
+)
+
+investigator_confirmed_fraud = int(
+    investigation.confirmed_fraud
+)
+
+investigator_confirmed_normal = int(
+    investigation.confirmed_normal
+)
+
+investigator_fraud_yield = (
+    float(
+        investigation.fraud_yield
+    )
+    if investigation.fraud_yield is not None
+    else 0.0
+)
+
+confirmed_fraud_amount = (
+    float(
+        investigation.confirmed_fraud_amount
+    )
+    if investigation.confirmed_fraud_amount is not None
+    else 0.0
+)
+
+
 print(
     f"Completed investigation cases: "
     f"{evaluated_cases}"
 )
 
 
-# ============================================================
-# 5. HANDLE INSUFFICIENT DATA
-# ============================================================
-
 if evaluated_cases < MIN_COMPLETED_CASES:
-
     monitoring_status = (
         "INSUFFICIENT_DATA"
     )
@@ -422,13 +528,11 @@ if evaluated_cases < MIN_COMPLETED_CASES:
     recall_change = None
     f1_change = None
 
-
-# ============================================================
-# 6. CALCULATE PRODUCTION PERFORMANCE
-# ============================================================
+    precision_point_change = None
+    recall_point_change = None
+    f1_point_change = None
 
 else:
-
     precision = (
         tp / (tp + fp)
         if (tp + fp) > 0
@@ -441,22 +545,15 @@ else:
         else 0.0
     )
 
-    if (
-        precision + recall
-    ) > 0:
-
+    if precision + recall > 0:
         f1 = (
             2
             * precision
             * recall
-            / (
-                precision
-                + recall
-            )
+            / (precision + recall)
         )
 
     else:
-
         f1 = 0.0
 
     fraud_yield = (
@@ -465,14 +562,7 @@ else:
     )
 
 
-    # ========================================================
-    # 7. GET TRAINING BASELINE FOR SAME RUN
-    #
-    # Because provider_predictions preserves run_id,
-    # use the SAME training run rather than merely finding
-    # the latest XGBoost/RF metrics.
-    # ========================================================
-
+    # Pull training metrics from the same experiment run.
     baseline_query = f"""
     SELECT
         metric_name,
@@ -535,59 +625,39 @@ else:
     )
 
 
-    # ========================================================
-    # 8. CALCULATE RELATIVE PERFORMANCE CHANGE
-    #
-    # Example:
-    #
-    # baseline F1 = .80
-    # production F1 = .72
-    #
-    # change = (.72 - .80) / .80 = -10%
-    # ========================================================
-
-    def relative_change(
-        current,
-        baseline,
-    ):
-
-        if (
-            baseline is None
-            or baseline == 0
-        ):
-            return None
-
-        return (
-            current
-            - baseline
-        ) / baseline
-
-
-    precision_change = (
-        relative_change(
-            precision,
-            baseline_precision,
-        )
+    # Absolute change in percentage points.
+    precision_point_change = point_change(
+        precision,
+        baseline_precision,
     )
 
-    recall_change = (
-        relative_change(
-            recall,
-            baseline_recall,
-        )
+    recall_point_change = point_change(
+        recall,
+        baseline_recall,
     )
 
-    f1_change = (
-        relative_change(
-            f1,
-            baseline_f1,
-        )
+    f1_point_change = point_change(
+        f1,
+        baseline_f1,
     )
 
 
-    # ========================================================
-    # 9. DETERMINE PASS / ALERT
-    # ========================================================
+    # Relative change versus the training baseline.
+    precision_change = relative_change(
+        precision,
+        baseline_precision,
+    )
+
+    recall_change = relative_change(
+        recall,
+        baseline_recall,
+    )
+
+    f1_change = relative_change(
+        f1,
+        baseline_f1,
+    )
+
 
     alert_reasons = []
 
@@ -596,7 +666,6 @@ else:
         and precision_change
         <= -PRECISION_DEGRADATION_THRESHOLD
     ):
-
         alert_reasons.append(
             "precision_degradation"
         )
@@ -606,7 +675,6 @@ else:
         and recall_change
         <= -RECALL_DEGRADATION_THRESHOLD
     ):
-
         alert_reasons.append(
             "recall_degradation"
         )
@@ -616,22 +684,16 @@ else:
         and f1_change
         <= -F1_DEGRADATION_THRESHOLD
     ):
-
         alert_reasons.append(
             "f1_degradation"
         )
 
-
-    # --------------------------------------------------------
-    # If baseline is missing, do not incorrectly PASS.
-    # --------------------------------------------------------
 
     if (
         baseline_precision is None
         or baseline_recall is None
         or baseline_f1 is None
     ):
-
         monitoring_status = (
             "INSUFFICIENT_BASELINE"
         )
@@ -641,19 +703,15 @@ else:
         )
 
     elif alert_reasons:
-
         monitoring_status = (
             "ALERT"
         )
 
-        alert_reason = (
-            ",".join(
-                alert_reasons
-            )
+        alert_reason = ",".join(
+            alert_reasons
         )
 
     else:
-
         monitoring_status = (
             "PASS"
         )
@@ -661,20 +719,43 @@ else:
         alert_reason = None
 
 
-# ============================================================
-# 10. DISPLAY RESULTS
-# ============================================================
+print("\n" + "=" * 60)
+print("INVESTIGATION SUMMARY")
+print("=" * 60)
 
 print(
-    "\n=============================================="
+    f"Providers reviewed: "
+    f"{providers_reviewed}"
 )
 
 print(
-    "PERFORMANCE RESULTS"
+    f"Confirmed fraud: "
+    f"{investigator_confirmed_fraud}"
 )
 
 print(
-    "=============================================="
+    f"Confirmed normal: "
+    f"{investigator_confirmed_normal}"
+)
+
+print(
+    f"Fraud yield: "
+    f"{format_percent(investigator_fraud_yield)}"
+)
+
+print(
+    f"Confirmed fraud amount: "
+    f"{format_currency(confirmed_fraud_amount)}"
+)
+
+
+print("\n" + "=" * 60)
+print("MODEL PERFORMANCE")
+print("=" * 60)
+
+print(
+    f"Evaluated cases: "
+    f"{evaluated_cases}"
 )
 
 print(
@@ -693,70 +774,78 @@ print(
     f"FN: {fn}"
 )
 
-print()
-
 print(
-    f"Precision: "
-    f"{precision}"
+    f"\nPrecision: "
+    f"{format_percent(precision)}"
 )
 
 print(
     f"Recall: "
-    f"{recall}"
+    f"{format_percent(recall)}"
 )
 
 print(
     f"F1: "
-    f"{f1}"
+    f"{format_percent(f1)}"
 )
 
-print(
-    f"Fraud Yield: "
-    f"{fraud_yield}"
-)
 
-print(
-    "\nTraining baseline:"
-)
+print("\nTraining baseline")
 
 print(
     f"Precision: "
-    f"{baseline_precision}"
+    f"{format_percent(baseline_precision)}"
 )
 
 print(
     f"Recall: "
-    f"{baseline_recall}"
+    f"{format_percent(baseline_recall)}"
 )
 
 print(
     f"F1: "
-    f"{baseline_f1}"
+    f"{format_percent(baseline_f1)}"
 )
 
-print(
-    "\nRelative change:"
-)
+
+print("\nAbsolute change")
 
 print(
     f"Precision: "
-    f"{precision_change}"
+    f"{format_percentage_points(precision_point_change)}"
 )
 
 print(
     f"Recall: "
-    f"{recall_change}"
+    f"{format_percentage_points(recall_point_change)}"
 )
 
 print(
     f"F1: "
-    f"{f1_change}"
+    f"{format_percentage_points(f1_point_change)}"
 )
 
-print()
+
+print("\nRelative change")
 
 print(
-    f"Status: "
+    f"Precision: "
+    f"{format_relative_change(precision_change)}"
+)
+
+print(
+    f"Recall: "
+    f"{format_relative_change(recall_change)}"
+)
+
+print(
+    f"F1: "
+    f"{format_relative_change(f1_change)}"
+)
+
+
+print(
+    f"\nStatus: "
     f"{monitoring_status}"
 )
 
@@ -766,10 +855,9 @@ print(
 )
 
 
-# ============================================================
-# 11. WRITE MONITORING RESULT
-# ============================================================
-
+# Keep the existing BigQuery schema unchanged.
+# precision_change, recall_change, and f1_change continue to
+# represent relative changes.
 monitoring_record = {
     "evaluation_timestamp": (
         evaluation_timestamp.isoformat()
@@ -781,17 +869,11 @@ monitoring_record = {
         .isoformat()
     ),
 
-    "model_name": (
-        model_name
-    ),
+    "model_name": model_name,
 
-    "model_version": (
-        model_version
-    ),
+    "model_version": model_version,
 
-    "run_id": (
-        run_id
-    ),
+    "run_id": run_id,
 
     "evaluated_cases": (
         evaluated_cases
@@ -805,37 +887,21 @@ monitoring_record = {
         confirmed_normal_cases
     ),
 
-    "true_positive": (
-        tp
-    ),
+    "true_positive": tp,
 
-    "false_positive": (
-        fp
-    ),
+    "false_positive": fp,
 
-    "true_negative": (
-        tn
-    ),
+    "true_negative": tn,
 
-    "false_negative": (
-        fn
-    ),
+    "false_negative": fn,
 
-    "precision": (
-        precision
-    ),
+    "precision": precision,
 
-    "recall": (
-        recall
-    ),
+    "recall": recall,
 
-    "f1_score": (
-        f1
-    ),
+    "f1_score": f1,
 
-    "fraud_yield": (
-        fraud_yield
-    ),
+    "fraud_yield": fraud_yield,
 
     "baseline_precision": (
         baseline_precision
@@ -845,9 +911,7 @@ monitoring_record = {
         baseline_recall
     ),
 
-    "baseline_f1": (
-        baseline_f1
-    ),
+    "baseline_f1": baseline_f1,
 
     "precision_change": (
         precision_change
@@ -857,17 +921,13 @@ monitoring_record = {
         recall_change
     ),
 
-    "f1_change": (
-        f1_change
-    ),
+    "f1_change": f1_change,
 
     "monitoring_status": (
         monitoring_status
     ),
 
-    "alert_reason": (
-        alert_reason
-    ),
+    "alert_reason": alert_reason,
 }
 
 
@@ -885,21 +945,133 @@ if errors:
     )
 
 
-# ============================================================
-# 12. COMPLETE
-# ============================================================
+if monitoring_status == "ALERT":
+    action_message = (
+        "Performance degradation was detected.\n\n"
+        "The daily continuous-training pipeline will read "
+        "this monitoring result and determine whether a new "
+        "candidate model should be trained."
+    )
 
-print(
-    "\n=============================================="
+elif monitoring_status == "PASS":
+    action_message = (
+        "No performance degradation was detected. "
+        "No retraining action is required based on model "
+        "performance."
+    )
+
+elif monitoring_status == "INSUFFICIENT_DATA":
+    action_message = (
+        "There are not enough completed investigations to "
+        "evaluate production performance reliably."
+    )
+
+else:
+    action_message = (
+        "Training baseline metrics were not available, so "
+        "performance degradation could not be evaluated."
+    )
+
+
+subject = (
+    "FWA Model Performance Monitoring - "
+    f"{monitoring_status}"
 )
 
-print(
-    "PERFORMANCE MONITORING COMPLETE"
+
+email_body = f"""
+FWA MODEL PERFORMANCE MONITORING
+
+Evaluation time:
+{evaluation_timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")}
+
+
+INVESTIGATION SUMMARY
+------------------------------------------------------------
+
+Model: {model_name}
+Model version: {model_version}
+Run ID: {run_id}
+
+Providers reviewed: {providers_reviewed}
+Confirmed fraud: {investigator_confirmed_fraud}
+Confirmed normal: {investigator_confirmed_normal}
+Fraud yield: {format_percent(investigator_fraud_yield)}
+Confirmed fraud amount: {format_currency(confirmed_fraud_amount)}
+
+
+MODEL PERFORMANCE
+------------------------------------------------------------
+
+Evaluated cases: {evaluated_cases}
+
+True positives: {tp}
+False positives: {fp}
+True negatives: {tn}
+False negatives: {fn}
+
+Precision: {format_percent(precision)}
+Recall: {format_percent(recall)}
+F1 score: {format_percent(f1)}
+
+
+TRAINING BASELINE
+------------------------------------------------------------
+
+Precision: {format_percent(baseline_precision)}
+Recall: {format_percent(baseline_recall)}
+F1 score: {format_percent(baseline_f1)}
+
+
+PERFORMANCE CHANGE
+------------------------------------------------------------
+
+Precision
+  Baseline: {format_percent(baseline_precision)}
+  Current: {format_percent(precision)}
+  Absolute change: {format_percentage_points(precision_point_change)}
+  Relative change: {format_relative_change(precision_change)}
+
+Recall
+  Baseline: {format_percent(baseline_recall)}
+  Current: {format_percent(recall)}
+  Absolute change: {format_percentage_points(recall_point_change)}
+  Relative change: {format_relative_change(recall_change)}
+
+F1
+  Baseline: {format_percent(baseline_f1)}
+  Current: {format_percent(f1)}
+  Absolute change: {format_percentage_points(f1_point_change)}
+  Relative change: {format_relative_change(f1_change)}
+
+
+MONITORING RESULT
+------------------------------------------------------------
+
+Status: {monitoring_status}
+Reason: {alert_reason or "None"}
+
+
+NEXT ACTION
+------------------------------------------------------------
+
+{action_message}
+
+
+Monitoring table:
+{PERFORMANCE_TABLE}
+""".strip()
+
+
+send_monitoring_email(
+    subject=subject,
+    body=email_body,
 )
 
-print(
-    "=============================================="
-)
+
+print("\n" + "=" * 60)
+print("PERFORMANCE MONITORING COMPLETE")
+print("=" * 60)
 
 print(
     f"Monitoring table: "
