@@ -36,6 +36,8 @@ def get_pending_candidate(
       candidate_feature_signature,
       candidate_model_signature,
       candidate_model_type,
+      candidate_run_id,
+      approved_run_id,
       approved_feature_signature,
       approved_model_signature,
       approved_model_type
@@ -103,6 +105,12 @@ def get_pending_candidate(
         raise RuntimeError(
             "Pending candidate does not have "
             "candidate_model_resource."
+        )
+
+    if not candidate.candidate_run_id:
+        raise RuntimeError(
+            "Pending candidate does not have "
+            "candidate_run_id."
         )
 
     return candidate
@@ -267,6 +275,9 @@ def approve_candidate(
 
       approved_model_type =
         candidate_model_type,
+
+      approved_run_id =
+        candidate_run_id,
 
       candidate_status =
         'APPROVED'
@@ -489,6 +500,16 @@ def main():
     )
 
     print(
+        f"Current approved run ID: "
+        f"{candidate.approved_run_id}"
+    )
+
+    print(
+        f"Candidate run ID: "
+        f"{candidate.candidate_run_id}"
+    )
+
+    print(
         "\nApproved feature signature: "
         f"{candidate.approved_feature_signature}"
     )
@@ -623,6 +644,11 @@ def main():
     print(
         f"Approved data month: "
         f"{candidate.candidate_data_month}"
+    )
+
+    print(
+        f"Approved run ID: "
+        f"{candidate.candidate_run_id}"
     )
 
     print(
