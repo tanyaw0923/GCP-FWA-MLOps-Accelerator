@@ -148,25 +148,34 @@ The launcher creates a model signature from the model type, model name, and hype
                  Experiment Tracking
                           |
                           v
-                 Register Candidate
+                 Model Promotion Gate
                           |
-                          v
-                  Vertex Model Registry
-                          |
-                          v
-                   PENDING_APPROVAL
-                          |
-                          v
-                   Manual Approval
-                          |
-                          v
-             Promote Candidate Artifact
-                          |
-                          v
-                    Production Model
+                    Promotion eligible?
+                     /            \
+                   No              Yes
+                   |                |
+                   v                v
+          Keep production     Register Candidate
+          model unchanged            |
+                                     v
+                              Vertex Model Registry
+                                     |
+                                     v
+                              PENDING_APPROVAL
+                                     |
+                                     v
+                              Manual Approval
+                                     |
+                                     v
+                        Promote Candidate Artifact
+                                     |
+                                     v
+                              Production Model
 ```
 
-Production remains unchanged until the candidate is explicitly approved.
+Every training run is still recorded in the BigQuery experiment tables before the promotion decision is made. A challenger that does not satisfy the promotion criteria remains available for analysis, but it is not registered as a candidate.
+
+Production remains unchanged until a promotion-eligible candidate is explicitly approved.
 
 ## Retraining Decision
 
@@ -206,6 +215,63 @@ provider_fraud_model
 ```
 
 This allows, for example, an approved Random Forest model and an XGBoost candidate to coexist in the same governed workflow.
+
+## Model Promotion Gate
+
+The Model Promotion Gate separates **training success** from **promotion eligibility**.
+
+Every challenger is trained and evaluated first, and its run metadata and evaluation metrics are written to BigQuery. The gate then compares the new run with the currently approved production run using the configured promotion criteria.
+
+Current default guardrails:
+
+```text
+PR-AUC change     >=  0.00
+Recall change     >=  0.00
+F1 change         >=  0.00
+Precision change  >= -0.05
+```
+
+The precision rule intentionally allows a controlled tradeoff: for an imbalanced fraud-detection problem, improved recall can justify a small precision decrease, but the gate prevents precision from degrading without limit.
+
+The decision flow is:
+
+```text
+Train challenger
+       |
+       v
+Evaluate challenger
+       |
+       v
+Write experiment_runs / experiment_metrics
+       |
+       v
+Compare with approved_run_id
+       |
+       v
+Model Promotion Gate
+      / \
+     /   \
+  FAIL   PASS
+   |       |
+   v       v
+Keep    Register
+current candidate
+model      |
+           v
+      PENDING_APPROVAL
+```
+
+A failed challenger is still preserved in the experiment tables for analysis and reproducibility. It simply does not advance into Model Registry or the manual-approval workflow.
+
+The training-state table tracks:
+
+```text
+candidate_run_id
+approved_run_id
+```
+
+When a candidate is manually promoted, its `candidate_run_id` becomes the new `approved_run_id`. Future retraining attempts are compared against that approved run.
+
 
 ## Scheduled Performance Monitoring
 
@@ -320,7 +386,7 @@ Email credentials are not stored in Git. The Cloud Run Job receives the sender a
 
 ## Experiment Tracking
 
-Each successful training execution records reproducibility metadata and model metrics in BigQuery.
+Each successful training execution records reproducibility metadata and model metrics in BigQuery, regardless of whether the trained model later passes the Model Promotion Gate.
 
 The launcher creates:
 
@@ -355,7 +421,22 @@ pr_auc
 roc_auc
 precision
 recall
+f1_score
 ```
+
+Related runs intentionally share the same `experiment_id` when they belong to the same experiment family. For example, multiple XGBoost retraining attempts use the same XGBoost experiment identifier, while each execution receives a unique `run_id`.
+
+```text
+provider_eye_fraud_xgboost
+        |
+        +-- experiment_id: same experiment family
+        |
+        +-- run_id: good XGBoost retraining run
+        |
+        +-- run_id: weaker XGBoost challenger run
+```
+
+This makes it easy to compare multiple model attempts side by side in BigQuery while preserving a unique identifier for every training execution.
 
 ## Demo Data Exports
 
@@ -630,15 +711,25 @@ BigQuery Experiment Tracking
             +-- experiment_metrics
             |
             v
-register_model_component.py
+model_promotion_gate_component.py
             |
-            | register candidate in
-            | Vertex AI Model Registry
-            v
-mark_candidate_pending_component.py
+            | compare challenger metrics with
+            | the approved production run
             |
-            v
-PENDING_APPROVAL
+            | promotion eligible?
+            |      /       \
+            |     no       yes
+            |     |         |
+            |     v         v
+            |   stop    register_model_component.py
+            |               |
+            |               | register candidate in
+            |               | Vertex AI Model Registry
+            |               v
+            |       mark_candidate_pending_component.py
+            |               |
+            |               v
+            |        PENDING_APPROVAL
             |
             | separate manual action
             v
@@ -763,16 +854,21 @@ For a first pass through the repository, read the files in this order:
    src/models/train_xgboost.py
    Understand the actual model-training and evaluation logic.
 
-8. src/pipeline/components/register_model_component.py
+8. src/pipeline/components/model_promotion_gate_component.py
+   Understand how a new challenger is compared with the approved production
+   run before it becomes eligible for registration.
+
+9. src/pipeline/components/register_model_component.py
    Understand candidate registration.
 
-9. src/pipeline/components/mark_candidate_pending_component.py
-   Understand the manual-approval boundary.
+10. src/pipeline/components/mark_candidate_pending_component.py
+    Understand the manual-approval boundary.
 
-10. src/models/promote_model_candidate.py
-    Understand how an approved candidate becomes production.
+11. src/models/promote_model_candidate.py
+    Understand how an approved candidate becomes production and how its
+    run_id becomes the approved baseline for future model comparisons.
 
-11. src/monitoring/run_model_performance_monitoring.py
+12. src/monitoring/run_model_performance_monitoring.py
     Understand how investigator feedback is used to evaluate production
     precision / recall / F1, write performance-degradation status, and
     send the scheduled monitoring email.
@@ -926,7 +1022,9 @@ The launcher:
 7. submits the compiled pipeline to Vertex AI
 8. waits for the pipeline result
 9. records successful training metadata and metrics
-10. leaves the resulting candidate in `PENDING_APPROVAL`
+10. runs the Model Promotion Gate against the currently approved production run
+11. registers only promotion-eligible challengers
+12. leaves eligible candidates in `PENDING_APPROVAL`
 
 ## Manual Candidate Promotion
 
@@ -943,7 +1041,10 @@ The promotion workflow:
 3. selects the appropriate artifact format
 4. copies the candidate artifact to the production path
 5. updates approved feature/model signatures and model type
-6. marks the candidate as approved
+6. copies the candidate `run_id` into `approved_run_id`
+7. marks the candidate as approved
+
+The approved run then becomes the baseline used by the next Model Promotion Gate comparison.
 
 Training and production promotion are intentionally separate. A newly trained candidate does not automatically replace the approved production model.
 
@@ -966,6 +1067,7 @@ The current workflow focuses on:
 - retraining decisions
 - model training and evaluation
 - experiment tracking
+- automated Model Promotion Gate
 - candidate registration
 - manual approval
 - artifact promotion
