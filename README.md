@@ -48,6 +48,8 @@ The repository demonstrates three retraining use cases.
 
 <img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/dc5b3eb5-b340-47d3-b4d5-bc6ea1e8d178" />
 
+<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/032ce02e-cb6e-4df9-ae1a-5e8028ed688e" />
+
 ---
 
 <img width="1644" height="957" alt="image" src="https://github.com/user-attachments/assets/768177d2-792f-4d41-a461-282520bc47f3" />
