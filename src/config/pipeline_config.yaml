@@ -216,6 +216,12 @@ monitoring:
 promotion:
   require_manual_approval: true
 
+  gate:
+    min_pr_auc_improvement: 0.00
+    min_recall_change: 0.00
+    min_f1_change: 0.00
+    min_precision_change: -0.05
+
   candidate_status:
     pending: PENDING_APPROVAL
     approved: APPROVED
