@@ -20,6 +20,9 @@ The shared MLOps framework manages:
 - manual approval before production promotion
 - model state tracking
 - monitoring inputs
+- scheduled production performance monitoring
+- investigator-feedback performance evaluation
+- email monitoring summaries
 - containerized and reproducible model training
 
 Data scientists customize:
@@ -169,6 +172,8 @@ Data quality alert
 Feature drift alert
        OR
 Prediction drift alert
+       OR
+Performance degradation alert
        ↓
 Should Retrain = True
 ```
@@ -189,6 +194,117 @@ provider_fraud_model
 ```
 
 This allows, for example, an approved Random Forest model and an XGBoost candidate to coexist in the same governed workflow.
+
+## Scheduled Performance Monitoring
+
+Production performance monitoring is intentionally separated from the Vertex AI training pipeline.
+
+The monitoring workflow runs twice per month:
+
+```text
+Cloud Scheduler
+1st and 15th at 7:00 AM
+America/Edmonton
+        |
+        v
+Cloud Run Job
+fwa-performance-monitoring
+        |
+        v
+run_model_performance_monitoring.py
+        |
+        +--> provider_predictions
+        |
+        +--> investigation_results
+        |
+        +--> experiment_metrics
+        |
+        v
+Calculate production precision / recall / F1
+        |
+        v
+Compare with training baseline
+        |
+        v
+fraud_monitoring.model_performance_degradation
+        |
+        +--> PASS / ALERT / INSUFFICIENT_DATA
+        |
+        +--> investigator feedback summary
+        |
+        v
+Email monitoring report
+```
+
+The Cloud Scheduler job is:
+
+```text
+fwa-performance-monitoring-schedule
+```
+
+with cron:
+
+```text
+0 7 1,15 * *
+```
+
+and timezone:
+
+```text
+America/Edmonton
+```
+
+The Cloud Run Job provides the execution environment for the custom Python monitoring code. It reads scored providers and completed investigation outcomes from BigQuery, calculates a confusion matrix and production precision / recall / F1, compares those metrics with the training baseline for the same run, writes the result to:
+
+```text
+fraud_monitoring.model_performance_degradation
+```
+
+and emails a summary containing:
+
+- providers reviewed
+- confirmed fraud / confirmed normal
+- fraud yield
+- confirmed fraud amount
+- TP / FP / TN / FN
+- current precision / recall / F1
+- training baseline metrics
+- absolute percentage-point changes
+- relative performance changes
+- monitoring status and alert reason
+
+The current degradation thresholds are relative to the training baseline:
+
+```text
+Precision: 10%
+Recall:    15%
+F1:        10%
+```
+
+If the result is `ALERT`, the monitoring job does not retrain the model directly. The daily continuous-training pipeline reads the latest performance status as another retraining signal and decides whether a new candidate should be created.
+
+This keeps monitoring and training decoupled:
+
+```text
+Scheduled monitoring
+        |
+        v
+Write model health status
+        |
+        v
+Daily training pipeline
+        |
+        v
+Check Retraining Decision
+        |
+        v
+ALERT -> train new candidate
+        |
+        v
+PENDING_APPROVAL
+```
+
+Email credentials are not stored in Git. The Cloud Run Job receives the sender and recipient as environment variables and reads the Gmail App Password from Secret Manager.
 
 ## Experiment Tracking
 
@@ -262,6 +378,7 @@ Monitoring
 model_data_quality.csv
 model_feature_drift.csv
 model_prediction_drift.csv
+model_performance_degradation.csv
 
 Model governance / approval state
     ↓
@@ -281,6 +398,7 @@ These files are demo snapshots of the corresponding BigQuery tables:
 | `model_data_quality.csv` | `fraud_monitoring.model_data_quality` | Latest data-quality monitoring results |
 | `model_feature_drift.csv` | `fraud_monitoring.model_feature_drift` | Feature-drift monitoring results |
 | `model_prediction_drift.csv` | `fraud_monitoring.model_prediction_drift` | Prediction-drift monitoring results |
+| `model_performance_degradation.csv` | `fraud_monitoring.model_performance_degradation` | Investigator-feedback performance monitoring, baseline comparison, and PASS / ALERT status |
 | `model_training_state.csv` | `fraud_monitoring.model_training_state` | Approved and candidate model state, signatures, and approval status |
 
 The CSV files are for demonstration and repository review only. BigQuery remains the runtime source of truth for pipeline execution.
@@ -294,7 +412,10 @@ The implementation uses:
 - **Vertex AI Model Registry** — candidate model registration
 - **Cloud Storage** — candidate and production model artifacts
 - **Artifact Registry** — custom Random Forest and XGBoost training images
-- **Cloud Build** — reproducible training image builds
+- **Cloud Build** — reproducible training and monitoring image builds
+- **Cloud Run Jobs** — serverless execution environment for scheduled performance monitoring
+- **Cloud Scheduler** — invokes performance monitoring on the 1st and 15th of each month
+- **Secret Manager** — stores the Gmail App Password used by the monitoring job
 - **Kubeflow Pipelines SDK** — pipeline and component definitions
 
 ## Model Artifacts
@@ -321,6 +442,7 @@ GCP-FWA-MLOps-Accelerator/
 ├── README.md
 ├── cloudbuild-random-forest.yaml
 ├── cloudbuild-xgboost.yaml
+├── cloudbuild-performance-monitoring.yaml
 ├── model_training_pipeline.yaml
 │
 ├── data_exports/
@@ -333,13 +455,17 @@ GCP-FWA-MLOps-Accelerator/
 │   ├── model_data_quality.csv
 │   ├── model_feature_drift.csv
 │   ├── model_prediction_drift.csv
+│   ├── model_performance_degradation.csv
 │   └── model_training_state.csv
 │
 ├── docker/
 │   ├── random_forest/
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
-│   └── xgboost/
+│   ├── xgboost/
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   └── performance-monitoring/
 │       ├── Dockerfile
 │       └── requirements.txt
 │
@@ -370,7 +496,8 @@ GCP-FWA-MLOps-Accelerator/
     │   └── promote_model_candidate.py
     │
     ├── monitoring/
-    │   └── run_random_forest_monitoring.py
+    │   ├── run_random_forest_monitoring.py
+    │   └── run_model_performance_monitoring.py
     │
     ├── pipeline/
     │   ├── model_training_pipeline.py
@@ -440,6 +567,7 @@ Check Retraining Decision
         | - data quality alert
         | - feature drift alert
         | - prediction drift alert
+        | - performance degradation alert
         v
 Calculate Rolling Window
         |
@@ -511,6 +639,33 @@ src/models/promote_model_candidate.py
             | - mark candidate APPROVED
             v
 Production Model
+```
+
+The production monitoring path is separate from the training DAG:
+
+```text
+Cloud Scheduler
+        |
+        v
+Cloud Run Job
+        |
+        v
+src/monitoring/run_model_performance_monitoring.py
+        |
+        +-- provider_predictions
+        +-- investigation_results
+        +-- experiment_metrics
+        |
+        v
+model_performance_degradation
+        |
+        +-- email summary
+        |
+        v
+check_retraining_decision_component.py
+        |
+        v
+daily training pipeline
 ```
 
 ## Build-Time vs Run-Time Flow
@@ -604,6 +759,11 @@ For a first pass through the repository, read the files in this order:
 
 10. src/models/promote_model_candidate.py
     Understand how an approved candidate becomes production.
+
+11. src/monitoring/run_model_performance_monitoring.py
+    Understand how investigator feedback is used to evaluate production
+    precision / recall / F1, write performance-degradation status, and
+    send the scheduled monitoring email.
 ```
 
 Most of the framework is model-independent:
@@ -621,6 +781,8 @@ experiment tracking
 model registration
 candidate state
 manual promotion
+scheduled performance monitoring
+monitoring-driven retraining
 
 Model-specific
 ────────────────────────────────────────
@@ -795,6 +957,8 @@ The current workflow focuses on:
 - candidate registration
 - manual approval
 - artifact promotion
+- scheduled investigator-feedback performance monitoring
+- monitoring email notifications
 - monitoring-driven retraining signals
 
 A larger production implementation could add automated test gates, stronger IAM controls, CI/CD deployment automation, richer experiment comparison, approval workflows, additional model families, and online serving where appropriate.
