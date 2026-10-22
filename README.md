@@ -46,7 +46,7 @@ The repository demonstrates three retraining use cases.
 
 ---
 
-<img width="1672" height="941" alt="MLOps accelerator use cases" src="https://github.com/user-attachments/assets/591a8d49-8f89-43c9-a104-74847c37b540" />
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/dc5b3eb5-b340-47d3-b4d5-bc6ea1e8d178" />
 
 ---
 
