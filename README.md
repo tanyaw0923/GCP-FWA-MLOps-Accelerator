@@ -48,6 +48,11 @@ The repository demonstrates three retraining use cases.
 
 <img width="1672" height="941" alt="MLOps accelerator use cases" src="https://github.com/user-attachments/assets/591a8d49-8f89-43c9-a104-74847c37b540" />
 
+---
+
+<img width="1644" height="957" alt="image" src="https://github.com/user-attachments/assets/c0b77c3f-9db0-45c7-93df-dc44dd4760f1" />
+
+
 ### Use Case 1 — New Data
 
 A new monthly claims dataset becomes available.
