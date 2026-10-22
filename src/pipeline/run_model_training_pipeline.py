@@ -24,6 +24,7 @@ data_config = config["data"]
 model_config = config["model"]
 monitoring_config = config["monitoring"]
 promotion_config = config["promotion"]
+promotion_gate_config = promotion_config["gate"]
 
 
 # ------------------------------------------------------------------
@@ -299,6 +300,30 @@ TRAINING_STATE_TABLE = (
     ]
 )
 
+MIN_PR_AUC_IMPROVEMENT = float(
+    promotion_gate_config[
+        "min_pr_auc_improvement"
+    ]
+)
+
+MIN_RECALL_CHANGE = float(
+    promotion_gate_config[
+        "min_recall_change"
+    ]
+)
+
+MIN_F1_CHANGE = float(
+    promotion_gate_config[
+        "min_f1_change"
+    ]
+)
+
+MIN_PRECISION_CHANGE = float(
+    promotion_gate_config[
+        "min_precision_change"
+    ]
+)
+
 
 # ------------------------------------------------------------------
 # Candidate and production artifact locations
@@ -566,6 +591,30 @@ runtime_parameter_values = {
             TRAINING_STATE_TABLE
         )
     ),
+
+    "min_pr_auc_improvement": Value(
+        number_value=(
+            MIN_PR_AUC_IMPROVEMENT
+        )
+    ),
+
+    "min_recall_change": Value(
+        number_value=(
+            MIN_RECALL_CHANGE
+        )
+    ),
+
+    "min_f1_change": Value(
+        number_value=(
+            MIN_F1_CHANGE
+        )
+    ),
+
+    "min_precision_change": Value(
+        number_value=(
+            MIN_PRECISION_CHANGE
+        )
+    ),
 }
 
 
@@ -765,6 +814,29 @@ print(
     f"{TRAINING_STATE_TABLE}"
 )
 
+print("\nModel promotion gate")
+print("-" * 70)
+
+print(
+    f"Minimum PR-AUC improvement: "
+    f"{MIN_PR_AUC_IMPROVEMENT:+.4f}"
+)
+
+print(
+    f"Minimum recall change: "
+    f"{MIN_RECALL_CHANGE:+.4f}"
+)
+
+print(
+    f"Minimum F1 change: "
+    f"{MIN_F1_CHANGE:+.4f}"
+)
+
+print(
+    f"Minimum precision change: "
+    f"{MIN_PRECISION_CHANGE:+.4f}"
+)
+
 print("\nArtifacts")
 print("-" * 70)
 
@@ -889,7 +961,7 @@ if (
     .PipelineState
     .PIPELINE_STATE_SUCCEEDED
 ):
-    print("CANDIDATE PIPELINE COMPLETED")
+    print("TRAINING PIPELINE COMPLETED")
     print("=" * 70)
 
     print(
@@ -945,8 +1017,18 @@ if (
     )
 
     print(
-        "\nProduction remains unchanged "
-        "until manual approval."
+        "\nExperiment results were recorded "
+        "regardless of promotion eligibility."
+    )
+
+    print(
+        "Only models that pass the Model Promotion Gate "
+        "are registered as candidates and moved to "
+        "PENDING_APPROVAL."
+    )
+
+    print(
+        "Production remains unchanged until manual approval."
     )
 
 else:
