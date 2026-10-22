@@ -9,6 +9,9 @@ from src.pipeline.components.check_retraining_decision_component import (
 from src.pipeline.components.mark_candidate_pending_component import (
     mark_candidate_pending_component,
 )
+from src.pipeline.components.model_promotion_gate_component import (
+    model_promotion_gate_component,
+)
 from src.pipeline.components.refresh_provider_features_component import (
     refresh_provider_features_component,
 )
@@ -82,6 +85,12 @@ def model_training_pipeline(
     prediction_drift_table: str,
     performance_degradation_table: str,
     training_state_table: str,
+
+    # Model promotion gate
+    min_pr_auc_improvement: float,
+    min_recall_change: float,
+    min_f1_change: float,
+    min_precision_change: float,
 
     # Stable identity for the fraud-model workflow
     state_key: str = "provider_fraud_model",
@@ -253,62 +262,103 @@ def model_training_pipeline(
                 refresh_features_task
             )
 
-            rf_register_task = (
-                register_model_component(
+            rf_gate_task = (
+                model_promotion_gate_component(
                     project_id=project_id,
-                    region=region,
-                    model_display_name=(
-                        model_display_name
+                    experiment_metrics_table=(
+                        experiment_metrics_table
                     ),
-                    artifact_uri=(
-                        model_artifact_uri
-                    ),
-                    serving_container_image_uri=(
-                        serving_container_image_uri
-                    ),
-                )
-            )
-
-            rf_register_task.set_display_name(
-                "Register Random Forest Candidate"
-            )
-
-            rf_register_task.after(
-                rf_train_task
-            )
-
-            rf_pending_task = (
-                mark_candidate_pending_component(
-                    project_id=project_id,
                     training_state_table=(
                         training_state_table
                     ),
-                    current_data_month=(
-                        current_data_month
+                    challenger_run_id=run_id,
+                    min_pr_auc_improvement=(
+                        min_pr_auc_improvement
                     ),
-                    candidate_model_resource=(
-                        rf_register_task.output
+                    min_recall_change=(
+                        min_recall_change
                     ),
-                    candidate_feature_signature=(
-                        current_feature_signature
+                    min_f1_change=(
+                        min_f1_change
                     ),
-                    candidate_model_signature=(
-                        current_model_signature
-                    ),
-                    candidate_model_type=(
-                        model_type
+                    min_precision_change=(
+                        min_precision_change
                     ),
                     state_key=state_key,
                 )
             )
 
-            rf_pending_task.set_display_name(
-                "Mark Random Forest Candidate Pending"
+            rf_gate_task.set_display_name(
+                "Model Promotion Gate"
             )
 
-            rf_pending_task.after(
-                rf_register_task
+            rf_gate_task.after(
+                rf_train_task
             )
+
+            with dsl.If(
+                rf_gate_task.outputs[
+                    "eligible_for_promotion"
+                ] == True,
+                name="random-forest-promotion-eligible",
+            ):
+                rf_register_task = (
+                    register_model_component(
+                        project_id=project_id,
+                        region=region,
+                        model_display_name=(
+                            model_display_name
+                        ),
+                        artifact_uri=(
+                            model_artifact_uri
+                        ),
+                        serving_container_image_uri=(
+                            serving_container_image_uri
+                        ),
+                    )
+                )
+
+                rf_register_task.set_display_name(
+                    "Register Random Forest Candidate"
+                )
+
+                rf_register_task.after(
+                    rf_gate_task
+                )
+
+                rf_pending_task = (
+                    mark_candidate_pending_component(
+                        project_id=project_id,
+                        training_state_table=(
+                            training_state_table
+                        ),
+                        current_data_month=(
+                            current_data_month
+                        ),
+                        candidate_model_resource=(
+                            rf_register_task.output
+                        ),
+                        candidate_feature_signature=(
+                            current_feature_signature
+                        ),
+                        candidate_model_signature=(
+                            current_model_signature
+                        ),
+                        candidate_model_type=(
+                            model_type
+                        ),
+                        candidate_run_id=run_id,
+                        state_key=state_key,
+                    )
+                )
+
+                rf_pending_task.set_display_name(
+                    "Mark Random Forest Candidate Pending"
+                )
+
+                rf_pending_task.after(
+                    rf_register_task
+                )
 
         # ----------------------------------------------------
         # XGBoost
@@ -370,62 +420,103 @@ def model_training_pipeline(
                 refresh_features_task
             )
 
-            xgb_register_task = (
-                register_model_component(
+            xgb_gate_task = (
+                model_promotion_gate_component(
                     project_id=project_id,
-                    region=region,
-                    model_display_name=(
-                        model_display_name
+                    experiment_metrics_table=(
+                        experiment_metrics_table
                     ),
-                    artifact_uri=(
-                        model_artifact_uri
-                    ),
-                    serving_container_image_uri=(
-                        serving_container_image_uri
-                    ),
-                )
-            )
-
-            xgb_register_task.set_display_name(
-                "Register XGBoost Candidate"
-            )
-
-            xgb_register_task.after(
-                xgb_train_task
-            )
-
-            xgb_pending_task = (
-                mark_candidate_pending_component(
-                    project_id=project_id,
                     training_state_table=(
                         training_state_table
                     ),
-                    current_data_month=(
-                        current_data_month
+                    challenger_run_id=run_id,
+                    min_pr_auc_improvement=(
+                        min_pr_auc_improvement
                     ),
-                    candidate_model_resource=(
-                        xgb_register_task.output
+                    min_recall_change=(
+                        min_recall_change
                     ),
-                    candidate_feature_signature=(
-                        current_feature_signature
+                    min_f1_change=(
+                        min_f1_change
                     ),
-                    candidate_model_signature=(
-                        current_model_signature
-                    ),
-                    candidate_model_type=(
-                        model_type
+                    min_precision_change=(
+                        min_precision_change
                     ),
                     state_key=state_key,
                 )
             )
 
-            xgb_pending_task.set_display_name(
-                "Mark XGBoost Candidate Pending"
+            xgb_gate_task.set_display_name(
+                "Model Promotion Gate"
             )
 
-            xgb_pending_task.after(
-                xgb_register_task
+            xgb_gate_task.after(
+                xgb_train_task
             )
+
+            with dsl.If(
+                xgb_gate_task.outputs[
+                    "eligible_for_promotion"
+                ] == True,
+                name="xgboost-promotion-eligible",
+            ):
+                xgb_register_task = (
+                    register_model_component(
+                        project_id=project_id,
+                        region=region,
+                        model_display_name=(
+                            model_display_name
+                        ),
+                        artifact_uri=(
+                            model_artifact_uri
+                        ),
+                        serving_container_image_uri=(
+                            serving_container_image_uri
+                        ),
+                    )
+                )
+
+                xgb_register_task.set_display_name(
+                    "Register XGBoost Candidate"
+                )
+
+                xgb_register_task.after(
+                    xgb_gate_task
+                )
+
+                xgb_pending_task = (
+                    mark_candidate_pending_component(
+                        project_id=project_id,
+                        training_state_table=(
+                            training_state_table
+                        ),
+                        current_data_month=(
+                            current_data_month
+                        ),
+                        candidate_model_resource=(
+                            xgb_register_task.output
+                        ),
+                        candidate_feature_signature=(
+                            current_feature_signature
+                        ),
+                        candidate_model_signature=(
+                            current_model_signature
+                        ),
+                        candidate_model_type=(
+                            model_type
+                        ),
+                        candidate_run_id=run_id,
+                        state_key=state_key,
+                    )
+                )
+
+                xgb_pending_task.set_display_name(
+                    "Mark XGBoost Candidate Pending"
+                )
+
+                xgb_pending_task.after(
+                    xgb_register_task
+                )
 
 
 if __name__ == "__main__":
