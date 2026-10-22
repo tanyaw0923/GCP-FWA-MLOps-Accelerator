@@ -52,8 +52,10 @@ The repository demonstrates three retraining use cases.
 
 <img width="1644" height="957" alt="image" src="https://github.com/user-attachments/assets/768177d2-792f-4d41-a461-282520bc47f3" />
 
+#### Example Email Attached Below:
 [FWA Model Performance Monitoring - ALERT email.pdf](https://github.com/user-attachments/files/33799524/FWA.Model.Performance.Monitoring.-.ALERT.email.pdf)
 
+---
 
 ### Use Case 1 — New Data
 
