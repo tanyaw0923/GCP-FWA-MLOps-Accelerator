@@ -15,6 +15,7 @@ def mark_candidate_pending_component(
     candidate_feature_signature: str,
     candidate_model_signature: str,
     candidate_model_type: str,
+    candidate_run_id: str,
     state_key: str = "provider_fraud_model",
 ):
     from google.cloud import bigquery
@@ -22,6 +23,20 @@ def mark_candidate_pending_component(
     bq = bigquery.Client(
         project=project_id
     )
+
+    bq.query(
+        f"""
+        ALTER TABLE `{training_state_table}`
+        ADD COLUMN IF NOT EXISTS candidate_run_id STRING
+        """
+    ).result()
+
+    bq.query(
+        f"""
+        ALTER TABLE `{training_state_table}`
+        ADD COLUMN IF NOT EXISTS approved_run_id STRING
+        """
+    ).result()
 
     query = f"""
     MERGE `{training_state_table}` AS target
@@ -33,7 +48,8 @@ def mark_candidate_pending_component(
         @candidate_model_resource AS candidate_model_resource,
         @candidate_feature_signature AS candidate_feature_signature,
         @candidate_model_signature AS candidate_model_signature,
-        @candidate_model_type AS candidate_model_type
+        @candidate_model_type AS candidate_model_type,
+        @candidate_run_id AS candidate_run_id
     ) AS source
 
     ON target.model_name = source.model_name
@@ -59,6 +75,9 @@ def mark_candidate_pending_component(
         candidate_model_type =
           source.candidate_model_type,
 
+        candidate_run_id =
+          source.candidate_run_id,
+
         candidate_created_at =
           CURRENT_TIMESTAMP()
 
@@ -71,6 +90,7 @@ def mark_candidate_pending_component(
         candidate_feature_signature,
         candidate_model_signature,
         candidate_model_type,
+        candidate_run_id,
         candidate_created_at
       )
 
@@ -82,6 +102,7 @@ def mark_candidate_pending_component(
         source.candidate_feature_signature,
         source.candidate_model_signature,
         source.candidate_model_type,
+        source.candidate_run_id,
         CURRENT_TIMESTAMP()
       )
     """
@@ -124,6 +145,12 @@ def mark_candidate_pending_component(
                     "STRING",
                     candidate_model_type,
                 ),
+
+                bigquery.ScalarQueryParameter(
+                    "candidate_run_id",
+                    "STRING",
+                    candidate_run_id,
+                ),
             ]
         )
     )
@@ -155,6 +182,11 @@ def mark_candidate_pending_component(
     print(
         f"Candidate model resource: "
         f"{candidate_model_resource}"
+    )
+
+    print(
+        f"Candidate run ID: "
+        f"{candidate_run_id}"
     )
 
     print(
