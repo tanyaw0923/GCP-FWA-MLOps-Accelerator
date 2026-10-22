@@ -1,8 +1,8 @@
-<img width="726" height="901" alt="image" src="https://github.com/user-attachments/assets/66b9097f-2693-42c5-8880-910e8c989519" />
-
 ## Metadata Tracking in the Training Pipeline
 
 This branch adds explicit experiment metadata publishing to the XGBoost training workflow.
+
+<img width="726" height="901" alt="image" src="https://github.com/user-attachments/assets/66b9097f-2693-42c5-8880-910e8c989519" />
 
 After the candidate model is trained, the pipeline publishes the run metadata and evaluation context before model registration. This makes each model candidate easier to trace back to the exact configuration, code version, data window, and feature set used to create it.
 
