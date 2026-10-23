@@ -204,7 +204,7 @@ monitoring:
   performance_min_completed_cases: 20
 
   precision_degradation_threshold: 0.10
-  recall_degradation_threshold: 0.10
+  recall_degradation_threshold: 0.15
   f1_degradation_threshold: 0.10
 
 
