@@ -81,6 +81,20 @@ def refresh_provider_feature_history(
         create_table_sql
     ).result()
 
+    # Backward-compatible schema updates for an existing history table.
+    for column_name, column_type in [
+        ("high_acuity_pct_7d", "FLOAT64"),
+        ("avg_member_provider_distance_7d", "FLOAT64"),
+        ("high_acuity_oe_ratio_7d", "FLOAT64"),
+    ]:
+        client.query(
+            f"""
+            ALTER TABLE `{history_table}`
+            ADD COLUMN IF NOT EXISTS
+              {column_name} {column_type}
+            """
+        ).result()
+
     query = f"""
     MERGE `{history_table}` AS target
 
@@ -162,6 +176,19 @@ def refresh_provider_feature_history(
                   INTERVAL {short_term_days - 1} DAY
                 )
                 AND @snapshot_date,
+              CAST(is_high_acuity_em AS FLOAT64),
+              NULL
+            )
+          ) AS high_acuity_pct_7d,
+
+          AVG(
+            IF(
+              service_date BETWEEN
+                DATE_SUB(
+                  @snapshot_date,
+                  INTERVAL {short_term_days - 1} DAY
+                )
+                AND @snapshot_date,
               CAST(is_referral AS FLOAT64),
               NULL
             )
@@ -178,7 +205,20 @@ def refresh_provider_feature_history(
               total_paid_amount,
               NULL
             )
-          ) AS avg_paid_per_claim_7d
+          ) AS avg_paid_per_claim_7d,
+
+          AVG(
+            IF(
+              service_date BETWEEN
+                DATE_SUB(
+                  @snapshot_date,
+                  INTERVAL {short_term_days - 1} DAY
+                )
+                AND @snapshot_date,
+              member_provider_distance,
+              NULL
+            )
+          ) AS avg_member_provider_distance_7d
 
         FROM scoped_claims
 
