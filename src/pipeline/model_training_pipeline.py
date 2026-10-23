@@ -47,6 +47,7 @@ def model_training_pipeline(
 
     # Data and rolling window
     claims_table: str,
+    provider_feature_history_table: str,
     current_data_month: str,
     current_feature_signature: str,
     training_months: int,
@@ -154,12 +155,16 @@ def model_training_pipeline(
             "Calculate Rolling Window"
         )
 
-        # Rebuild the provider-level feature table for the
-        # current train/test window.
+        # Build point-in-time TRAIN / TEST rows from the canonical
+        # provider feature history. Raw claims supply demo labels and
+        # metadata only; model features come from feature history.
         refresh_features_task = (
             refresh_provider_features_component(
                 project_id=project_id,
                 claims_table=claims_table,
+                provider_feature_history_table=(
+                    provider_feature_history_table
+                ),
                 output_feature_table=(
                     feature_table
                 ),
@@ -168,6 +173,9 @@ def model_training_pipeline(
                 ),
                 derived_feature_sql_json=(
                     derived_feature_sql_json
+                ),
+                feature_columns_json=(
+                    feature_columns_json
                 ),
                 train_start_date=(
                     rolling_window_task.outputs[
