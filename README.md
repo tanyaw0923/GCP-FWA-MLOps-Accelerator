@@ -355,6 +355,18 @@ python -m src.feature_store.refresh_provider_feature_history \
   --snapshot-date 2026-09-30
 ```
 
+### Bootstrap historical snapshots
+
+A new demo environment needs historical month-end snapshots before point-in-time TRAIN / TEST assembly can run. Backfill the required period with:
+
+```bash
+python -m src.feature_store.backfill_provider_feature_history \
+  --start-date 2026-01-01 \
+  --end-date 2026-09-30
+```
+
+The backfill calls the same monthly feature-history implementation used by scheduled refreshes. It does not create a second training-specific feature pipeline.
+
 ### Daily short-term refresh
 
 The short-term behavioral layer is refreshed **daily at 6:30 AM America/Edmonton**.
@@ -846,6 +858,7 @@ GCP-FWA-MLOps-Accelerator/
     │   └── simulate_investigation_feedback.py
     │
     ├── feature_store/
+    │   ├── backfill_provider_feature_history.py
     │   ├── refresh_provider_feature_history.py
     │   └── refresh_short_term_provider_features.py
     │
