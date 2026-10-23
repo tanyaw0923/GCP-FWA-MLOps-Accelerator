@@ -275,15 +275,21 @@ When a candidate is manually promoted, its `candidate_run_id` becomes the new `a
 
 ## Vertex AI Feature Store and Two-Speed Features
 
-The fraud pipeline now uses a timestamped provider feature history as the canonical feature source for feature reuse and future online serving.
+The fraud pipeline uses a timestamped provider feature history as the canonical feature source for feature reuse, batch inference, and future online serving.
 
-The demo intentionally keeps the design simple: features are refreshed once per month, but each monthly snapshot contains two behavioral horizons.
+For the interview demo, the design is intentionally simple: provider features are refreshed **once per month**, but each monthly snapshot contains two behavioral horizons.
 
 ```text
-Incoming claims
+1st of every month
       |
       v
-Monthly provider feature refresh
+Cloud Scheduler
+      |
+      v
+Cloud Run Job
+      |
+      v
+refresh_provider_feature_history.py
       |
       +--> Long-term provider profile
       |      trailing 6 months
@@ -297,13 +303,58 @@ fraud_features.provider_feature_history
       +--> BigQuery offline / batch use
       |
       +--> Vertex AI Feature Group
-             eye_provider_fraud_features
+      |      eye_provider_fraud_features
       |
       +--> Feature View / Bigtable online store
              future real-time scoring
 ```
 
-Long-term features include the existing provider-level fraud signals such as:
+### Monthly refresh schedule
+
+The provider feature history refresh is scheduled for:
+
+```text
+1st of every month
+6:00 AM
+America/Edmonton
+```
+
+The scheduled job always builds the snapshot for the **previous completed month-end**.
+
+Examples:
+
+```text
+November 1  -> snapshot date October 31
+March 1     -> snapshot date February 28 / 29
+January 1   -> snapshot date December 31
+```
+
+This avoids partial-month feature calculations and also handles February correctly.
+
+Cloud Scheduler cron:
+
+```text
+0 6 1 * *
+```
+
+The refresh command is:
+
+```bash
+python -m src.feature_store.refresh_provider_feature_history
+```
+
+When run without `--snapshot-date`, the script automatically uses the previous calendar month-end.
+
+For a manual backfill or demo run, a specific snapshot date can still be supplied:
+
+```bash
+python -m src.feature_store.refresh_provider_feature_history \
+  --snapshot-date 2026-09-30
+```
+
+### Long-term provider profile
+
+The long-term feature layer uses the trailing **6 months** of provider claims to capture relatively stable provider behavior.
 
 ```text
 high_acuity_pct
@@ -316,7 +367,13 @@ high_acuity_oe_ratio
 avg_member_provider_distance
 ```
 
-The short-term layer intentionally contains only a few recent-behavior features for the interview demo:
+These features describe the provider's historical profile and peer-relative behavior.
+
+### Short-term behavioral features
+
+The short-term feature layer uses the trailing **7 days** to capture recent changes in provider behavior.
+
+The demo focuses on short-term counterparts of important fraud signals already used by the model:
 
 ```text
 claim_count_7d
@@ -327,38 +384,54 @@ avg_member_provider_distance_7d
 high_acuity_oe_ratio_7d
 ```
 
-Each snapshot is stored with:
+This gives the model two perspectives on the same provider:
+
+```text
+stable historical behavior
+        +
+recent behavioral change
+```
+
+For example:
+
+```text
+referral_rate       -> trailing 6-month behavior
+referral_rate_7d    -> recent 7-day behavior
+```
+
+A large difference between the two can help surface a provider whose recent behavior has shifted from its longer-term pattern.
+
+### Canonical feature history
+
+Each monthly snapshot is stored in:
+
+```text
+fraud_features.provider_feature_history
+```
+
+with:
 
 ```text
 entity_id = provider_id
-feature_timestamp = month-end snapshot timestamp
+feature_timestamp = previous month-end timestamp
 ```
 
-This gives the project one canonical timestamped feature history while keeping the implementation easy to explain.
+The history table is append-oriented and timestamped so historical feature values can be retained instead of overwriting the latest provider profile.
+
+### Why Feature Store is used
 
 The Feature Store design supports four goals:
 
-- reduce training-serving skew by centralizing reusable feature definitions
+- reduce training-serving skew by using one canonical provider feature source
 - support point-in-time historical feature retrieval from BigQuery
 - reuse the same registered provider features across Random Forest, XGBoost, and future models
 - provide a direct path to online serving through a Bigtable-backed Feature View
 
-BigQuery remains the offline feature store for high-volume training and batch prediction. Vertex AI Feature Store provides feature registration and online serving on top of that canonical history. Google recommends keeping historical feature data in BigQuery and using timestamped feature groups when historical values are required. 
+BigQuery remains the offline feature store for high-volume training and batch prediction.
 
-Refresh the monthly snapshot with:
+Vertex AI Feature Store provides the registered feature layer and future online-serving path on top of the same canonical provider feature history.
 
-```bash
-python -m src.feature_store.refresh_provider_feature_history
-```
-
-or for a specific month-end:
-
-```bash
-python -m src.feature_store.refresh_provider_feature_history \
-  --snapshot-date 2026-09-30
-```
-
-The current Feature Store resources are:
+### Current Feature Store resources
 
 ```text
 Feature Group:
@@ -370,6 +443,8 @@ provider_fraud_online_store
 Feature View:
 eye_provider_fraud_feature_view
 ```
+
+The registered feature set includes both the long-term provider profile and the 7-day behavioral features, giving the demo a simple two-speed feature architecture without introducing separate hourly infrastructure.
 
 ## Scheduled Performance Monitoring
 
