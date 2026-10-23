@@ -277,59 +277,54 @@ When a candidate is manually promoted, its `candidate_run_id` becomes the new `a
 
 The fraud pipeline uses a timestamped provider feature history as the canonical feature source for feature reuse, batch inference, and future online serving.
 
-For the interview demo, the design is intentionally simple: provider features are refreshed **once per month**, but each monthly snapshot contains two behavioral horizons.
+For the interview demo, the feature layer uses two refresh speeds:
 
 ```text
-1st of every month
-      |
-      v
-Cloud Scheduler
-      |
-      v
-Cloud Run Job
-      |
-      v
+Long-term provider profile
+  trailing 6 months
+  refreshed monthly
+
+Short-term provider behavior
+  trailing 7 days
+  refreshed daily
+```
+
+Both horizons are written into the same timestamped BigQuery history so the latest provider row contains a stable monthly profile plus fresh daily behavior.
+
+```text
+Monthly job (1st of month, 6:00 AM)
+        |
+        v
 refresh_provider_feature_history.py
-      |
-      +--> Long-term provider profile
-      |      trailing 6 months
-      |
-      +--> Short-term behavioral snapshot
-             trailing 7 days
-      |
-      v
+        |
+        +--> trailing 6-month provider profile
+        |
+        v
 fraud_features.provider_feature_history
-      |
-      +--> BigQuery offline / batch use
-      |
-      +--> Vertex AI Feature Group
-      |      eye_provider_fraud_features
-      |
-      +--> Feature View / Bigtable online store
-             future real-time scoring
+
+Daily job (6:30 AM)
+        |
+        v
+refresh_short_term_provider_features.py
+        |
+        +--> trailing 7-day behavior
+        +--> carries forward latest monthly profile
+        |
+        v
+fraud_features.provider_feature_history
+        |
+        +--> BigQuery batch inference
+        |
+        +--> Vertex AI Feature Group
+        |      eye_provider_fraud_features
+        |
+        +--> Feature View / Bigtable online store
+               future real-time scoring
 ```
 
-### Monthly refresh schedule
+### Monthly long-term refresh
 
-The provider feature history refresh is scheduled for:
-
-```text
-1st of every month
-6:00 AM
-America/Edmonton
-```
-
-The scheduled job always builds the snapshot for the **previous completed month-end**.
-
-Examples:
-
-```text
-November 1  -> snapshot date October 31
-March 1     -> snapshot date February 28 / 29
-January 1   -> snapshot date December 31
-```
-
-This avoids partial-month feature calculations and also handles February correctly.
+The long-term provider profile is refreshed on the **1st of every month at 6:00 AM America/Edmonton**.
 
 Cloud Scheduler cron:
 
@@ -337,24 +332,64 @@ Cloud Scheduler cron:
 0 6 1 * *
 ```
 
-The refresh command is:
+The job uses the previous completed month-end as the snapshot date.
+
+```text
+November 1  -> October 31 snapshot
+March 1     -> February 28 / 29 snapshot
+January 1   -> December 31 snapshot
+```
+
+Run manually with:
 
 ```bash
 python -m src.feature_store.refresh_provider_feature_history
 ```
 
-When run without `--snapshot-date`, the script automatically uses the previous calendar month-end.
-
-For a manual backfill or demo run, a specific snapshot date can still be supplied:
+or backfill a specific month-end:
 
 ```bash
 python -m src.feature_store.refresh_provider_feature_history \
   --snapshot-date 2026-09-30
 ```
 
+### Daily short-term refresh
+
+The short-term behavioral layer is refreshed **daily at 6:30 AM America/Edmonton**.
+
+Cloud Scheduler cron:
+
+```text
+30 6 * * *
+```
+
+The daily job defaults to **yesterday** so only completed claim data is used.
+
+For example, when the job runs on October 23:
+
+```text
+snapshot date = October 22
+7-day window  = October 16-22
+```
+
+Run manually with:
+
+```bash
+python -m src.feature_store.refresh_short_term_provider_features
+```
+
+or for a specific date:
+
+```bash
+python -m src.feature_store.refresh_short_term_provider_features \
+  --snapshot-date 2026-10-22
+```
+
+On the 1st of the month, the monthly job runs first at 6:00 AM and the daily job runs at 6:30 AM. This lets the daily snapshot use the newly refreshed long-term provider profile.
+
 ### Long-term provider profile
 
-The long-term feature layer uses the trailing **6 months** of provider claims to capture relatively stable provider behavior.
+The long-term feature layer uses the trailing **6 months** of provider claims to capture relatively stable behavior.
 
 ```text
 high_acuity_pct
@@ -367,13 +402,9 @@ high_acuity_oe_ratio
 avg_member_provider_distance
 ```
 
-These features describe the provider's historical profile and peer-relative behavior.
-
 ### Short-term behavioral features
 
 The short-term feature layer uses the trailing **7 days** to capture recent changes in provider behavior.
-
-The demo focuses on short-term counterparts of important fraud signals already used by the model:
 
 ```text
 claim_count_7d
@@ -384,26 +415,18 @@ avg_member_provider_distance_7d
 high_acuity_oe_ratio_7d
 ```
 
-This gives the model two perspectives on the same provider:
+This lets the model compare stable behavior with recent behavior during batch inference.
 
 ```text
-stable historical behavior
-        +
-recent behavioral change
+referral_rate       -> trailing 6-month baseline
+referral_rate_7d    -> trailing 7-day behavior
 ```
 
-For example:
-
-```text
-referral_rate       -> trailing 6-month behavior
-referral_rate_7d    -> recent 7-day behavior
-```
-
-A large difference between the two can help surface a provider whose recent behavior has shifted from its longer-term pattern.
+A large difference between the two can help identify a provider whose recent behavior has shifted from its longer-term pattern.
 
 ### Canonical feature history
 
-Each monthly snapshot is stored in:
+Both jobs write to:
 
 ```text
 fraud_features.provider_feature_history
@@ -413,10 +436,28 @@ with:
 
 ```text
 entity_id = provider_id
-feature_timestamp = previous month-end timestamp
+feature_timestamp = snapshot timestamp
 ```
 
-The history table is append-oriented and timestamped so historical feature values can be retained instead of overwriting the latest provider profile.
+The monthly job refreshes the long-term provider profile. The daily job calculates fresh 7-day behavior and carries forward the latest available long-term values into the daily row.
+
+This produces a point-in-time history such as:
+
+```text
+Provider A
+
+2026-09-30
+  referral_rate      = monthly long-term value
+  referral_rate_7d   = month-end 7-day value
+
+2026-10-01
+  referral_rate      = carried forward from Sep 30
+  referral_rate_7d   = recalculated for Sep 25-Oct 1
+
+2026-10-02
+  referral_rate      = carried forward from Sep 30
+  referral_rate_7d   = recalculated for Sep 26-Oct 2
+```
 
 ### Why Feature Store is used
 
@@ -444,7 +485,7 @@ Feature View:
 eye_provider_fraud_feature_view
 ```
 
-The registered feature set includes both the long-term provider profile and the 7-day behavioral features, giving the demo a simple two-speed feature architecture without introducing separate hourly infrastructure.
+The resulting architecture stays simple enough for an interview demo while showing a realistic two-speed feature design: monthly long-term context plus daily recent behavior.
 
 ## Scheduled Performance Monitoring
 
