@@ -67,8 +67,11 @@ def refresh_provider_feature_history(
       avg_member_provider_distance FLOAT64,
 
       claim_count_7d INT64,
+      high_acuity_pct_7d FLOAT64,
       referral_rate_7d FLOAT64,
-      avg_paid_per_claim_7d FLOAT64
+      avg_paid_per_claim_7d FLOAT64,
+      avg_member_provider_distance_7d FLOAT64,
+      high_acuity_oe_ratio_7d FLOAT64
     )
     PARTITION BY DATE(feature_timestamp)
     CLUSTER BY provider_id
@@ -186,7 +189,10 @@ def refresh_provider_feature_history(
 
         SELECT
           AVG(high_acuity_pct)
-            AS expected_high_acuity_pct
+            AS expected_high_acuity_pct,
+
+          AVG(high_acuity_pct_7d)
+            AS expected_high_acuity_pct_7d
 
         FROM provider_long_term
       )
@@ -217,8 +223,15 @@ def refresh_provider_feature_history(
         p.avg_member_provider_distance,
 
         p.claim_count_7d,
+        p.high_acuity_pct_7d,
         p.referral_rate_7d,
-        p.avg_paid_per_claim_7d
+        p.avg_paid_per_claim_7d,
+        p.avg_member_provider_distance_7d,
+
+        SAFE_DIVIDE(
+          p.high_acuity_pct_7d,
+          b.expected_high_acuity_pct_7d
+        ) AS high_acuity_oe_ratio_7d
 
       FROM provider_long_term p
       CROSS JOIN peer_baseline b
@@ -250,10 +263,16 @@ def refresh_provider_feature_history(
           source.avg_member_provider_distance,
         claim_count_7d =
           source.claim_count_7d,
+        high_acuity_pct_7d =
+          source.high_acuity_pct_7d,
         referral_rate_7d =
           source.referral_rate_7d,
         avg_paid_per_claim_7d =
-          source.avg_paid_per_claim_7d
+          source.avg_paid_per_claim_7d,
+        avg_member_provider_distance_7d =
+          source.avg_member_provider_distance_7d,
+        high_acuity_oe_ratio_7d =
+          source.high_acuity_oe_ratio_7d
 
     WHEN NOT MATCHED THEN
       INSERT (
@@ -269,8 +288,11 @@ def refresh_provider_feature_history(
         high_acuity_oe_ratio,
         avg_member_provider_distance,
         claim_count_7d,
+        high_acuity_pct_7d,
         referral_rate_7d,
-        avg_paid_per_claim_7d
+        avg_paid_per_claim_7d,
+        avg_member_provider_distance_7d,
+        high_acuity_oe_ratio_7d
       )
       VALUES (
         source.entity_id,
@@ -285,8 +307,11 @@ def refresh_provider_feature_history(
         source.high_acuity_oe_ratio,
         source.avg_member_provider_distance,
         source.claim_count_7d,
+        source.high_acuity_pct_7d,
         source.referral_rate_7d,
-        source.avg_paid_per_claim_7d
+        source.avg_paid_per_claim_7d,
+        source.avg_member_provider_distance_7d,
+        source.high_acuity_oe_ratio_7d
       )
     """
 
