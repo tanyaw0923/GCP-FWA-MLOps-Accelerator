@@ -147,6 +147,10 @@ CLAIMS_TABLE = data_config[
     "claims_table"
 ]
 
+PROVIDER_FEATURE_HISTORY_TABLE = data_config[
+    "provider_feature_history_table"
+]
+
 FEATURE_TABLE = data_config[
     "feature_table"
 ]
@@ -452,6 +456,12 @@ runtime_parameter_values = {
         string_value=CLAIMS_TABLE
     ),
 
+    "provider_feature_history_table": Value(
+        string_value=(
+            PROVIDER_FEATURE_HISTORY_TABLE
+        )
+    ),
+
     "current_data_month": Value(
         string_value=(
             CURRENT_DATA_MONTH
@@ -738,6 +748,10 @@ print(
 print(
     f"Feature count: "
     f"{len(FEATURE_COLUMNS)}"
+)
+print(
+    "Canonical feature history: "
+    f"{PROVIDER_FEATURE_HISTORY_TABLE}"
 )
 print(
     f"Feature signature: "
