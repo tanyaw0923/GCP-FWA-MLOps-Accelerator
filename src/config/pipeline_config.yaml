@@ -278,5 +278,8 @@ feature_store:
 
   short_term_features:
     - claim_count_7d
+    - high_acuity_pct_7d
     - referral_rate_7d
     - avg_paid_per_claim_7d
+    - avg_member_provider_distance_7d
+    - high_acuity_oe_ratio_7d
