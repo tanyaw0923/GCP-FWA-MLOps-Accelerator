@@ -82,8 +82,14 @@ def refresh_provider_feature_history(
     ).result()
 
     # Backward-compatible schema updates for an existing history table.
+    # CREATE TABLE IF NOT EXISTS does not add newly introduced columns
+    # when the table already exists, so explicitly add every short-term
+    # feature used by the MERGE.
     for column_name, column_type in [
+        ("claim_count_7d", "INT64"),
         ("high_acuity_pct_7d", "FLOAT64"),
+        ("referral_rate_7d", "FLOAT64"),
+        ("avg_paid_per_claim_7d", "FLOAT64"),
         ("avg_member_provider_distance_7d", "FLOAT64"),
         ("high_acuity_oe_ratio_7d", "FLOAT64"),
     ]:
