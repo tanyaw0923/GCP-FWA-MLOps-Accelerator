@@ -1,6 +1,6 @@
 import argparse
 import calendar
-from datetime import date
+from datetime import date, timedelta
 
 from google.cloud import bigquery
 
@@ -14,6 +14,11 @@ def month_end(value: str) -> date:
         month,
         calendar.monthrange(year, month)[1],
     )
+
+
+def previous_month_end(reference_date: date) -> date:
+    first_day_of_month = reference_date.replace(day=1)
+    return first_day_of_month - timedelta(days=1)
 
 
 def refresh_provider_feature_history(
@@ -438,24 +443,21 @@ def main():
         required=False,
         help=(
             "Snapshot date in YYYY-MM-DD. "
-            "Defaults to the month end of "
-            "data.current_data_month."
+            "If omitted, defaults to the previous "
+            "calendar month end. This is designed "
+            "for a monthly run on the 1st."
         ),
     )
 
     args = parser.parse_args()
-
-    config = load_config()
 
     if args.snapshot_date:
         snapshot_date = date.fromisoformat(
             args.snapshot_date
         )
     else:
-        snapshot_date = month_end(
-            config["data"][
-                "current_data_month"
-            ]
+        snapshot_date = previous_month_end(
+            date.today()
         )
 
     refresh_provider_feature_history(
