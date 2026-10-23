@@ -320,8 +320,11 @@ The short-term layer intentionally contains only a few recent-behavior features 
 
 ```text
 claim_count_7d
+high_acuity_pct_7d
 referral_rate_7d
 avg_paid_per_claim_7d
+avg_member_provider_distance_7d
+high_acuity_oe_ratio_7d
 ```
 
 Each snapshot is stored with:
