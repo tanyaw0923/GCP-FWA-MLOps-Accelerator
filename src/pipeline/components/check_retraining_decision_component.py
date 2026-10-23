@@ -78,7 +78,11 @@ def check_retraining_decision_component(
             f"""
             SELECT status
             FROM `{prediction_drift_table}`
-            ORDER BY check_date DESC
+            ORDER BY
+              COALESCE(
+                monitoring_timestamp,
+                TIMESTAMP(check_date)
+              ) DESC
             LIMIT 1
             """
         ).result()
