@@ -273,6 +273,101 @@ approved_run_id
 When a candidate is manually promoted, its `candidate_run_id` becomes the new `approved_run_id`. Future retraining attempts are compared against that approved run.
 
 
+## Vertex AI Feature Store and Two-Speed Features
+
+The fraud pipeline now uses a timestamped provider feature history as the canonical feature source for feature reuse and future online serving.
+
+The demo intentionally keeps the design simple: features are refreshed once per month, but each monthly snapshot contains two behavioral horizons.
+
+```text
+Incoming claims
+      |
+      v
+Monthly provider feature refresh
+      |
+      +--> Long-term provider profile
+      |      trailing 6 months
+      |
+      +--> Short-term behavioral snapshot
+             trailing 7 days
+      |
+      v
+fraud_features.provider_feature_history
+      |
+      +--> BigQuery offline / batch use
+      |
+      +--> Vertex AI Feature Group
+             eye_provider_fraud_features
+      |
+      +--> Feature View / Bigtable online store
+             future real-time scoring
+```
+
+Long-term features include the existing provider-level fraud signals such as:
+
+```text
+high_acuity_pct
+pct_99214
+pct_99215
+referral_rate
+eye_procedure_pct
+avg_paid_per_claim
+high_acuity_oe_ratio
+avg_member_provider_distance
+```
+
+The short-term layer intentionally contains only a few recent-behavior features for the interview demo:
+
+```text
+claim_count_7d
+referral_rate_7d
+avg_paid_per_claim_7d
+```
+
+Each snapshot is stored with:
+
+```text
+entity_id = provider_id
+feature_timestamp = month-end snapshot timestamp
+```
+
+This gives the project one canonical timestamped feature history while keeping the implementation easy to explain.
+
+The Feature Store design supports four goals:
+
+- reduce training-serving skew by centralizing reusable feature definitions
+- support point-in-time historical feature retrieval from BigQuery
+- reuse the same registered provider features across Random Forest, XGBoost, and future models
+- provide a direct path to online serving through a Bigtable-backed Feature View
+
+BigQuery remains the offline feature store for high-volume training and batch prediction. Vertex AI Feature Store provides feature registration and online serving on top of that canonical history. Google recommends keeping historical feature data in BigQuery and using timestamped feature groups when historical values are required. 
+
+Refresh the monthly snapshot with:
+
+```bash
+python -m src.feature_store.refresh_provider_feature_history
+```
+
+or for a specific month-end:
+
+```bash
+python -m src.feature_store.refresh_provider_feature_history \
+  --snapshot-date 2026-09-30
+```
+
+The current Feature Store resources are:
+
+```text
+Feature Group:
+eye_provider_fraud_features
+
+Online Store:
+provider_fraud_online_store
+
+Feature View:
+eye_provider_fraud_feature_view
+```
+
 ## Scheduled Performance Monitoring
 
 Production performance monitoring is intentionally separated from the Vertex AI training pipeline.
