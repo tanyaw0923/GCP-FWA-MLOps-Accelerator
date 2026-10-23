@@ -720,8 +720,8 @@ The implementation uses:
 - **Cloud Storage** — candidate and production model artifacts
 - **Artifact Registry** — custom Random Forest and XGBoost training images
 - **Cloud Build** — reproducible training and monitoring image builds
-- **Cloud Run Jobs** — serverless execution environment for scheduled performance monitoring
-- **Cloud Scheduler** — invokes performance monitoring on the 1st and 15th of each month
+- **Cloud Run Jobs** — serverless execution environment for scheduled feature refreshes and performance monitoring
+- **Cloud Scheduler** — invokes the monthly long-term feature refresh, daily short-term feature refresh, and scheduled performance monitoring
 - **Secret Manager** — stores the Gmail App Password used by the monitoring job
 - **Kubeflow Pipelines SDK** — pipeline and component definitions
 
@@ -793,6 +793,10 @@ GCP-FWA-MLOps-Accelerator/
     │
     ├── feedback/
     │   └── simulate_investigation_feedback.py
+    │
+    ├── feature_store/
+    │   ├── refresh_provider_feature_history.py
+    │   └── refresh_short_term_provider_features.py
     │
     ├── models/
     │   ├── isolation_forest.py
@@ -1062,27 +1066,33 @@ For a first pass through the repository, read the files in this order:
    Understand how rolling TRAIN / TEST windows are calculated.
 
 6. src/pipeline/components/refresh_provider_features_component.py
-   Understand the shared feature-engineering layer.
+   Understand the shared feature-engineering layer used by the training pipeline.
 
-7. src/models/train_random_forest.py
+7. src/feature_store/refresh_provider_feature_history.py
+   Understand the monthly 6-month provider profile refresh and historical feature snapshots.
+
+8. src/feature_store/refresh_short_term_provider_features.py
+   Understand the daily 7-day behavioral refresh and how the latest monthly profile is carried forward.
+
+9. src/models/train_random_forest.py
    src/models/train_xgboost.py
    Understand the actual model-training and evaluation logic.
 
-8. src/pipeline/components/model_promotion_gate_component.py
+10. src/pipeline/components/model_promotion_gate_component.py
    Understand how a new challenger is compared with the approved production
    run before it becomes eligible for registration.
 
-9. src/pipeline/components/register_model_component.py
+11. src/pipeline/components/register_model_component.py
    Understand candidate registration.
 
-10. src/pipeline/components/mark_candidate_pending_component.py
+12. src/pipeline/components/mark_candidate_pending_component.py
     Understand the manual-approval boundary.
 
-11. src/models/promote_model_candidate.py
+13. src/models/promote_model_candidate.py
     Understand how an approved candidate becomes production and how its
     run_id becomes the approved baseline for future model comparisons.
 
-12. src/monitoring/run_model_performance_monitoring.py
+14. src/monitoring/run_model_performance_monitoring.py
     Understand how investigator feedback is used to evaluate production
     precision / recall / F1, write performance-degradation status, and
     send the scheduled monitoring email.
@@ -1277,6 +1287,8 @@ This repository is a technical MLOps demonstration rather than a complete enterp
 The current workflow focuses on:
 
 - batch-oriented fraud modeling
+- two-speed provider feature refreshes: monthly long-term profile plus daily 7-day behavior
+- Vertex AI Feature Store registration and future online-serving path
 - configurable feature generation
 - retraining decisions
 - model training and evaluation
