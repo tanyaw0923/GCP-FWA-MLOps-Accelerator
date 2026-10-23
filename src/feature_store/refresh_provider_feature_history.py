@@ -34,10 +34,10 @@ def refresh_provider_feature_history(
 
     refresh_config = feature_store_config["refresh"]
     long_term_months = int(
-        refresh_config["long_term_months"]
+        refresh_config["long_term"]["long_term_months"]
     )
     short_term_days = int(
-        refresh_config["short_term_days"]
+        refresh_config["short_term"]["short_term_days"]
     )
 
     if long_term_months <= 0:
@@ -432,9 +432,10 @@ def refresh_provider_feature_history(
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Build the monthly provider feature snapshot "
+            "Build the monthly long-term provider feature snapshot "
             "used by BigQuery batch serving and Vertex AI "
-            "Feature Store."
+            "Feature Store. The daily short-term job refreshes "
+            "the 7-day behavioral layer separately."
         )
     )
 
