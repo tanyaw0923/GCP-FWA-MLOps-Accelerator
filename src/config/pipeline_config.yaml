@@ -243,17 +243,18 @@ promotion:
 #
 # Interview-demo design:
 #
-# One monthly refresh produces two feature horizons:
+# Two-speed feature refresh:
 #
 #   1) long-term provider profile
 #      - trailing 6 months
+#      - refreshed monthly on the 1st
 #
 #   2) short-term behavioral snapshot
 #      - trailing 7 days
+#      - refreshed daily
 #
-# Both horizons are written to one timestamped BigQuery history
-# table. Vertex AI Feature Store registers the same canonical
-# source for reuse and future online serving.
+# Daily snapshots carry forward the latest monthly provider
+# profile so the latest Feature Store row is complete.
 # ============================================================
 
 feature_store:
@@ -272,9 +273,14 @@ feature_store:
   feature_timestamp_column: feature_timestamp
 
   refresh:
-    cadence: monthly
-    long_term_months: 6
-    short_term_days: 7
+    long_term:
+      cadence: monthly
+      day_of_month: 1
+      long_term_months: 6
+
+    short_term:
+      cadence: daily
+      short_term_days: 7
 
   short_term_features:
     - claim_count_7d
