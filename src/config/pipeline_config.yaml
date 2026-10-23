@@ -120,6 +120,8 @@ data:
 
   retraining_table: fwa-mlops-accelerator-demo.fraud_monitoring.model_retraining
 
+  provider_feature_history_table: fwa-mlops-accelerator-demo.fraud_features.provider_feature_history
+
 
 # ============================================================
 # PROVIDER-LEVEL FEATURE ENGINEERING
@@ -234,3 +236,47 @@ promotion:
   xgboost:
     candidate_artifact_path: models/xgboost/candidate/
     production_artifact_path: models/xgboost/production/
+
+
+# ============================================================
+# FEATURE STORE
+#
+# Interview-demo design:
+#
+# One monthly refresh produces two feature horizons:
+#
+#   1) long-term provider profile
+#      - trailing 6 months
+#
+#   2) short-term behavioral snapshot
+#      - trailing 7 days
+#
+# Both horizons are written to one timestamped BigQuery history
+# table. Vertex AI Feature Store registers the same canonical
+# source for reuse and future online serving.
+# ============================================================
+
+feature_store:
+  enabled: true
+
+  feature_group_id: eye_provider_fraud_features
+
+  online_store_id: provider_fraud_online_store
+
+  feature_view_id: eye_provider_fraud_feature_view
+
+  history_table: fwa-mlops-accelerator-demo.fraud_features.provider_feature_history
+
+  entity_id_column: entity_id
+
+  feature_timestamp_column: feature_timestamp
+
+  refresh:
+    cadence: monthly
+    long_term_months: 6
+    short_term_days: 7
+
+  short_term_features:
+    - claim_count_7d
+    - referral_rate_7d
+    - avg_paid_per_claim_7d
