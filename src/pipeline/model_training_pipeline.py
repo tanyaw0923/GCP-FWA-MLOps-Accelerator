@@ -195,7 +195,7 @@ def model_training_pipeline(
         )
 
         refresh_features_task.set_display_name(
-            "Refresh Provider Features"
+            "Build Provider-Disjoint Dataset"
         )
 
         # This component writes to BigQuery, so we do not want
