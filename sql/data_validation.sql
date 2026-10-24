@@ -1,226 +1,135 @@
 -- ============================================================
--- FWA Fraud MLOps Accelerator
--- BigQuery Data Validation
---
--- Source table:
--- fwa-mlops-accelerator-demo.fwa_claims.claims
+-- CURRENT SYNTHETIC CLAIM DATA VALIDATION
 -- ============================================================
 
-
--- ============================================================
--- VALIDATE CLAIM TABLE LOAD
--- ============================================================
-
+-- Volume and cardinality
 SELECT
-    COUNT(*) AS total_claims,
-    COUNT(DISTINCT provider_id) AS total_providers,
-    COUNT(DISTINCT member_id) AS total_members
-FROM
-    `fwa-mlops-accelerator-demo.fwa_claims.claims`;
-
-
--- Expected:
--- total_claims     = 100000
--- total_providers  = 200
--- total_members    ≈ 20000
-
-
-
--- ============================================================
--- VALIDATE TRAIN / TEST TEMPORAL SPLIT
--- ============================================================
-
-SELECT
-    dataset_split,
-
-    MIN(service_date) AS min_service_date,
-
-    MAX(service_date) AS max_service_date,
-
-    COUNT(*) AS claim_count,
-
-    COUNT(DISTINCT provider_id) AS provider_count,
-
-    COUNT(DISTINCT member_id) AS member_count
+  COUNT(*) AS total_claims,
+  COUNT(DISTINCT provider_id) AS total_providers,
+  COUNT(DISTINCT member_id) AS total_members,
+  MIN(service_date) AS min_service_date,
+  MAX(service_date) AS max_service_date
 
 FROM
-    `fwa-mlops-accelerator-demo.fwa_claims.claims`
+  `fwa-mlops-accelerator-demo.fwa_claims.claims`;
+
+
+-- Provider cohort
+SELECT
+  provider_specialty,
+  provider_state,
+  COUNT(DISTINCT provider_id) AS providers,
+  COUNT(*) AS claims
+
+FROM
+  `fwa-mlops-accelerator-demo.fwa_claims.claims`
 
 GROUP BY
-    dataset_split
+  provider_specialty,
+  provider_state
 
-ORDER BY
-    dataset_split;
-
-
--- Expected:
---
--- TRAIN
--- 2026-01-01 through 2026-06-30
---
--- TEST
--- 2026-07-01 through 2026-09-30
---
--- Both periods should contain approximately all 200 providers.
+ORDER BY claims DESC;
 
 
-
--- ============================================================
--- VALIDATE EYE-RELATED CLAIM COHORT
--- ============================================================
-
+-- Eye-diagnosis sanity check.
+-- The current generator uses H-family ICD codes for the demo cohort.
 SELECT
-    COUNT(*) AS total_claims,
+  SUBSTR(
+    CAST(icd_code AS STRING),
+    1,
+    1
+  ) AS icd_prefix,
 
-    SUM(is_eye_diagnosis) AS eye_claims,
-
-    ROUND(
-        100 * AVG(is_eye_diagnosis),
-        2
-    ) AS eye_claim_pct
+  COUNT(*) AS claim_count
 
 FROM
-    `fwa-mlops-accelerator-demo.fwa_claims.claims`;
+  `fwa-mlops-accelerator-demo.fwa_claims.claims`
+
+GROUP BY icd_prefix
+
+ORDER BY claim_count DESC;
 
 
--- Expected:
--- total_claims    = 100000
--- eye_claims      = 100000
--- eye_claim_pct   = 100.00
+-- Label prevalence
+WITH provider_labels AS (
+  SELECT
+    provider_id,
+    MAX(
+      CAST(
+        fraud_provider_label
+        AS INT64
+      )
+    ) AS fraud_label
 
-
-
--- ============================================================
--- ADDITIONAL VALIDATION:
--- Verify ICD codes are eye-related H-family codes
--- ============================================================
-
-SELECT
-    SUBSTR(
-        CAST(icd_code AS STRING),
-        1,
-        1
-    ) AS icd_prefix,
-
-    COUNT(*) AS claim_count
-
-FROM
+  FROM
     `fwa-mlops-accelerator-demo.fwa_claims.claims`
 
-GROUP BY
-    icd_prefix
-
-ORDER BY
-    claim_count DESC;
-
-
--- Expected:
--- Only prefix "H"
-
-
-
--- ============================================================
--- ADDITIONAL VALIDATION:
--- Provider specialty
--- ============================================================
+  GROUP BY provider_id
+)
 
 SELECT
-    provider_specialty,
+  fraud_label,
+  COUNT(*) AS providers,
+  SAFE_DIVIDE(
+    COUNT(*),
+    SUM(COUNT(*)) OVER()
+  ) AS provider_rate
 
-    COUNT(*) AS claim_count,
+FROM provider_labels
 
-    COUNT(DISTINCT provider_id) AS provider_count
+GROUP BY fraud_label
 
-FROM
-    `fwa-mlops-accelerator-demo.fwa_claims.claims`
-
-GROUP BY
-    provider_specialty
-
-ORDER BY
-    claim_count DESC;
+ORDER BY fraud_label;
 
 
--- Expected:
--- Primary Care only
-
-
-
--- ============================================================
--- ADDITIONAL VALIDATION:
--- Texas-only provider population
--- ============================================================
-
+-- Null and domain checks
 SELECT
-    provider_state,
+  COUNT(*) AS total_rows,
 
-    COUNT(*) AS claim_count,
+  COUNTIF(claim_id IS NULL) AS missing_claim_id,
+  COUNTIF(provider_id IS NULL) AS missing_provider_id,
+  COUNTIF(member_id IS NULL) AS missing_member_id,
+  COUNTIF(service_date IS NULL) AS missing_service_date,
+  COUNTIF(cpt_code IS NULL) AS missing_cpt_code,
+  COUNTIF(icd_code IS NULL) AS missing_icd_code,
 
-    COUNT(DISTINCT provider_id) AS provider_count
+  COUNTIF(total_billed_amt IS NULL)
+    AS missing_billed_amount,
+
+  COUNTIF(total_allowed_amt IS NULL)
+    AS missing_allowed_amount,
+
+  COUNTIF(total_paid_amount IS NULL)
+    AS missing_paid_amount,
+
+  COUNTIF(
+    total_paid_amount < 0
+    OR total_allowed_amt < 0
+    OR total_billed_amt < 0
+  ) AS invalid_negative_amounts,
+
+  COUNTIF(
+    fraud_provider_label NOT IN (0, 1)
+  ) AS invalid_fraud_labels
 
 FROM
-    `fwa-mlops-accelerator-demo.fwa_claims.claims`
-
-GROUP BY
-    provider_state
-
-ORDER BY
-    claim_count DESC;
+  `fwa-mlops-accelerator-demo.fwa_claims.claims`;
 
 
--- Expected:
--- TX only
-
-
-
--- ============================================================
--- ADDITIONAL VALIDATION:
--- Providers by city
--- ============================================================
-
+-- Monthly volumes make temporal changes visible.
 SELECT
-    provider_city,
+  DATE_TRUNC(
+    service_date,
+    MONTH
+  ) AS service_month,
 
-    COUNT(DISTINCT provider_id) AS provider_count,
-
-    COUNT(*) AS claim_count
-
-FROM
-    `fwa-mlops-accelerator-demo.fwa_claims.claims`
-
-GROUP BY
-    provider_city
-
-ORDER BY
-    provider_count DESC;
-
-
-
--- ============================================================
--- ADDITIONAL VALIDATION:
--- Basic null check
--- ============================================================
-
-SELECT
-    COUNT(*) AS total_rows,
-
-    COUNTIF(claim_id IS NULL) AS missing_claim_id,
-
-    COUNTIF(provider_id IS NULL) AS missing_provider_id,
-
-    COUNTIF(member_id IS NULL) AS missing_member_id,
-
-    COUNTIF(service_date IS NULL) AS missing_service_date,
-
-    COUNTIF(cpt_code IS NULL) AS missing_cpt_code,
-
-    COUNTIF(icd_code IS NULL) AS missing_icd_code,
-
-    COUNTIF(total_billed_amt IS NULL) AS missing_billed_amount,
-
-    COUNTIF(total_allowed_amt IS NULL) AS missing_allowed_amount,
-
-    COUNTIF(total_paid_amount IS NULL) AS missing_paid_amount
+  COUNT(*) AS claims,
+  COUNT(DISTINCT provider_id) AS providers,
+  COUNT(DISTINCT member_id) AS members
 
 FROM
-    `fwa-mlops-accelerator-demo.fwa_claims.claims`;
+  `fwa-mlops-accelerator-demo.fwa_claims.claims`
+
+GROUP BY service_month
+
+ORDER BY service_month;

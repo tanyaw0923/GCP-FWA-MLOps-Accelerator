@@ -51,3 +51,6 @@ __pycache__/
 
 # Local temporary Dockerfile
 synthetic_claims.csv
+
+# Generated Kubeflow/Vertex pipeline spec
+model_training_pipeline.yaml

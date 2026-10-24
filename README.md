@@ -2,7 +2,9 @@
 
 A reusable Google Cloud MLOps framework for provider-level healthcare fraud, waste, and abuse (FWA) modeling.
 
-This project is designed as a shared ML accelerator for a team of data scientists. Data scientists can experiment with new data, features, model configurations, and algorithms while reusing the same governed workflow for retraining decisions, feature refresh, training, evaluation, experiment tracking, candidate registration, approval, and production promotion.
+The project is designed as a shared ML accelerator for a fraud data-science team: modelers can test new data, features, configurations, and algorithms while reusing one governed production workflow for point-in-time feature retrieval, retraining decisions, training, evaluation, experiment tracking, candidate registration, approval, batch scoring, investigator feedback, monitoring, and production promotion.
+
+The business objective is not only to improve model metrics. The accelerator is designed to shorten the path from a fraud hypothesis to a governed investigation queue while preserving reproducibility, lineage, and human approval.
 
 ## Business Goal
 
@@ -129,7 +131,7 @@ The launcher creates a model signature from the model type, model name, and hype
                   Rolling Data Window
                           |
                           v
-                Provider Feature Refresh
+             Point-in-Time Feature Retrieval
                           |
                 +---------+---------+
                 |                   |
@@ -275,7 +277,7 @@ When a candidate is manually promoted, its `candidate_run_id` becomes the new `a
 
 ## Vertex AI Feature Store and Two-Speed Features
 
-The fraud pipeline uses a timestamped provider feature history as the canonical feature source for feature reuse, batch inference, and future online serving.
+The fraud pipeline uses a timestamped provider feature history as the canonical model-feature source for training, batch inference, feature reuse, and future online serving. The training pipeline no longer recomputes model features independently from raw claims; it assembles point-in-time monthly snapshots from `provider_feature_history`. Raw claims are used only for synthetic demo labels and provider metadata.
 
 For the interview demo, the feature layer uses two refresh speeds:
 
@@ -352,6 +354,18 @@ or backfill a specific month-end:
 python -m src.feature_store.refresh_provider_feature_history \
   --snapshot-date 2026-09-30
 ```
+
+### Bootstrap historical snapshots
+
+A new demo environment needs historical month-end snapshots before point-in-time TRAIN / TEST assembly can run. Backfill the required period with:
+
+```bash
+python -m src.feature_store.backfill_provider_feature_history \
+  --start-date 2026-01-01 \
+  --end-date 2026-09-30
+```
+
+The backfill calls the same monthly feature-history implementation used by scheduled refreshes. It does not create a second training-specific feature pipeline.
 
 ### Daily short-term refresh
 
@@ -465,7 +479,8 @@ The Feature Store design supports four goals:
 
 - reduce training-serving skew by using one canonical provider feature source
 - support point-in-time historical feature retrieval from BigQuery
-- reuse the same registered provider features across Random Forest, XGBoost, and future models
+- use the same long-term provider feature contract for model training and batch inference
+- reuse registered provider features across Random Forest, XGBoost, and future models
 - provide a direct path to online serving through a Bigtable-backed Feature View
 
 BigQuery remains the offline feature store for high-volume training and batch prediction.
@@ -486,6 +501,35 @@ eye_provider_fraud_feature_view
 ```
 
 The resulting architecture stays simple enough for an interview demo while showing a realistic two-speed feature design: monthly long-term context plus daily recent behavior.
+
+## Operational Evaluation at Investigation Capacity
+
+Global metrics such as PR-AUC are useful for model comparison, but fraud operations are capacity constrained. The repository therefore includes:
+
+```text
+sql/evaluation/model_business_value.sql
+```
+
+The evaluation scores the latest model at multiple investigation capacities:
+
+```text
+K = 10
+K = 20
+K = 50
+```
+
+and reports:
+
+- precision@K — how many investigated providers are actually fraud
+- recall@K — how much of the synthetic fraud population is captured within investigator capacity
+- lift@K — precision@K relative to base fraud prevalence
+- confirmed fraud dollars captured — dollar value already confirmed through completed investigation feedback
+
+For the demo, recall@K and lift@K use synthetic provider truth from the claim generator. In a real SIU environment, the equivalent evaluation would use mature adjudication, audit, recovery, or case-management outcomes and should account for label delay and investigation selection bias.
+
+The investigation queue is also model-independent. It selects the highest-risk providers from the latest curated scoring run rather than relying on a hard-coded model family.
+
+---
 
 ## Scheduled Performance Monitoring
 
@@ -652,6 +696,26 @@ provider_eye_fraud_xgboost
 
 This makes it easy to compare multiple model attempts side by side in BigQuery while preserving a unique identifier for every training execution.
 
+## Source of Truth and Generated Artifacts
+
+The source-of-truth pipeline definition is:
+
+```text
+src/pipeline/model_training_pipeline.py
+```
+
+The compiled Kubeflow/Vertex pipeline YAML is generated locally and is intentionally not committed. After changing pipeline components, compile it before submission:
+
+```bash
+python -m src.pipeline.model_training_pipeline
+```
+
+This prevents a stale compiled DAG from diverging from the Python pipeline source.
+
+Older Isolation Forest code is retained as the historical unsupervised prototype that motivated the feedback loop. Accidental duplicate serving code and unused model-specific state/monitoring wrappers have been removed so the active workflow has one implementation path.
+
+---
+
 ## Demo Data Exports
 
 The `data_exports/` folder contains CSV snapshots of the key BigQuery tables used throughout the demo so reviewers can inspect the data flow without needing access to the GCP project.
@@ -750,8 +814,6 @@ GCP-FWA-MLOps-Accelerator/
 ├── cloudbuild-random-forest.yaml
 ├── cloudbuild-xgboost.yaml
 ├── cloudbuild-performance-monitoring.yaml
-├── model_training_pipeline.yaml
-│
 ├── data_exports/
 │   ├── claims.csv
 │   ├── provider_eye_features.csv
@@ -779,6 +841,7 @@ GCP-FWA-MLOps-Accelerator/
 ├── sql/
 │   ├── features/
 │   ├── feedback/
+│   ├── evaluation/
 │   ├── monitoring/
 │   ├── scoring/
 │   └── validation/
@@ -795,6 +858,7 @@ GCP-FWA-MLOps-Accelerator/
     │   └── simulate_investigation_feedback.py
     │
     ├── feature_store/
+    │   ├── backfill_provider_feature_history.py
     │   ├── refresh_provider_feature_history.py
     │   └── refresh_short_term_provider_features.py
     │
@@ -807,7 +871,6 @@ GCP-FWA-MLOps-Accelerator/
     │   └── promote_model_candidate.py
     │
     ├── monitoring/
-    │   ├── run_random_forest_monitoring.py
     │   └── run_model_performance_monitoring.py
     │
     ├── pipeline/
@@ -884,12 +947,13 @@ Calculate Rolling Window
         |
         | calculate_rolling_window_component.py
         v
-Refresh Provider Features
+Build Point-in-Time Model Dataset
         |
         | refresh_provider_features_component.py
         |
-        | rebuilds provider-level TRAIN / TEST
-        | features in BigQuery
+        | retrieves monthly point-in-time snapshots
+        | from provider_feature_history
+        | and joins demo labels / metadata
         v
      model_type?
       /       \
@@ -1066,7 +1130,7 @@ For a first pass through the repository, read the files in this order:
    Understand how rolling TRAIN / TEST windows are calculated.
 
 6. src/pipeline/components/refresh_provider_features_component.py
-   Understand the shared feature-engineering layer used by the training pipeline.
+   Understand how point-in-time TRAIN / TEST rows are assembled from the canonical provider feature history.
 
 7. src/feature_store/refresh_provider_feature_history.py
    Understand the monthly 6-month provider profile refresh and historical feature snapshots.
@@ -1162,7 +1226,7 @@ model:
 
 causes the launcher to select the corresponding model name, hyperparameters, artifact locations, serving container, and model signature while reusing the rest of the pipeline.
 
-The shared provider feature set currently includes:
+The current supervised model feature contract includes:
 
 ```text
 high_acuity_pct
@@ -1172,8 +1236,9 @@ referral_rate
 eye_procedure_pct
 avg_paid_per_claim
 high_acuity_oe_ratio
-avg_member_provider_distance
 ```
+
+`avg_member_provider_distance` and the daily 7-day behavior features exist in the canonical feature history but are intentionally kept outside the active model contract until their feature-design and evaluation strategy is finalized.
 
 ## Synthetic Demo Data
 
@@ -1221,11 +1286,13 @@ From the repository root:
 python -m src.pipeline.model_training_pipeline
 ```
 
-This generates:
+This generates the local runtime artifact:
 
 ```text
 model_training_pipeline.yaml
 ```
+
+The generated YAML is ignored by Git; the Python pipeline and component source remain the repository source of truth.
 
 ## Run the Candidate Training Pipeline
 
@@ -1287,7 +1354,9 @@ This repository is a technical MLOps demonstration rather than a complete enterp
 The current workflow focuses on:
 
 - batch-oriented fraud modeling
-- two-speed provider feature refreshes: monthly long-term profile plus daily 7-day behavior
+- canonical point-in-time provider feature history for training and scoring
+- monthly long-term provider features used by the current supervised models
+- a daily 7-day feature layer that is stored but intentionally not yet included in the model feature contract while its modeling design is being refined
 - Vertex AI Feature Store registration and future online-serving path
 - configurable feature generation
 - retraining decisions
@@ -1298,6 +1367,8 @@ The current workflow focuses on:
 - manual approval
 - artifact promotion
 - scheduled investigator-feedback performance monitoring
+- continuous fraud-score distribution drift monitoring
+- top-K / investigator-capacity evaluation with precision@K, recall@K, lift@K, and confirmed fraud dollars
 - monitoring email notifications
 - monitoring-driven retraining signals
 
