@@ -143,6 +143,14 @@ TESTING_MONTHS = int(
     rolling_window["testing_months"]
 )
 
+PROVIDER_TRAINING_FRACTION = float(
+    data_config[
+        "provider_split"
+    ][
+        "training_fraction"
+    ]
+)
+
 CLAIMS_TABLE = data_config[
     "claims_table"
 ]
@@ -482,6 +490,12 @@ runtime_parameter_values = {
         number_value=TESTING_MONTHS
     ),
 
+    "provider_training_fraction": Value(
+        number_value=(
+            PROVIDER_TRAINING_FRACTION
+        )
+    ),
+
     "feature_table": Value(
         string_value=FEATURE_TABLE
     ),
@@ -744,6 +758,11 @@ print(f"Run ID: {RUN_ID}")
 print(
     f"Current data month: "
     f"{CURRENT_DATA_MONTH}"
+)
+
+print(
+    "Provider training fraction: "
+    f"{PROVIDER_TRAINING_FRACTION:.2%}"
 )
 print(
     f"Feature count: "
