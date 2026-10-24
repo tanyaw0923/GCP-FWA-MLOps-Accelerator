@@ -15,40 +15,68 @@ def refresh_provider_features_component(
     feature_sql_json: str,
     derived_feature_sql_json: str,
     feature_columns_json: str,
-    train_start_date: str,
     train_end_date: str,
-    test_start_date: str,
     test_end_date: str,
+    provider_training_fraction: float,
 ):
     """
-    Build the model TRAIN / TEST table from the canonical timestamped
-    provider feature history.
+    Build a provider-disjoint TRAIN / TEST dataset from canonical
+    point-in-time feature history.
 
-    The feature history is the source of model features for both
-    training and batch scoring. Raw claims are used here only for
-    synthetic demo labels and provider metadata.
+    Design:
+      - one row per provider
+      - TRAIN and TEST providers never overlap
+      - split is deterministic and stratified by demo fraud label
+      - TRAIN features use the train cutoff snapshot
+      - TEST features use the later test cutoff snapshot
+      - raw claims supply synthetic labels and metadata only
 
-    The short-term 7-day features intentionally remain outside the
-    current model feature list until their modeling design is finalized.
+    The current 7-day short-term features intentionally remain outside
+    the active model contract until their modeling design is finalized.
     """
     import json
     import re
 
     from google.cloud import bigquery
 
-    feature_columns = json.loads(feature_columns_json)
-    feature_sql = json.loads(feature_sql_json)
-    derived_feature_sql = json.loads(derived_feature_sql_json)
+    feature_columns = json.loads(
+        feature_columns_json
+    )
+
+    feature_sql = json.loads(
+        feature_sql_json
+    )
+
+    derived_feature_sql = json.loads(
+        derived_feature_sql_json
+    )
 
     if not feature_columns:
-        raise ValueError("feature_columns_json is empty.")
+        raise ValueError(
+            "feature_columns_json is empty."
+        )
 
-    safe_name = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    if not (
+        0.0
+        < provider_training_fraction
+        < 1.0
+    ):
+        raise ValueError(
+            "provider_training_fraction must be "
+            "between 0 and 1."
+        )
+
+    safe_name = re.compile(
+        r"^[A-Za-z_][A-Za-z0-9_]*$"
+    )
 
     for feature_name in feature_columns:
-        if not safe_name.fullmatch(feature_name):
+        if not safe_name.fullmatch(
+            feature_name
+        ):
             raise ValueError(
-                f"Invalid configured feature name: {feature_name}"
+                "Invalid configured feature name: "
+                f"{feature_name}"
             )
 
     configured_feature_names = (
@@ -63,13 +91,15 @@ def refresh_provider_features_component(
 
     if missing_definitions:
         raise ValueError(
-            "Configured model features do not have a matching "
-            "feature definition: "
+            "Configured model features do not have "
+            "a matching feature definition: "
             f"{sorted(missing_definitions)}"
         )
 
     table_pattern = re.compile(
-        r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$"
+        r"^[A-Za-z0-9_-]+\."
+        r"[A-Za-z0-9_]+\."
+        r"[A-Za-z0-9_]+$"
     )
 
     for table_name in [
@@ -77,12 +107,17 @@ def refresh_provider_features_component(
         provider_feature_history_table,
         output_feature_table,
     ]:
-        if not table_pattern.fullmatch(table_name):
+        if not table_pattern.fullmatch(
+            table_name
+        ):
             raise ValueError(
-                f"Invalid BigQuery table: {table_name}"
+                f"Invalid BigQuery table: "
+                f"{table_name}"
             )
 
-    bq = bigquery.Client(project=project_id)
+    bq = bigquery.Client(
+        project=project_id
+    )
 
     history_table = bq.get_table(
         provider_feature_history_table
@@ -106,13 +141,13 @@ def refresh_provider_features_component(
 
     if missing_history_columns:
         raise RuntimeError(
-            "Canonical provider feature history is missing "
-            "required training columns: "
+            "Canonical provider feature history is "
+            "missing required training columns: "
             f"{sorted(missing_history_columns)}"
         )
 
-    feature_select_sql = ",\n        ".join(
-        f"h.{feature_name}"
+    feature_select_sql = ",\n      ".join(
+        f"s.{feature_name}"
         for feature_name in feature_columns
     )
 
@@ -120,158 +155,293 @@ def refresh_provider_features_component(
     CREATE OR REPLACE TABLE
       `{output_feature_table}` AS
 
-    WITH monthly_history AS (
+    WITH provider_metadata AS (
       SELECT
-        provider_id,
-        DATE(feature_timestamp) AS feature_snapshot_date,
-        {", ".join(feature_columns)}
+        CAST(provider_id AS STRING)
+          AS provider_id,
 
-      FROM `{provider_feature_history_table}`
+        ANY_VALUE(provider_name)
+          AS provider_name,
 
-      WHERE DATE(feature_timestamp) BETWEEN
-        DATE(@train_start_date)
-        AND DATE(@test_end_date)
+        ANY_VALUE(provider_specialty)
+          AS provider_specialty,
 
-      QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY
-          provider_id,
-          DATE_TRUNC(
-            DATE(feature_timestamp),
-            MONTH
+        ANY_VALUE(provider_city)
+          AS provider_city,
+
+        ANY_VALUE(provider_state)
+          AS provider_state,
+
+        MAX(
+          CAST(
+            fraud_provider_label
+            AS INT64
           )
-        ORDER BY feature_timestamp DESC
-      ) = 1
-    ),
+        ) AS fraud_label
 
-    labeled_history AS (
-      SELECT
-        h.*,
-
-        CASE
-          WHEN h.feature_snapshot_date BETWEEN
-            DATE(@train_start_date)
-            AND DATE(@train_end_date)
-            THEN 'TRAIN'
-
-          WHEN h.feature_snapshot_date BETWEEN
-            DATE(@test_start_date)
-            AND DATE(@test_end_date)
-            THEN 'TEST'
-
-          ELSE NULL
-        END AS dataset_split
-
-      FROM monthly_history h
-    ),
-
-    provider_metadata AS (
-      SELECT
-        CAST(provider_id AS STRING) AS provider_id,
-        ANY_VALUE(provider_name) AS provider_name,
-        ANY_VALUE(provider_specialty) AS provider_specialty,
-        ANY_VALUE(provider_city) AS provider_city,
-        ANY_VALUE(provider_state) AS provider_state,
-        MAX(CAST(fraud_provider_label AS INT64)) AS fraud_label
-
-      FROM `{claims_table}`
+      FROM
+        `{claims_table}`
 
       GROUP BY provider_id
     ),
 
-    monthly_claim_stats AS (
+    ranked_providers AS (
       SELECT
-        CAST(provider_id AS STRING) AS provider_id,
-        DATE_TRUNC(service_date, MONTH) AS service_month,
-        COUNT(*) AS claim_count,
-        COUNT(DISTINCT member_id) AS unique_members
+        *,
 
-      FROM `{claims_table}`
+        ROW_NUMBER() OVER (
+          PARTITION BY fraud_label
+          ORDER BY
+            FARM_FINGERPRINT(
+              CONCAT(
+                provider_id,
+                '|fwa-provider-split-v1'
+              )
+            ),
+            provider_id
+        ) AS class_rank,
 
-      WHERE service_date BETWEEN
-        DATE(@train_start_date)
-        AND DATE(@test_end_date)
+        COUNT(*) OVER (
+          PARTITION BY fraud_label
+        ) AS class_count
 
-      GROUP BY
+      FROM provider_metadata
+    ),
+
+    provider_split AS (
+      SELECT
         provider_id,
-        service_month
+        provider_name,
+        provider_specialty,
+        provider_city,
+        provider_state,
+        fraud_label,
+
+        CASE
+          WHEN class_rank <= LEAST(
+            class_count - 1,
+            GREATEST(
+              1,
+              CAST(
+                FLOOR(
+                  class_count
+                  * @provider_training_fraction
+                )
+                AS INT64
+              )
+            )
+          )
+          THEN 'TRAIN'
+
+          ELSE 'TEST'
+        END AS dataset_split
+
+      FROM ranked_providers
+    ),
+
+    train_snapshot AS (
+      SELECT
+        CAST(provider_id AS STRING)
+          AS provider_id,
+
+        DATE(feature_timestamp)
+          AS feature_snapshot_date,
+
+        {", ".join(feature_columns)}
+
+      FROM
+        `{provider_feature_history_table}`
+
+      WHERE
+        DATE(feature_timestamp)
+        = DATE(@train_end_date)
+
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY provider_id
+        ORDER BY feature_timestamp DESC
+      ) = 1
+    ),
+
+    test_snapshot AS (
+      SELECT
+        CAST(provider_id AS STRING)
+          AS provider_id,
+
+        DATE(feature_timestamp)
+          AS feature_snapshot_date,
+
+        {", ".join(feature_columns)}
+
+      FROM
+        `{provider_feature_history_table}`
+
+      WHERE
+        DATE(feature_timestamp)
+        = DATE(@test_end_date)
+
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY provider_id
+        ORDER BY feature_timestamp DESC
+      ) = 1
+    ),
+
+    selected_snapshot AS (
+      SELECT
+        p.provider_id,
+        p.provider_name,
+        p.provider_specialty,
+        p.provider_city,
+        p.provider_state,
+        p.fraud_label,
+        p.dataset_split,
+
+        t.feature_snapshot_date,
+
+        {", ".join(
+            f"t.{feature_name}"
+            for feature_name in feature_columns
+        )}
+
+      FROM provider_split p
+
+      JOIN train_snapshot t
+        USING(provider_id)
+
+      WHERE
+        p.dataset_split = 'TRAIN'
+
+      UNION ALL
+
+      SELECT
+        p.provider_id,
+        p.provider_name,
+        p.provider_specialty,
+        p.provider_city,
+        p.provider_state,
+        p.fraud_label,
+        p.dataset_split,
+
+        t.feature_snapshot_date,
+
+        {", ".join(
+            f"t.{feature_name}"
+            for feature_name in feature_columns
+        )}
+
+      FROM provider_split p
+
+      JOIN test_snapshot t
+        USING(provider_id)
+
+      WHERE
+        p.dataset_split = 'TEST'
+    ),
+
+    claim_stats AS (
+      SELECT
+        CAST(provider_id AS STRING)
+          AS provider_id,
+
+        COUNTIF(
+          service_date
+          <= DATE(@test_end_date)
+        ) AS claim_count,
+
+        COUNT(
+          DISTINCT IF(
+            service_date
+            <= DATE(@test_end_date),
+            member_id,
+            NULL
+          )
+        ) AS unique_members
+
+      FROM
+        `{claims_table}`
+
+      GROUP BY provider_id
     )
 
     SELECT
-      h.provider_id,
-      m.provider_name,
-      m.provider_specialty,
-      m.provider_city,
-      m.provider_state,
+      s.provider_id,
+      s.provider_name,
+      s.provider_specialty,
+      s.provider_city,
+      s.provider_state,
 
-      h.feature_snapshot_date,
-      h.dataset_split,
-      m.fraud_label,
+      s.feature_snapshot_date,
+      s.dataset_split,
+      s.fraud_label,
 
-      COALESCE(c.claim_count, 0) AS claim_count,
-      COALESCE(c.unique_members, 0) AS unique_members,
+      COALESCE(
+        c.claim_count,
+        0
+      ) AS claim_count,
+
+      COALESCE(
+        c.unique_members,
+        0
+      ) AS unique_members,
 
       {feature_select_sql}
 
-    FROM labeled_history h
+    FROM selected_snapshot s
 
-    JOIN provider_metadata m
+    LEFT JOIN claim_stats c
       USING(provider_id)
 
-    LEFT JOIN monthly_claim_stats c
-      ON h.provider_id = c.provider_id
-      AND DATE_TRUNC(
-        h.feature_snapshot_date,
-        MONTH
-      ) = c.service_month
-
-    WHERE h.dataset_split IS NOT NULL
-
     ORDER BY
-      h.dataset_split,
-      h.feature_snapshot_date,
-      h.provider_id
+      s.dataset_split,
+      s.provider_id
     """
 
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
-            bigquery.ScalarQueryParameter(
-                "train_start_date",
-                "STRING",
-                train_start_date,
-            ),
             bigquery.ScalarQueryParameter(
                 "train_end_date",
                 "STRING",
                 train_end_date,
             ),
             bigquery.ScalarQueryParameter(
-                "test_start_date",
-                "STRING",
-                test_start_date,
-            ),
-            bigquery.ScalarQueryParameter(
                 "test_end_date",
                 "STRING",
                 test_end_date,
+            ),
+            bigquery.ScalarQueryParameter(
+                "provider_training_fraction",
+                "FLOAT64",
+                provider_training_fraction,
             ),
         ]
     )
 
     print("=" * 70)
-    print("BUILD POINT-IN-TIME MODEL DATASET")
+    print("BUILD PROVIDER-DISJOINT POINT-IN-TIME DATASET")
     print("=" * 70)
+
     print(
         "Canonical feature source: "
         f"{provider_feature_history_table}"
     )
+
     print(
-        f"TRAIN: {train_start_date} -> {train_end_date}"
+        "Provider training fraction: "
+        f"{provider_training_fraction:.2%}"
     )
+
     print(
-        f"TEST:  {test_start_date} -> {test_end_date}"
+        "TRAIN feature cutoff: "
+        f"{train_end_date}"
     )
+
     print(
-        f"Configured model features: {feature_columns}"
+        "TEST feature cutoff: "
+        f"{test_end_date}"
+    )
+
+    print(
+        "Configured model features: "
+        f"{feature_columns}"
     )
 
     bq.query(
@@ -279,7 +449,7 @@ def refresh_provider_features_component(
         job_config=job_config,
     ).result()
 
-    null_checks = ",\n".join(
+    null_checks = ",\n      ".join(
         (
             "COUNTIF("
             f"{feature_name} IS NULL"
@@ -290,53 +460,153 @@ def refresh_provider_features_component(
     )
 
     validation_query = f"""
+    WITH split_summary AS (
+      SELECT
+        dataset_split,
+        COUNT(*) AS provider_rows,
+        COUNT(DISTINCT provider_id)
+          AS unique_providers,
+        COUNT(DISTINCT feature_snapshot_date)
+          AS snapshot_dates,
+        MIN(feature_snapshot_date)
+          AS min_snapshot_date,
+        MAX(feature_snapshot_date)
+          AS max_snapshot_date,
+        COUNTIF(fraud_label = 1)
+          AS fraud_providers,
+        COUNTIF(fraud_label = 0)
+          AS normal_providers,
+        {null_checks}
+
+      FROM
+        `{output_feature_table}`
+
+      GROUP BY dataset_split
+    ),
+
+    overlap AS (
+      SELECT
+        COUNT(*) AS overlapping_providers
+
+      FROM (
+        SELECT provider_id
+
+        FROM
+          `{output_feature_table}`
+
+        GROUP BY provider_id
+
+        HAVING
+          COUNT(DISTINCT dataset_split)
+          > 1
+      )
+    )
+
     SELECT
-      dataset_split,
-      COUNT(*) AS snapshot_rows,
-      COUNT(DISTINCT provider_id) AS providers,
-      COUNT(DISTINCT feature_snapshot_date) AS snapshot_dates,
-      COUNTIF(fraud_label = 1) AS fraud_rows,
-      COUNTIF(fraud_label = 0) AS normal_rows,
-      {null_checks}
+      s.*,
+      o.overlapping_providers
 
-    FROM `{output_feature_table}`
+    FROM split_summary s
 
-    GROUP BY dataset_split
+    CROSS JOIN overlap o
 
     ORDER BY dataset_split
     """
 
     rows = list(
-        bq.query(validation_query).result()
+        bq.query(
+            validation_query
+        ).result()
     )
 
-    if {
+    split_names = {
         row.dataset_split
         for row in rows
-    } != {"TRAIN", "TEST"}:
+    }
+
+    if split_names != {
+        "TRAIN",
+        "TEST",
+    }:
         raise RuntimeError(
-            "Point-in-time feature dataset must contain "
-            "both TRAIN and TEST splits."
+            "Provider dataset must contain "
+            "both TRAIN and TEST."
         )
 
     for row in rows:
+        if (
+            row.provider_rows
+            != row.unique_providers
+        ):
+            raise RuntimeError(
+                "Each provider must appear exactly "
+                "once in each selected split."
+            )
+
+        if row.overlapping_providers > 0:
+            raise RuntimeError(
+                "Provider leakage detected: "
+                f"{row.overlapping_providers} provider(s) "
+                "appear in both TRAIN and TEST."
+            )
+
+        if (
+            row.fraud_providers == 0
+            or row.normal_providers == 0
+        ):
+            raise RuntimeError(
+                f"{row.dataset_split} must contain "
+                "both fraud classes."
+            )
+
         for feature_name in feature_columns:
-            if getattr(
+            null_count = getattr(
                 row,
                 f"{feature_name}_nulls",
-            ) > 0:
+            )
+
+            if null_count > 0:
                 raise RuntimeError(
-                    "NULL values found in canonical feature "
-                    f"{feature_name} for {row.dataset_split}."
+                    "NULL values found in canonical "
+                    f"feature {feature_name} for "
+                    f"{row.dataset_split}."
                 )
+
+        expected_snapshot_date = (
+            train_end_date
+            if row.dataset_split == "TRAIN"
+            else test_end_date
+        )
+
+        actual_snapshot_date = str(
+            row.max_snapshot_date
+        )
+
+        if (
+            row.snapshot_dates != 1
+            or actual_snapshot_date
+            != expected_snapshot_date
+        ):
+            raise RuntimeError(
+                f"{row.dataset_split} did not use "
+                "the expected point-in-time snapshot. "
+                f"Expected {expected_snapshot_date}; "
+                f"found {row.min_snapshot_date} "
+                f"to {row.max_snapshot_date}."
+            )
 
         print(
             f"{row.dataset_split}: "
-            f"{row.snapshot_rows} rows, "
-            f"{row.providers} providers, "
-            f"{row.snapshot_dates} snapshots"
+            f"{row.provider_rows} providers, "
+            f"{row.fraud_providers} fraud, "
+            f"{row.normal_providers} normal, "
+            f"snapshot={row.max_snapshot_date}"
         )
 
     print(
-        "Point-in-time feature validation: PASS"
+        "Provider overlap: 0"
+    )
+
+    print(
+        "Point-in-time provider split validation: PASS"
     )
