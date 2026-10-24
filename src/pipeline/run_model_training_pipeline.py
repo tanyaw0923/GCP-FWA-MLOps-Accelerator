@@ -105,24 +105,6 @@ CURRENT_FEATURE_SIGNATURE = build_signature(
 )
 
 
-# The model signature is used by the retraining decision.
-# Changes to the algorithm, parameters, artifact format, or
-# serving configuration should create a new candidate.
-CURRENT_MODEL_SIGNATURE = build_signature(
-    {
-        "model_type": MODEL_TYPE,
-        "model_name": MODEL_NAME,
-        "parameters": MODEL_PARAMETERS,
-        "artifact_format": (
-            MODEL_ARTIFACT_FORMAT
-        ),
-        "serving_container_image_uri": (
-            SERVING_CONTAINER_IMAGE_URI
-        ),
-    }
-)
-
-
 # ------------------------------------------------------------------
 # Data configuration
 # ------------------------------------------------------------------
@@ -170,6 +152,34 @@ EXPERIMENT_RUNS_TABLE = data_config[
 EXPERIMENT_METRICS_TABLE = data_config[
     "experiment_metrics_table"
 ]
+
+
+# ------------------------------------------------------------------
+# Model / training-contract signature
+#
+# A candidate must be retrained when the algorithm changes OR when
+# the evaluation contract changes. This includes rolling-window
+# lengths and the provider-disjoint train/test split fraction.
+# ------------------------------------------------------------------
+
+CURRENT_MODEL_SIGNATURE = build_signature(
+    {
+        "model_type": MODEL_TYPE,
+        "model_name": MODEL_NAME,
+        "parameters": MODEL_PARAMETERS,
+        "artifact_format": (
+            MODEL_ARTIFACT_FORMAT
+        ),
+        "serving_container_image_uri": (
+            SERVING_CONTAINER_IMAGE_URI
+        ),
+        "training_months": TRAINING_MONTHS,
+        "testing_months": TESTING_MONTHS,
+        "provider_training_fraction": (
+            PROVIDER_TRAINING_FRACTION
+        ),
+    }
+)
 
 
 # ------------------------------------------------------------------
