@@ -52,7 +52,6 @@ def model_training_pipeline(
     current_feature_signature: str,
     training_months: int,
     testing_months: int,
-    provider_training_fraction: float,
 
     # Feature engineering
     feature_table: str,
@@ -156,9 +155,9 @@ def model_training_pipeline(
             "Calculate Rolling Window"
         )
 
-        # Build one point-in-time row per provider from the canonical
-        # feature history. TRAIN and TEST use disjoint provider cohorts
-        # to avoid entity leakage from the static synthetic label.
+        # Build point-in-time TRAIN / TEST rows from the canonical
+        # provider feature history. Raw claims supply demo labels and
+        # metadata only; model features come from feature history.
         refresh_features_task = (
             refresh_provider_features_component(
                 project_id=project_id,
@@ -178,9 +177,19 @@ def model_training_pipeline(
                 feature_columns_json=(
                     feature_columns_json
                 ),
+                train_start_date=(
+                    rolling_window_task.outputs[
+                        "train_start_date"
+                    ]
+                ),
                 train_end_date=(
                     rolling_window_task.outputs[
                         "train_end_date"
+                    ]
+                ),
+                test_start_date=(
+                    rolling_window_task.outputs[
+                        "test_start_date"
                     ]
                 ),
                 test_end_date=(
@@ -188,14 +197,11 @@ def model_training_pipeline(
                         "test_end_date"
                     ]
                 ),
-                provider_training_fraction=(
-                    provider_training_fraction
-                ),
             )
         )
 
         refresh_features_task.set_display_name(
-            "Build Provider-Disjoint Dataset"
+            "Refresh Provider Features"
         )
 
         # This component writes to BigQuery, so we do not want
