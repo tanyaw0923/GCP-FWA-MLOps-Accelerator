@@ -12,7 +12,7 @@ The goal is to avoid having every data scientist build a separate production wor
 
 The shared MLOps framework manages:
 
-- rolling train/test windows
+- rolling feature cutoffs and provider-disjoint train/test cohorts
 - provider-level feature generation
 - retraining trigger logic
 - reusable Vertex AI orchestration
@@ -68,17 +68,23 @@ A new monthly claims dataset becomes available.
 
 The retraining decision compares the current configured data month with the approved production training state. If the month is newer, the pipeline refreshes the rolling train/test windows and trains a new candidate.
 
-Example:
+Example for October 2026:
 
 ```text
-September 2026
-TRAIN: Jan-Jun
-TEST:  Jul-Sep
+Configured data month: October 2026
 
-October 2026
-TRAIN: Feb-Jul
-TEST:  Aug-Oct
+TRAIN feature cutoff: July 31, 2026
+  - trailing 6-month provider profile: Feb-Jul
+  - deterministic ~80% stratified provider cohort
+
+TEST feature cutoff: October 31, 2026
+  - trailing 6-month provider profile: May-Oct
+  - remaining ~20% stratified provider cohort
+
+Provider overlap between TRAIN and TEST: 0
 ```
+
+The synthetic fraud label is provider-level and effectively static. For that reason, the demo does **not** put the same provider into both TRAIN and TEST at different months. Doing so would create entity leakage and overstate generalization.
 
 ### Use Case 2 — New Feature
 
@@ -122,16 +128,55 @@ XGBoost
 
 The launcher creates a model signature from the model type, model name, and hyperparameters. If the model signature differs from the approved production signature, the same pipeline trains a new candidate without rebuilding the rest of the MLOps workflow.
 
+## Provider-Disjoint Point-in-Time Evaluation
+
+The current supervised evaluation uses one row per provider and combines two protections:
+
+1. **Entity separation** — a provider is assigned deterministically to either TRAIN or TEST, never both.
+2. **Point-in-time cutoffs** — TRAIN providers use an earlier feature snapshot and TEST providers use a later feature snapshot.
+
+The provider split is stratified by the synthetic fraud label so the small demo dataset keeps both fraud and normal providers in each split. With the default configuration:
+
+```yaml
+data:
+  current_data_month: "2026-10-01"
+
+  rolling_window:
+    training_months: 6
+    testing_months: 3
+
+  provider_split:
+    training_fraction: 0.80
+```
+
+the resulting feature contract is:
+
+```text
+TRAIN
+  provider cohort: ~80%
+  snapshot date: 2026-07-31
+  long-term feature window: 2026-02-01 through 2026-07-31
+
+TEST
+  provider cohort: ~20%
+  snapshot date: 2026-10-31
+  long-term feature window: 2026-05-01 through 2026-10-31
+```
+
+The split is deterministic, so repeated runs use the same provider cohorts unless the split configuration changes. The rolling-window lengths and provider split fraction are included in the training/model signature, so changing the evaluation contract triggers a new candidate.
+
+This is intentionally a demo-oriented design. In a production FWA setting with time-varying labels, matured outcomes, and a much larger provider population, evaluation could use stricter out-of-time cohorts, rolling backtests, or nested temporal validation.
+
 ## Continuous Training Flow
 
 ```text
                   Retraining Decision
                           |
                           v
-                  Rolling Data Window
+                  Rolling Feature Cutoffs
                           |
                           v
-             Point-in-Time Feature Retrieval
+          Provider-Disjoint Point-in-Time Dataset
                           |
                 +---------+---------+
                 |                   |
@@ -357,13 +402,15 @@ python -m src.feature_store.refresh_provider_feature_history \
 
 ### Bootstrap historical snapshots
 
-A new demo environment needs historical month-end snapshots before point-in-time TRAIN / TEST assembly can run. Backfill the required period with:
+A new demo environment needs historical month-end snapshots before point-in-time TRAIN / TEST assembly can run. The synthetic claims currently cover January 1 through October 31, 2026, so bootstrap the available history with:
 
 ```bash
 python -m src.feature_store.backfill_provider_feature_history \
   --start-date 2026-01-01 \
-  --end-date 2026-09-30
+  --end-date 2026-10-31
 ```
+
+For the current October configuration, supervised training specifically consumes the **July 31** snapshot for TRAIN providers and the **October 31** snapshot for TEST providers. The other month-end rows are retained because they are useful for historical lineage, backtesting, and future monitoring.
 
 The backfill calls the same monthly feature-history implementation used by scheduled refreshes. It does not create a second training-specific feature pipeline.
 
@@ -947,13 +994,15 @@ Calculate Rolling Window
         |
         | calculate_rolling_window_component.py
         v
-Build Point-in-Time Model Dataset
+Build Provider-Disjoint Dataset
         |
         | refresh_provider_features_component.py
         |
-        | retrieves monthly point-in-time snapshots
-        | from provider_feature_history
-        | and joins demo labels / metadata
+        | deterministic stratified provider split
+        | TRAIN provider snapshot at train cutoff
+        | TEST provider snapshot at later test cutoff
+        | provider overlap = 0
+        | joins demo labels / metadata
         v
      model_type?
       /       \
@@ -1130,7 +1179,7 @@ For a first pass through the repository, read the files in this order:
    Understand how rolling TRAIN / TEST windows are calculated.
 
 6. src/pipeline/components/refresh_provider_features_component.py
-   Understand how point-in-time TRAIN / TEST rows are assembled from the canonical provider feature history.
+   Understand the deterministic provider-disjoint split and how one point-in-time snapshot is selected per provider.
 
 7. src/feature_store/refresh_provider_feature_history.py
    Understand the monthly 6-month provider profile refresh and historical feature snapshots.
