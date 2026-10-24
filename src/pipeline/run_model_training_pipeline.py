@@ -105,6 +105,24 @@ CURRENT_FEATURE_SIGNATURE = build_signature(
 )
 
 
+# The model signature is used by the retraining decision.
+# Changes to the algorithm, parameters, artifact format, or
+# serving configuration should create a new candidate.
+CURRENT_MODEL_SIGNATURE = build_signature(
+    {
+        "model_type": MODEL_TYPE,
+        "model_name": MODEL_NAME,
+        "parameters": MODEL_PARAMETERS,
+        "artifact_format": (
+            MODEL_ARTIFACT_FORMAT
+        ),
+        "serving_container_image_uri": (
+            SERVING_CONTAINER_IMAGE_URI
+        ),
+    }
+)
+
+
 # ------------------------------------------------------------------
 # Data configuration
 # ------------------------------------------------------------------
@@ -123,14 +141,6 @@ TRAINING_MONTHS = int(
 
 TESTING_MONTHS = int(
     rolling_window["testing_months"]
-)
-
-PROVIDER_TRAINING_FRACTION = float(
-    data_config[
-        "provider_split"
-    ][
-        "training_fraction"
-    ]
 )
 
 CLAIMS_TABLE = data_config[
@@ -152,34 +162,6 @@ EXPERIMENT_RUNS_TABLE = data_config[
 EXPERIMENT_METRICS_TABLE = data_config[
     "experiment_metrics_table"
 ]
-
-
-# ------------------------------------------------------------------
-# Model / training-contract signature
-#
-# A candidate must be retrained when the algorithm changes OR when
-# the evaluation contract changes. This includes rolling-window
-# lengths and the provider-disjoint train/test split fraction.
-# ------------------------------------------------------------------
-
-CURRENT_MODEL_SIGNATURE = build_signature(
-    {
-        "model_type": MODEL_TYPE,
-        "model_name": MODEL_NAME,
-        "parameters": MODEL_PARAMETERS,
-        "artifact_format": (
-            MODEL_ARTIFACT_FORMAT
-        ),
-        "serving_container_image_uri": (
-            SERVING_CONTAINER_IMAGE_URI
-        ),
-        "training_months": TRAINING_MONTHS,
-        "testing_months": TESTING_MONTHS,
-        "provider_training_fraction": (
-            PROVIDER_TRAINING_FRACTION
-        ),
-    }
-)
 
 
 # ------------------------------------------------------------------
@@ -500,12 +482,6 @@ runtime_parameter_values = {
         number_value=TESTING_MONTHS
     ),
 
-    "provider_training_fraction": Value(
-        number_value=(
-            PROVIDER_TRAINING_FRACTION
-        )
-    ),
-
     "feature_table": Value(
         string_value=FEATURE_TABLE
     ),
@@ -768,11 +744,6 @@ print(f"Run ID: {RUN_ID}")
 print(
     f"Current data month: "
     f"{CURRENT_DATA_MONTH}"
-)
-
-print(
-    "Provider training fraction: "
-    f"{PROVIDER_TRAINING_FRACTION:.2%}"
 )
 print(
     f"Feature count: "
