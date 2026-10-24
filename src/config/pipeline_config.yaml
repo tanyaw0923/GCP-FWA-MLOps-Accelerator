@@ -96,11 +96,17 @@ experiment_tracking:
 # ============================================================
 
 data:
-  current_data_month: "2026-09-01"
+  current_data_month: "2026-10-01"
 
   rolling_window:
     training_months: 6
     testing_months: 3
+
+  # Provider-level fraud labels are static in this synthetic demo.
+  # To avoid entity leakage, TRAIN and TEST use disjoint providers.
+  # The split is deterministic and stratified by fraud label.
+  provider_split:
+    training_fraction: 0.80
 
   claims_table: fwa-mlops-accelerator-demo.fwa_claims.claims
 
