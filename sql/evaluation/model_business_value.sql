@@ -131,21 +131,32 @@ ranking_metrics AS (
 
 feedback AS (
   SELECT
-    provider_id,
+    f.provider_id,
 
     MAX(
       IF(
-        confirmed_fraud,
-        fraud_amount,
+        f.confirmed_fraud,
+        f.fraud_amount,
         0
       )
     ) AS confirmed_fraud_amount
 
   FROM
-    `fwa-mlops-accelerator-demo.fraud_feedback.investigation_results`
+    `fwa-mlops-accelerator-demo.fraud_feedback.investigation_results` f
+
+  JOIN latest_run r
+    ON f.model_name = r.model_name
+    AND f.model_version = r.model_version
+    AND f.run_id = r.run_id
+
+  WHERE
+    f.investigation_result IN (
+      'CONFIRMED_FRAUD',
+      'CONFIRMED_NORMAL'
+    )
 
   GROUP BY
-    provider_id
+    f.provider_id
 ),
 
 dollar_metrics AS (
