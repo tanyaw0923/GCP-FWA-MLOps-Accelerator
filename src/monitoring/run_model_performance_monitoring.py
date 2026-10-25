@@ -6,6 +6,10 @@ from email.message import EmailMessage
 from google.cloud import bigquery
 
 from src.config.load_config import load_config
+from src.utils.observability import (
+    configure_observability,
+    log_event,
+)
 
 
 MIN_COMPLETED_CASES = 20
@@ -18,6 +22,11 @@ F1_DEGRADATION_THRESHOLD = 0.10
 config = load_config()
 
 PROJECT_ID = config["project_id"]
+
+logger = configure_observability(
+    project_id=PROJECT_ID,
+    service_name="fwa-performance-monitoring",
+)
 
 PREDICTIONS_TABLE = (
     config["data"]["provider_prediction_table"]
@@ -148,12 +157,31 @@ def send_monitoring_email(
                 message
             )
 
+        log_event(
+            logger,
+            "monitoring_email_sent",
+            fields={
+                "recipient_configured": True,
+                "subject": subject,
+            },
+        )
+
         print(
             f"Monitoring email sent to "
             f"{recipient}"
         )
 
     except Exception as exc:
+        log_event(
+            logger,
+            "monitoring_email_failed",
+            severity="ERROR",
+            fields={
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+
         print(
             "\nEmail sending failed."
         )
@@ -278,6 +306,16 @@ print(
 
 print(
     f"Run ID: {run_id}"
+)
+
+log_event(
+    logger,
+    "performance_monitoring_started",
+    fields={
+        "model_name": model_name,
+        "model_version": model_version,
+        "run_id": run_id,
+    },
 )
 
 
@@ -939,6 +977,18 @@ errors = client.insert_rows_json(
 )
 
 if errors:
+    log_event(
+        logger,
+        "performance_monitoring_write_failed",
+        severity="ERROR",
+        fields={
+            "model_name": model_name,
+            "model_version": model_version,
+            "run_id": run_id,
+            "errors": str(errors),
+        },
+    )
+
     raise RuntimeError(
         "Failed to write monitoring result: "
         f"{errors}"
@@ -1076,4 +1126,30 @@ print("=" * 60)
 print(
     f"Monitoring table: "
     f"{PERFORMANCE_TABLE}"
+)
+
+log_event(
+    logger,
+    "performance_monitoring_completed",
+    severity=(
+        "WARNING"
+        if monitoring_status == "ALERT"
+        else "INFO"
+    ),
+    fields={
+        "model_name": model_name,
+        "model_version": model_version,
+        "run_id": run_id,
+        "evaluated_cases": evaluated_cases,
+        "confirmed_fraud_cases": (
+            confirmed_fraud_cases
+        ),
+        "precision": precision,
+        "recall": recall,
+        "f1_score": f1,
+        "fraud_yield": fraud_yield,
+        "monitoring_status": monitoring_status,
+        "alert_reason": alert_reason,
+        "performance_table": PERFORMANCE_TABLE,
+    },
 )
