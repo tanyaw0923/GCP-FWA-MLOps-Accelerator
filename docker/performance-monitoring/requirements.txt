@@ -1,3 +1,4 @@
 google-cloud-bigquery
 pyyaml
 python-dateutil
+google-cloud-logging
