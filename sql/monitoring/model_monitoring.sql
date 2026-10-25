@@ -85,9 +85,6 @@ dq AS (
       + COUNTIF(
           high_acuity_oe_ratio IS NULL
         )
-      + COUNTIF(
-          avg_member_provider_distance IS NULL
-        )
     ) AS null_feature_values,
 
     (
@@ -122,10 +119,6 @@ dq AS (
 
       + COUNTIF(
           high_acuity_oe_ratio < 0
-        )
-
-      + COUNTIF(
-          avg_member_provider_distance < 0
         )
     ) AS invalid_feature_values
 
@@ -225,8 +218,7 @@ WITH feature_values AS (
       referral_rate,
       eye_procedure_pct,
       avg_paid_per_claim,
-      high_acuity_oe_ratio,
-      avg_member_provider_distance
+      high_acuity_oe_ratio
     )
   )
 
