@@ -1387,6 +1387,260 @@ The launcher:
 11. registers only promotion-eligible challengers
 12. leaves eligible candidates in `PENDING_APPROVAL`
 
+## End-to-End Demo Runbook
+
+The following commands reflect the current demo workflow from candidate training through manual approval, model lookup, batch inference, investigation, and monitoring.
+
+### 1. Pull the Current Demo Branch
+
+```bash
+git checkout demo-readiness-five-fixes
+git pull origin demo-readiness-five-fixes
+```
+
+### 2. Build the Custom XGBoost Serving Image
+
+The XGBoost batch input preserves `provider_id` for lineage, so the registered XGBoost model uses a custom serving container that removes the identifier before constructing the numeric feature matrix.
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-xgboost-serving.yaml \
+  .
+```
+
+The default image is:
+
+```text
+us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:v1.0.0
+```
+
+### 3. Compile and Run the Candidate Training Pipeline
+
+Compile the Vertex AI pipeline after any serving-image or component change:
+
+```bash
+python -m src.pipeline.model_training_pipeline
+```
+
+Run the candidate training pipeline:
+
+```bash
+python -m src.pipeline.run_model_training_pipeline
+```
+
+The pipeline performs feature refresh, candidate training, experiment tracking, promotion-gate evaluation, and candidate registration. Promotion remains a separate manual action.
+
+### 4. Manually Promote the Candidate
+
+After reviewing the candidate metrics and confirming the model is ready for production:
+
+```bash
+python -m src.models.promote_model_candidate
+```
+
+The promotion workflow:
+
+```text
+PENDING_APPROVAL
+        |
+        v
+manual approval
+        |
+        +-- copies candidate artifact to production path
+        +-- records approved feature / model signatures
+        +-- records approved model type
+        +-- records approved run_id
+        v
+APPROVED
+```
+
+### 5. List Registered Vertex Model IDs
+
+List all models in the project:
+
+```bash
+gcloud ai models list \
+  --project=fwa-mlops-accelerator-demo \
+  --region=us-central1
+```
+
+Typical output:
+
+```text
+MODEL_ID             DISPLAY_NAME
+2619996021257666560  fwa-xgboost-candidate
+NEW_MODEL_ID         fwa-xgboost-candidate-custom-serving
+```
+
+For XGBoost batch scoring with provider lineage, use the model registered with the custom serving container.
+
+Inspect a specific model:
+
+```bash
+gcloud ai models describe MODEL_ID \
+  --project=fwa-mlops-accelerator-demo \
+  --region=us-central1 \
+  --format="yaml(displayName,artifactUri,containerSpec.imageUri,containerSpec.predictRoute,containerSpec.healthRoute)"
+```
+
+The custom XGBoost model should reference:
+
+```text
+us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:v1.0.0
+```
+
+with:
+
+```text
+predictRoute: /predict
+healthRoute: /health
+```
+
+### 6. Create the Batch-Scoring Input
+
+```bash
+bq query \
+  --use_legacy_sql=false \
+  < sql/scoring/create_batch_scoring_input.sql
+```
+
+The XGBoost input contains:
+
+```text
+provider_id
+high_acuity_pct
+pct_99214
+pct_99215
+referral_rate
+eye_procedure_pct
+avg_paid_per_claim
+high_acuity_oe_ratio
+```
+
+`provider_id` is lineage metadata and is not used as an XGBoost feature.
+
+### 7. Run Batch Inference
+
+Run scoring with the selected Vertex model:
+
+```bash
+python -m src.scoring.run_batch_prediction \
+  --model-id MODEL_ID
+```
+
+For the cleanest lineage, explicitly pass the approved training run:
+
+```bash
+python -m src.scoring.run_batch_prediction \
+  --model-id MODEL_ID \
+  --run-id APPROVED_RUN_ID
+```
+
+The approved run can be retrieved from the training-state table:
+
+```bash
+bq query --use_legacy_sql=false '
+SELECT
+  approved_model_type,
+  approved_run_id,
+  approved_at
+FROM
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_training_state`
+WHERE
+  state_key = "provider_fraud_model"
+'
+```
+
+The batch-scoring script:
+
+```text
+BigQuery batch input
+provider_id + 7 model features
+        |
+        v
+Vertex AI Batch Prediction
+        |
+        v
+current-job predictions / errors
+        |
+        +-- fail fast on row-level errors
+        +-- never reuse an older predictions_* table
+        +-- validate prediction count
+        +-- validate provider_id lineage
+        v
+fraud_experiments.provider_predictions
+```
+
+Verify the curated output:
+
+```bash
+bq query --use_legacy_sql=false '
+SELECT
+  provider_id,
+  model_name,
+  model_version,
+  run_id,
+  fraud_score,
+  risk_rank,
+  risk_category
+FROM
+  `fwa-mlops-accelerator-demo.fraud_experiments.provider_predictions`
+ORDER BY created_at DESC, risk_rank
+LIMIT 20
+'
+```
+
+### 8. Create the Investigation Queue
+
+```bash
+bq query \
+  --use_legacy_sql=false \
+  < sql/feedback/create_investigation_queue.sql
+```
+
+The queue is model-independent and prioritizes the top-scoring providers according to investigator capacity.
+
+### 9. Simulate Investigator Feedback
+
+```bash
+python -m src.feedback.simulate_investigation_feedback
+```
+
+### 10. Evaluate Business Value
+
+```bash
+bq query \
+  --use_legacy_sql=false \
+  < sql/evaluation/model_business_value.sql
+```
+
+The business evaluation reports operational ranking metrics such as:
+
+```text
+Precision@K
+Recall@K
+Lift@K
+Confirmed fraud dollars captured
+```
+
+### 11. Run Data / Feature / Prediction Monitoring
+
+```bash
+bq query \
+  --use_legacy_sql=false \
+  < sql/monitoring/model_monitoring.sql
+```
+
+The monitoring SQL contains backward-compatible schema migrations so existing demo tables can be upgraded with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` rather than requiring them to be dropped and recreated.
+
+### 12. Run Investigator-Feedback Performance Monitoring
+
+```bash
+python -m src.monitoring.run_model_performance_monitoring
+```
+
+This compares matured investigation outcomes with the scored model run and records production precision, recall, F1, fraud yield, degradation status, and the retraining signal.
+
 ## Manual Candidate Promotion
 
 After reviewing a candidate:
