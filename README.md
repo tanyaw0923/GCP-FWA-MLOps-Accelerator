@@ -491,6 +491,73 @@ eye_provider_fraud_feature_view
 
 The resulting architecture stays simple enough for an interview demo while clearly separating the runnable batch-model contract from the reusable historical / future-online Feature Store layer.
 
+## Batch Inference and Provider Lineage
+
+Batch inference preserves provider identity without sending `provider_id` into the model feature vector.
+
+The scoring input table contains:
+
+```text
+provider_id
+high_acuity_pct
+pct_99214
+pct_99215
+referral_rate
+eye_procedure_pct
+avg_paid_per_claim
+high_acuity_oe_ratio
+```
+
+Vertex AI uses:
+
+```text
+key_field = provider_id
+```
+
+so `provider_id` is removed before the seven numeric features are sent to the model. The raw prediction destination is Cloud Storage JSONL rather than BigQuery because the keyed output contract is supported there.
+
+```text
+BigQuery batch input
+provider_id + 7 model features
+        |
+        v
+Vertex AI Batch Prediction
+        |
+        | provider_id used as key
+        | model receives only 7 features
+        v
+GCS JSONL prediction output
+key + prediction
+        |
+        v
+run_batch_prediction.py
+        |
+        +-- validates prediction count
+        +-- validates unique provider keys
+        +-- ranks by fraud_score
+        v
+fraud_experiments.provider_predictions
+        |
+        +-- provider_id
+        +-- run_id
+        +-- model_version
+        +-- fraud_score
+        +-- risk_rank
+        +-- risk_category
+```
+
+This avoids relying on BigQuery row order and preserves exact provider-to-prediction lineage.
+
+Run batch inference with:
+
+```bash
+python -m src.scoring.run_batch_prediction \
+  --model-id <VERTEX_MODEL_ID> \
+  --run-id <APPROVED_RUN_ID>
+```
+
+The `--run-id` argument is optional, but using the approved run explicitly gives the cleanest model-governance lineage for the demo.
+
 ## Investigation Capacity and Business Value
 
 Fraud operations are capacity constrained, so the model is evaluated as a ranking system in addition to standard PR-AUC / precision / recall / F1 metrics.
