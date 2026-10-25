@@ -1,7 +1,10 @@
 import argparse
+import time
 from datetime import datetime, timezone
 
+from google.api_core.client_options import ClientOptions
 from google.cloud import aiplatform
+from google.cloud import aiplatform_v1
 from google.cloud import bigquery
 
 from src.config.load_config import load_config
@@ -457,35 +460,118 @@ print(
 )
 
 
-batch_job = model.batch_predict(
-    job_display_name=(
+# Vertex key_field keeps provider_id out of the numeric model
+# matrix while preserving it in the output as column "key".
+#
+# We use the GAPIC JobService here because the high-level
+# Model.batch_predict helper does not expose instance_config.
+job_service = aiplatform_v1.JobServiceClient(
+    client_options=ClientOptions(
+        api_endpoint=(
+            f"{REGION}-aiplatform.googleapis.com"
+        )
+    )
+)
+
+parent = (
+    f"projects/{PROJECT_ID}/locations/{REGION}"
+)
+
+batch_prediction_job = {
+    "display_name": (
         f"provider-fraud-"
         f"{MODEL_TYPE.replace('_', '-')}-"
         f"batch"
     ),
 
-    bigquery_source=(
-        INPUT_URI
-    ),
+    "model": model.resource_name,
 
-    bigquery_destination_prefix=(
-        OUTPUT_URI
-    ),
+    "input_config": {
+        "instances_format": "bigquery",
+        "bigquery_source": {
+            "input_uri": INPUT_URI,
+        },
+    },
 
-    instances_format=(
-        "bigquery"
-    ),
+    "instance_config": {
+        "instance_type": "array",
+        "key_field": "provider_id",
+    },
 
-    predictions_format=(
-        "bigquery"
-    ),
+    "output_config": {
+        "predictions_format": "bigquery",
+        "bigquery_destination": {
+            "output_uri": OUTPUT_URI,
+        },
+    },
 
-    machine_type=(
-        MACHINE_TYPE
-    ),
+    "dedicated_resources": {
+        "machine_spec": {
+            "machine_type": MACHINE_TYPE,
+        },
+        "starting_replica_count": 1,
+        "max_replica_count": 1,
+    },
+}
 
-    sync=True,
+batch_job = (
+    job_service.create_batch_prediction_job(
+        parent=parent,
+        batch_prediction_job=(
+            batch_prediction_job
+        ),
+    )
 )
+
+print(
+    f"\nBatch prediction job submitted: "
+    f"{batch_job.name}"
+)
+
+terminal_states = {
+    aiplatform_v1.JobState.JOB_STATE_SUCCEEDED,
+    aiplatform_v1.JobState.JOB_STATE_FAILED,
+    aiplatform_v1.JobState.JOB_STATE_CANCELLED,
+    aiplatform_v1.JobState.JOB_STATE_PAUSED,
+}
+
+while True:
+
+    batch_job = (
+        job_service.get_batch_prediction_job(
+            name=batch_job.name
+        )
+    )
+
+    if batch_job.state in terminal_states:
+        break
+
+    print(
+        f"Batch prediction state: "
+        f"{batch_job.state}"
+    )
+
+    time.sleep(
+        30
+    )
+
+
+if (
+    batch_job.state
+    != aiplatform_v1.JobState.JOB_STATE_SUCCEEDED
+):
+
+    error_message = (
+        batch_job.error.message
+        if batch_job.error
+        else "Unknown Vertex batch prediction error."
+    )
+
+    raise RuntimeError(
+        "Batch prediction did not succeed. "
+        f"State={batch_job.state}. "
+        f"Error={error_message}"
+    )
 
 
 print(
@@ -494,7 +580,7 @@ print(
 
 print(
     f"Job resource: "
-    f"{batch_job.resource_name}"
+    f"{batch_job.name}"
 )
 
 print(
@@ -922,14 +1008,33 @@ raw_columns = {
 }
 
 
-if "provider_id" not in raw_columns:
+if "provider_id" in raw_columns:
+
+    provider_identifier_column = (
+        "provider_id"
+    )
+
+
+elif "key" in raw_columns:
+
+    # key_field="provider_id" produces the output column "key".
+    provider_identifier_column = (
+        "key"
+    )
+
+
+else:
 
     raise RuntimeError(
-        "provider_id is missing from the Vertex "
-        "prediction output. The production scoring "
-        "input/output contract must preserve provider_id "
-        "before materializing provider_predictions."
+        "Provider lineage is missing from the Vertex "
+        "prediction output. Expected provider_id or key."
     )
+
+
+print(
+    "Provider lineage column: "
+    f"{provider_identifier_column}"
+)
 
 
 # ============================================================
@@ -1022,7 +1127,10 @@ INSERT INTO
 WITH scored AS
 (
     SELECT
-        provider_id,
+        CAST(
+            `{provider_identifier_column}`
+            AS STRING
+        ) AS provider_id,
 
         SAFE_CAST(
             prediction AS FLOAT64
