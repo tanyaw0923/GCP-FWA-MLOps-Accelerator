@@ -1685,7 +1685,7 @@ The reusable helper is:
 src/utils/observability.py
 ```
 
-It attempts to send structured log records to Google Cloud Logging and falls back to standard Python logging when Cloud Logging is unavailable. This keeps local / Cloud Shell execution usable without making observability a hard runtime dependency.
+It uses `StructuredLogHandler` to write structured JSON to stdout for GCP log ingestion and falls back to standard Python logging when the Cloud Logging package is unavailable. This avoids background-thread shutdown warnings and reduces the risk of losing final log entries when short-lived jobs exit. This keeps local / Cloud Shell execution usable without making observability a hard runtime dependency.
 
 Operational events include:
 
