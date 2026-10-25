@@ -498,12 +498,34 @@ batch_prediction_job = {
         },
     },
 
-    "instance_config": {
-        "instance_type": "array",
-        "excluded_fields": [
-            "provider_id",
-        ],
-    },
+    "instance_config": (
+        {
+            # Custom XGBoost serving accepts JSON objects.
+            # Excluding provider_id keeps it out of the
+            # model feature dictionary while Vertex attaches
+            # it back to BigQuery prediction output.
+            "instance_type": "object",
+            "excluded_fields": [
+                "provider_id",
+            ],
+        }
+        if MODEL_TYPE == "xgboost"
+        else
+        {
+            # Scikit-learn serving expects positional values.
+            # ARRAY requires an explicit, ordered feature list.
+            "instance_type": "array",
+            "included_fields": [
+                "high_acuity_pct",
+                "pct_99214",
+                "pct_99215",
+                "referral_rate",
+                "eye_procedure_pct",
+                "avg_paid_per_claim",
+                "high_acuity_oe_ratio",
+            ],
+        }
+    ),
 
     "output_config": {
         "predictions_format": "bigquery",
