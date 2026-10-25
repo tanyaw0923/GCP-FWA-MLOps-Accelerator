@@ -788,7 +788,7 @@ models/xgboost/candidate/model.bst
 models/xgboost/production/model.bst
 ```
 
-The custom Docker images in this repository are training images. They are separate from the Vertex AI serving containers referenced when registering models.
+The custom Docker images in this repository are versioned training and monitoring images. They are separate from the Vertex AI prebuilt serving containers referenced when registering models.
 
 ## Repository Structure
 
@@ -1242,6 +1242,36 @@ python -m src.data.generate_synthetic_claims
 ```
 
 The generated file can then be loaded into the configured BigQuery claims table.
+
+## Container Image Versioning
+
+Custom project images use explicit semantic-style versions rather than floating tags.
+
+```text
+Random Forest training
+random-forest-training:v2.0.0
+
+XGBoost training
+xgboost-training:v1.0.0
+
+Performance monitoring
+performance-monitoring:v1.0.0
+```
+
+The version is declared as the Cloud Build substitution `_IMAGE_VERSION`, so a new container release can be built without editing the build steps.
+
+For example:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-xgboost.yaml \
+  --substitutions=_IMAGE_VERSION=v1.1.0 \
+  .
+```
+
+For model-training images, the image URI is also part of the model signature. Changing the selected training image therefore changes the candidate signature and triggers the governed retraining workflow.
+
+The KFP container component references a pinned image version at compile time, so when a training-image version changes, update the corresponding image version in `pipeline_config.yaml` and the KFP component, then recompile `model_training_pipeline.yaml`.
 
 ## Build Training Images
 
