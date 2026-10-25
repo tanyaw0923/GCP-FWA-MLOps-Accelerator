@@ -2,17 +2,15 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY docker/xgboost-serving/requirements.txt ./requirements.txt
 
 RUN pip install \
     --no-cache-dir \
     -r requirements.txt
 
-COPY app.py .
+COPY docker/xgboost-serving/app.py ./app.py
 
 RUN mkdir -p /model
-
-COPY model/model.bst /model/model.bst
 
 ENV MODEL_PATH=/model/model.bst
 
