@@ -493,7 +493,7 @@ The resulting architecture stays simple enough for an interview demo while clear
 
 ## Batch Inference and Provider Lineage
 
-Batch inference preserves provider identity without sending `provider_id` into the model feature vector.
+Batch inference uses BigQuery for both input and output.
 
 The scoring input table contains:
 
@@ -508,13 +508,14 @@ avg_paid_per_claim
 high_acuity_oe_ratio
 ```
 
-Vertex AI uses:
+For the custom XGBoost model, Vertex AI uses:
 
 ```text
-key_field = provider_id
+instance_type = object
+excluded_fields = [provider_id]
 ```
 
-so `provider_id` is removed before the seven numeric features are sent to the model. The raw prediction destination is Cloud Storage JSONL rather than BigQuery because the keyed output contract is supported there.
+This keeps `provider_id` out of the model feature payload while preserving it in the BigQuery prediction output. The XGBoost serving container receives only the seven model features by name.
 
 ```text
 BigQuery batch input
@@ -523,18 +524,18 @@ provider_id + 7 model features
         v
 Vertex AI Batch Prediction
         |
-        | provider_id used as key
-        | model receives only 7 features
+        | provider_id excluded from model input
+        | model receives 7 feature fields
         v
-GCS JSONL prediction output
-key + prediction
+BigQuery raw prediction output
+provider_id + prediction
         |
         v
 run_batch_prediction.py
         |
-        +-- validates prediction count
-        +-- validates unique provider keys
-        +-- ranks by fraud_score
+        +-- validates provider lineage
+        +-- converts prediction to fraud_score
+        +-- ranks providers
         v
 fraud_experiments.provider_predictions
         |
@@ -546,7 +547,7 @@ fraud_experiments.provider_predictions
         +-- risk_category
 ```
 
-This avoids relying on BigQuery row order and preserves exact provider-to-prediction lineage.
+This preserves exact provider-to-prediction lineage without relying on row order.
 
 Run batch inference with:
 
