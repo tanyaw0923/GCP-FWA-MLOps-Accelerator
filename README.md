@@ -38,7 +38,9 @@ The key design principle is:
 
 > Data, features, and modeling techniques can evolve independently while the same governed MLOps workflow is reused.
 
-## Demo Scenario
+## Architect Overview
+
+<img width="1998" height="1125" alt="image" src="https://github.com/user-attachments/assets/f3647476-e04e-44e6-b4d4-c84a5b64d422" />
 
 The repository demonstrates three retraining use cases.
 
