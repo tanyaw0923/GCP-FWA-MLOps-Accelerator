@@ -1417,6 +1417,105 @@ Investigation feedback was then used to support supervised fraud modeling with R
 
 The current architecture preserves that experimentation history while focusing on a reusable, governed continuous-training workflow.
 
+## Operational Observability with Cloud Logging
+
+The pipeline uses structured Python logging for operational observability across the main training, batch-scoring, and production-monitoring paths.
+
+The reusable helper is:
+
+```text
+src/utils/observability.py
+```
+
+It attempts to send structured log records to Google Cloud Logging and falls back to standard Python logging when Cloud Logging is unavailable. This keeps local / Cloud Shell execution usable without making observability a hard runtime dependency.
+
+Operational events include:
+
+```text
+Training orchestration
+  - training_pipeline_submission_started
+  - training_pipeline_submitted
+  - training_pipeline_state_changed
+  - training_pipeline_completed
+  - training_pipeline_failed
+
+Batch scoring
+  - batch_scoring_started
+  - batch_model_resolved
+  - batch_input_validated
+  - batch_lineage_resolved
+  - batch_prediction_completed
+  - batch_row_errors
+  - batch_output_validated
+  - batch_scoring_completed
+
+Performance monitoring
+  - performance_monitoring_started
+  - performance_monitoring_completed
+  - performance_monitoring_write_failed
+  - monitoring_email_sent
+  - monitoring_email_skipped
+  - monitoring_email_failed
+```
+
+Structured fields include values such as:
+
+```text
+run_id
+experiment_id
+model_id
+model_version
+pipeline_job
+batch_job
+input_rows
+prediction_rows
+error_rows
+monitoring_status
+alert_reason
+```
+
+Claim-level payloads, member identifiers, and other sensitive healthcare data should not be written to application logs.
+
+### Enable Cloud Logging
+
+Enable the API:
+
+```bash
+gcloud services enable logging.googleapis.com
+```
+
+For Cloud Shell or another interactive Python environment, install the logging client if it is not already available:
+
+```bash
+pip install google-cloud-logging
+```
+
+The managed performance-monitoring container includes `google-cloud-logging` in its requirements. Rebuild that image after pulling this change:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-performance-monitoring.yaml \
+  .
+```
+
+Cloud Logging complements, rather than replaces, model monitoring:
+
+```text
+Operational observability
+Cloud Logging
+  -> pipeline execution
+  -> serving / scoring failures
+  -> job state changes
+  -> operational alerts
+
+Model observability
+BigQuery monitoring tables
+  -> data quality
+  -> feature drift
+  -> prediction drift
+  -> production performance
+```
+
 ## What's Missing from Production
 
 This repository demonstrates an end-to-end batch MLOps lifecycle, but it is intentionally not positioned as a complete enterprise production platform. A larger production implementation would add the following controls.
@@ -1581,6 +1680,7 @@ The current workflow focuses on:
 - scheduled investigator-feedback performance monitoring
 - continuous fraud-score distribution drift monitoring
 - monitoring email notifications
+- structured Cloud Logging operational observability
 - monitoring-driven retraining signals
 
 A larger production implementation could add automated test gates, stronger IAM controls, CI/CD deployment automation, richer experiment comparison, approval workflows, additional model families, and online serving where appropriate.
