@@ -50,11 +50,32 @@ def register_model_component(
         f"{serving_container_image_uri}"
     )
 
+    upload_kwargs = {
+        "display_name": model_display_name,
+        "artifact_uri": artifact_uri,
+        "serving_container_image_uri": (
+            serving_container_image_uri
+        ),
+        "sync": True,
+    }
+
+    if "xgboost-serving" in serving_container_image_uri:
+        upload_kwargs.update(
+            {
+                "serving_container_predict_route": (
+                    "/predict"
+                ),
+                "serving_container_health_route": (
+                    "/health"
+                ),
+                "serving_container_ports": [
+                    8080
+                ],
+            }
+        )
+
     model = aiplatform.Model.upload(
-        display_name=model_display_name,
-        artifact_uri=artifact_uri,
-        serving_container_image_uri=serving_container_image_uri,
-        sync=True,
+        **upload_kwargs
     )
 
     print("\nModel registered successfully.")
