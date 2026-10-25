@@ -53,7 +53,7 @@ def train_random_forest_component(
             "us-central1-docker.pkg.dev/"
             "fwa-mlops-accelerator-demo/"
             "fwa-mlops/"
-            "random-forest-training:v2.0.0"
+            "random-forest-training:v1.0.0"
         ),
 
         args=[
