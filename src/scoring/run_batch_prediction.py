@@ -5,6 +5,10 @@ from google.cloud import aiplatform
 from google.cloud import bigquery
 
 from src.config.load_config import load_config
+from src.utils.observability import (
+    configure_observability,
+    log_event,
+)
 
 
 # ============================================================
@@ -106,6 +110,21 @@ bq = bigquery.Client(
 aiplatform.init(
     project=PROJECT_ID,
     location=REGION,
+)
+
+logger = configure_observability(
+    project_id=PROJECT_ID,
+    service_name="fwa-batch-scoring",
+)
+
+log_event(
+    logger,
+    "batch_scoring_started",
+    fields={
+        "model_id": MODEL_ID,
+        "requested_run_id": RUN_ID,
+        "machine_type": MACHINE_TYPE,
+    },
 )
 
 
@@ -214,6 +233,17 @@ print(
     f"{MODEL_TYPE}"
 )
 
+log_event(
+    logger,
+    "batch_model_resolved",
+    fields={
+        "model_id": MODEL_ID,
+        "model_type": MODEL_TYPE,
+        "model_display_name": model.display_name,
+        "model_resource": model.resource_name,
+    },
+)
+
 
 # ============================================================
 # 6. SELECT MODEL-SPECIFIC BATCH INPUT TABLE
@@ -282,6 +312,16 @@ if input_table.num_rows == 0:
 print(
     f"Input rows: "
     f"{input_table.num_rows}"
+)
+
+log_event(
+    logger,
+    "batch_input_validated",
+    fields={
+        "input_table": INPUT_TABLE,
+        "input_rows": input_table.num_rows,
+        "model_type": MODEL_TYPE,
+    },
 )
 
 
@@ -418,6 +458,17 @@ print(
 print(
     f"Run ID: "
     f"{RUN_ID}"
+)
+
+log_event(
+    logger,
+    "batch_lineage_resolved",
+    fields={
+        "experiment_id": EXPERIMENT_ID,
+        "run_id": RUN_ID,
+        "model_type": MODEL_TYPE,
+        "model_id": MODEL_ID,
+    },
 )
 
 
@@ -659,6 +710,19 @@ print(
 # ============================================================
 
 if error_rows > 0:
+
+    log_event(
+        logger,
+        "batch_row_errors",
+        severity="ERROR",
+        fields={
+            "model_id": MODEL_ID,
+            "run_id": RUN_ID,
+            "error_rows": error_rows,
+            "prediction_rows": prediction_rows,
+            "error_table": error_table_id,
+        },
+    )
 
     print(
         "\n=============================================="
