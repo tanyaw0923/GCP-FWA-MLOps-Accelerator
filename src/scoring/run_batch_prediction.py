@@ -460,8 +460,13 @@ print(
 )
 
 
-# Vertex key_field keeps provider_id out of the numeric model
-# matrix while preserving it in the output as column "key".
+# Keep provider_id as metadata without sending it into the
+# numeric model matrix.
+#
+# BigQuery output does not support key_field for this model/job
+# path, so use excluded_fields instead. Vertex excludes
+# provider_id from the model instance and attaches the excluded
+# field back to the prediction output.
 #
 # We use the GAPIC JobService here because the high-level
 # Model.batch_predict helper does not expose instance_config.
@@ -495,7 +500,9 @@ batch_prediction_job = {
 
     "instance_config": {
         "instance_type": "array",
-        "key_field": "provider_id",
+        "excluded_fields": [
+            "provider_id",
+        ],
     },
 
     "output_config": {
@@ -1017,19 +1024,13 @@ if "provider_id" in raw_columns:
     )
 
 
-elif "key" in raw_columns:
-
-    # key_field="provider_id" produces the output column "key".
-    provider_identifier_column = (
-        "key"
-    )
-
-
 else:
 
     raise RuntimeError(
-        "Provider lineage is missing from the Vertex "
-        "prediction output. Expected provider_id or key."
+        "provider_id is missing from the Vertex "
+        "prediction output. The batch input uses "
+        "excluded_fields=['provider_id'], so Vertex "
+        "should attach provider_id back to each output row."
     )
 
 
