@@ -1249,7 +1249,7 @@ Custom project images use explicit semantic-style versions rather than floating 
 
 ```text
 Random Forest training
-random-forest-training:v2.0.0
+random-forest-training:v1.0.0
 
 XGBoost training
 xgboost-training:v1.0.0
