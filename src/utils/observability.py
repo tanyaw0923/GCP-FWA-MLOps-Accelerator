@@ -9,18 +9,17 @@ def configure_observability(
     service_name: str,
 ) -> logging.Logger:
     """
-    Configure structured operational logging.
+    Configure operational logging.
 
-    On GCP, StructuredLogHandler writes structured JSON to stdout
-    so managed runtimes can collect it without a background log
-    transport thread. This avoids shutdown-time log loss from the
-    asynchronous CloudLoggingHandler.
+    Structured operational events are sent directly to Cloud
+    Logging with log_struct(), so they do not clutter stdout and
+    do not rely on a background logging thread.
 
-    If google-cloud-logging is unavailable, logging falls back to
-    the standard Python StreamHandler.
+    If Cloud Logging is unavailable, events fall back to a normal
+    Python StreamHandler.
 
     Do not put claim-level payloads, member identifiers, or PHI
-    into json_fields.
+    into structured log fields.
     """
 
     logger = logging.getLogger(
@@ -41,40 +40,40 @@ def configure_observability(
         return logger
 
     try:
-        from google.cloud.logging_v2.handlers import (
-            StructuredLogHandler,
+        import google.cloud.logging
+
+        client = (
+            google.cloud.logging.Client(
+                project=project_id
+            )
         )
 
-        handler = StructuredLogHandler()
-
-        handler.setLevel(
-            logging.INFO
+        cloud_logger = client.logger(
+            service_name
         )
 
-        logger.addHandler(
-            handler
+        logger._fwa_cloud_logger = (
+            cloud_logger
         )
 
-        logger.info(
-            "cloud_logging_enabled",
-            extra={
-                "json_fields": {
-                    "event": (
-                        "cloud_logging_enabled"
-                    ),
-                    "service": service_name,
-                    "project_id": project_id,
-                    "logging_handler": (
-                        "StructuredLogHandler"
-                    ),
-                    "environment": (
-                        os.environ.get(
-                            "K_SERVICE",
-                            "interactive_or_vertex",
-                        )
-                    ),
-                }
+        logger._fwa_cloud_logging_enabled = (
+            True
+        )
+
+        cloud_logger.log_struct(
+            {
+                "event": "cloud_logging_enabled",
+                "service": service_name,
+                "project_id": project_id,
+                "logging_mode": "direct_log_struct",
+                "environment": (
+                    os.environ.get(
+                        "K_SERVICE",
+                        "interactive_or_vertex",
+                    )
+                ),
             },
+            severity="INFO",
         )
 
     except Exception as exc:
@@ -97,8 +96,13 @@ def configure_observability(
             handler
         )
 
+        logger._fwa_cloud_logger = None
+        logger._fwa_cloud_logging_enabled = (
+            False
+        )
+
         logger.warning(
-            "Structured Cloud Logging unavailable; "
+            "Cloud Logging unavailable; "
             "using standard Python logging. "
             "Reason=%s",
             exc,
@@ -121,10 +125,9 @@ def log_event(
     """
     Write one structured operational event.
 
-    StructuredLogHandler emits json_fields as structured JSON to
-    stdout, which managed GCP runtimes can ingest into Cloud
-    Logging. Values should be operational metadata only, not raw
-    claim/member payloads.
+    When Cloud Logging is available, the event is sent directly
+    with log_struct() and is not printed to stdout. Otherwise it
+    falls back to standard Python logging.
     """
 
     payload = {
@@ -136,27 +139,51 @@ def log_event(
             fields
         )
 
+    cloud_logger = getattr(
+        logger,
+        "_fwa_cloud_logger",
+        None,
+    )
+
+    cloud_enabled = getattr(
+        logger,
+        "_fwa_cloud_logging_enabled",
+        False,
+    )
+
+    if (
+        cloud_enabled
+        and cloud_logger is not None
+    ):
+        try:
+            cloud_logger.log_struct(
+                payload,
+                severity=severity.upper(),
+            )
+
+            return
+
+        except Exception as exc:
+            logger.warning(
+                "Cloud Logging event failed; "
+                "falling back to local logging. "
+                "Event=%s Reason=%s",
+                event,
+                exc,
+            )
+
     log_method = getattr(
         logger,
         severity.lower(),
         logger.info,
     )
 
-    try:
-        log_method(
-            event,
-            extra={
-                "json_fields": payload
-            },
-        )
-
-    except Exception:
-        log_method(
-            "%s %s",
-            event,
-            json.dumps(
-                payload,
-                default=str,
-                sort_keys=True,
-            ),
-        )
+    log_method(
+        "%s %s",
+        event,
+        json.dumps(
+            payload,
+            default=str,
+            sort_keys=True,
+        ),
+    )
