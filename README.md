@@ -317,7 +317,7 @@ refresh_short_term_provider_features.py
         v
 fraud_features.provider_feature_history
         |
-        +--> BigQuery batch inference
+        +--> historical feature analysis / backtesting
         |
         +--> Vertex AI Feature Group
         |      eye_provider_fraud_features
