@@ -1,12 +1,68 @@
---only send suspicious providers highlighted by isolation forest to investigation queue
-CREATE OR REPLACE TABLE
-`fwa-mlops-accelerator-demo.fraud_experiments.investigation_queue` AS
+-- ============================================================
+-- MODEL-INDEPENDENT INVESTIGATION QUEUE
+--
+-- Select providers from the newest curated production-style
+-- scoring run, regardless of whether the model is Random Forest
+-- or XGBoost.
+--
+-- Investigation capacity is represented by the top 50 providers.
+-- In production this would come from SIU staffing/case capacity.
+-- ============================================================
 
-WITH latest_if_run AS (
-  SELECT run_id
-  FROM `fwa-mlops-accelerator-demo.fraud_experiments.isolation_forest_provider_predictions`
-  ORDER BY created_at DESC
-  LIMIT 1
+CREATE OR REPLACE TABLE
+  `fwa-mlops-accelerator-demo.fraud_experiments.investigation_queue`
+AS
+
+WITH latest_run AS (
+  SELECT
+    model_name,
+    model_version,
+    run_id,
+    MAX(created_at) AS latest_prediction_timestamp
+
+  FROM
+    `fwa-mlops-accelerator-demo.fraud_experiments.provider_predictions`
+
+  WHERE
+    run_id IS NOT NULL
+    AND model_name IS NOT NULL
+    AND model_version IS NOT NULL
+
+  GROUP BY
+    model_name,
+    model_version,
+    run_id
+
+  QUALIFY ROW_NUMBER() OVER (
+    ORDER BY latest_prediction_timestamp DESC
+  ) = 1
+),
+
+ranked AS (
+  SELECT
+    p.provider_id,
+    p.experiment_id,
+    p.run_id,
+    p.model_name,
+    p.model_version,
+    p.fraud_score,
+    p.risk_rank,
+    p.risk_category,
+    p.reason,
+
+    ROW_NUMBER() OVER (
+      ORDER BY
+        p.fraud_score DESC,
+        p.provider_id
+    ) AS investigation_rank
+
+  FROM
+    `fwa-mlops-accelerator-demo.fraud_experiments.provider_predictions` p
+
+  JOIN latest_run r
+    ON p.run_id = r.run_id
+    AND p.model_name = r.model_name
+    AND p.model_version = r.model_version
 )
 
 SELECT
@@ -14,34 +70,46 @@ SELECT
   experiment_id,
   run_id,
   model_name,
-  experiment_name,
+  model_version,
   fraud_score,
   risk_rank,
   risk_category,
   reason,
-  reason_1,
-  reason_2,
-  reason_3,
-  'P1_ISOLATION_FOREST' AS investigation_priority,
-  CURRENT_TIMESTAMP() AS queue_created_at
+  investigation_rank,
 
-FROM
-  `fwa-mlops-accelerator-demo.fraud_experiments.isolation_forest_provider_predictions`
+  CASE
+    WHEN investigation_rank <= 10
+      THEN 'P1'
+    WHEN investigation_rank <= 25
+      THEN 'P2'
+    ELSE 'P3'
+  END AS investigation_priority,
+
+  CURRENT_TIMESTAMP()
+    AS queue_created_at
+
+FROM ranked
 
 WHERE
-  run_id = (SELECT run_id FROM latest_if_run)
-  AND risk_category = 'HIGH';
+  investigation_rank <= 50
 
-  --qa queue results
-  SELECT
-  COUNT(*) AS investigation_count
-FROM
-  `fwa-mlops-accelerator-demo.fraud_experiments.investigation_queue`;
+ORDER BY
+  investigation_rank;
 
 
-  --inspect queue results
-  SELECT *
+-- QA
+SELECT
+  model_name,
+  model_version,
+  run_id,
+  COUNT(*) AS investigation_count,
+  MIN(fraud_score) AS lowest_queued_score,
+  MAX(fraud_score) AS highest_queued_score
+
 FROM
   `fwa-mlops-accelerator-demo.fraud_experiments.investigation_queue`
-ORDER BY risk_rank;
 
+GROUP BY
+  model_name,
+  model_version,
+  run_id;
