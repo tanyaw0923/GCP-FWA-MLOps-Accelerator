@@ -533,6 +533,8 @@ terminal_states = {
     aiplatform_v1.JobState.JOB_STATE_FAILED,
     aiplatform_v1.JobState.JOB_STATE_CANCELLED,
     aiplatform_v1.JobState.JOB_STATE_PAUSED,
+    aiplatform_v1.JobState.JOB_STATE_EXPIRED,
+    aiplatform_v1.JobState.JOB_STATE_PARTIALLY_SUCCEEDED,
 }
 
 while True:
