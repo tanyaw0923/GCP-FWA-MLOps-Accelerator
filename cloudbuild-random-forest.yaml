@@ -1,3 +1,6 @@
+substitutions:
+  _IMAGE_VERSION: v2.0.0
+
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
@@ -5,8 +8,8 @@ steps:
       - -f
       - docker/random_forest/Dockerfile
       - -t
-      - us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:v2
+      - us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:${_IMAGE_VERSION}
       - .
 
 images:
-  - us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:v2
+  - us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:${_IMAGE_VERSION}
