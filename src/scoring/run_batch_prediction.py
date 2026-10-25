@@ -222,18 +222,18 @@ print(
 if MODEL_TYPE == "xgboost":
 
     INPUT_TABLE = (
-        f"{PROJECT_ID}."
-        "fraud_features."
-        "xgboost_batch_input"
+        DATA_CONFIG[
+            "xgboost_batch_input_table"
+        ]
     )
 
 
 elif MODEL_TYPE == "random_forest":
 
     INPUT_TABLE = (
-        f"{PROJECT_ID}."
-        "fraud_features."
-        "random_forest_batch_input"
+        DATA_CONFIG[
+            "random_forest_batch_input_table"
+        ]
     )
 
 
