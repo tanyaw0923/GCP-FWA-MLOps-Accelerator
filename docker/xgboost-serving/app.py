@@ -1,7 +1,9 @@
 import os
+from urllib.parse import urlparse
 
 import numpy as np
 import xgboost as xgb
+from google.cloud import storage
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -14,6 +16,11 @@ from pydantic import BaseModel
 MODEL_PATH = os.environ.get(
     "MODEL_PATH",
     "/model/model.bst",
+)
+
+AIP_STORAGE_URI = os.environ.get(
+    "AIP_STORAGE_URI",
+    "",
 )
 
 
@@ -37,7 +44,80 @@ METADATA_FIELDS = [
 
 # ============================================================
 # LOAD MODEL
+#
+# For Vertex custom prediction containers, AIP_STORAGE_URI
+# points to the model artifact directory copied by Vertex.
+# Download model.bst at startup when it is not baked into the
+# image. Local development can still use MODEL_PATH directly.
 # ============================================================
+
+def ensure_model_file():
+
+    if os.path.exists(
+        MODEL_PATH
+    ):
+        return
+
+    if not AIP_STORAGE_URI:
+        raise RuntimeError(
+            "model.bst was not found locally and "
+            "AIP_STORAGE_URI is empty."
+        )
+
+    parsed = urlparse(
+        AIP_STORAGE_URI
+    )
+
+    if parsed.scheme != "gs":
+        raise RuntimeError(
+            "AIP_STORAGE_URI must be a gs:// URI."
+        )
+
+    bucket_name = (
+        parsed.netloc
+    )
+
+    prefix = (
+        parsed.path
+        .lstrip("/")
+        .rstrip("/")
+    )
+
+    blob_name = (
+        f"{prefix}/model.bst"
+        if prefix
+        else "model.bst"
+    )
+
+    os.makedirs(
+        os.path.dirname(
+            MODEL_PATH
+        ),
+        exist_ok=True,
+    )
+
+    client = storage.Client()
+
+    bucket = client.bucket(
+        bucket_name
+    )
+
+    blob = bucket.blob(
+        blob_name
+    )
+
+    if not blob.exists():
+        raise RuntimeError(
+            "model.bst was not found under "
+            f"{AIP_STORAGE_URI}"
+        )
+
+    blob.download_to_filename(
+        MODEL_PATH
+    )
+
+
+ensure_model_file()
 
 booster = xgb.Booster()
 
