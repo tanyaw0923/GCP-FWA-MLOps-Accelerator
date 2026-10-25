@@ -1,5 +1,4 @@
 import argparse
-import json
 import time
 from datetime import datetime, timezone
 
@@ -7,7 +6,6 @@ from google.api_core.client_options import ClientOptions
 from google.cloud import aiplatform
 from google.cloud import aiplatform_v1
 from google.cloud import bigquery
-from google.cloud import storage
 
 from src.config.load_config import load_config
 
@@ -62,21 +60,40 @@ args = parser.parse_args()
 
 config = load_config()
 
-PROJECT_ID = config["project_id"]
-REGION = config["region"]
-BUCKET = config["bucket"]
-DATA_CONFIG = config["data"]
+PROJECT_ID = config[
+    "project_id"
+]
+
+REGION = config[
+    "region"
+]
+
+DATA_CONFIG = config[
+    "data"
+]
+
 
 MODEL_ID = args.model_id
 RUN_ID = args.run_id
 MACHINE_TYPE = args.machine_type
 
+
 EXPERIMENT_RUNS_TABLE = (
-    DATA_CONFIG["experiment_runs_table"]
+    DATA_CONFIG[
+        "experiment_runs_table"
+    ]
 )
 
 PROVIDER_PREDICTION_TABLE = (
-    DATA_CONFIG["provider_prediction_table"]
+    DATA_CONFIG[
+        "provider_prediction_table"
+    ]
+)
+
+
+OUTPUT_DATASET = (
+    f"{PROJECT_ID}."
+    "fraud_experiments"
 )
 
 
@@ -88,9 +105,6 @@ bq = bigquery.Client(
     project=PROJECT_ID
 )
 
-storage_client = storage.Client(
-    project=PROJECT_ID
-)
 
 aiplatform.init(
     project=PROJECT_ID,
@@ -106,95 +120,147 @@ model = aiplatform.Model(
     model_name=MODEL_ID
 )
 
+
 print(
     "\n=============================================="
 )
+
 print(
     "VERTEX BATCH FRAUD SCORING"
 )
+
 print(
     "=============================================="
 )
+
 print(
-    f"Model ID: {MODEL_ID}"
+    f"Model ID: "
+    f"{MODEL_ID}"
 )
+
 print(
-    f"Model resource: {model.resource_name}"
+    f"Model resource: "
+    f"{model.resource_name}"
 )
+
 print(
-    f"Display name: {model.display_name}"
+    f"Display name: "
+    f"{model.display_name}"
 )
+
 print(
-    f"Machine type: {MACHINE_TYPE}"
+    f"Machine type: "
+    f"{MACHINE_TYPE}"
 )
 
 
 # ============================================================
 # 5. INFER MODEL TYPE
+#
+# Custom XGBoost model display name:
+#
+#   fwa-xgboost-custom-serving
+#
+# Standard candidate:
+#
+#   fwa-xgboost-candidate
+#
+# Random Forest:
+#
+#   fwa-random-forest-candidate
 # ============================================================
 
 display_name_lower = (
     model.display_name.lower()
 )
 
+
 if (
-    "xgboost" in display_name_lower
-    or "xgb" in display_name_lower
+    "xgboost"
+    in display_name_lower
+    or "xgb"
+    in display_name_lower
 ):
-    MODEL_TYPE = "xgboost"
 
-elif (
-    "random_forest" in display_name_lower
-    or "random-forest" in display_name_lower
-    or "random forest" in display_name_lower
-    or "sklearn" in display_name_lower
-):
-    MODEL_TYPE = "random_forest"
-
-else:
-    raise ValueError(
-        "Unable to infer model type from "
-        f"Vertex display name: {model.display_name}"
+    MODEL_TYPE = (
+        "xgboost"
     )
 
+
+elif (
+    "random_forest"
+    in display_name_lower
+    or "random-forest"
+    in display_name_lower
+    or "random forest"
+    in display_name_lower
+    or "sklearn"
+    in display_name_lower
+):
+
+    MODEL_TYPE = (
+        "random_forest"
+    )
+
+
+else:
+
+    raise ValueError(
+        "Unable to infer model type from "
+        f"Vertex display name: "
+        f"{model.display_name}"
+    )
+
+
 print(
-    f"Model type: {MODEL_TYPE}"
+    f"Model type: "
+    f"{MODEL_TYPE}"
 )
 
 
 # ============================================================
 # 6. SELECT MODEL-SPECIFIC BATCH INPUT TABLE
-#
-# The input table contains:
-#
-#   provider_id
-#   + seven numeric model features
-#
-# provider_id is metadata. Vertex key_field removes it before
-# sending the remaining numeric values to the model.
 # ============================================================
 
 if MODEL_TYPE == "xgboost":
+
     INPUT_TABLE = (
-        DATA_CONFIG["xgboost_batch_input_table"]
+        DATA_CONFIG[
+            "xgboost_batch_input_table"
+        ]
     )
+
 
 elif MODEL_TYPE == "random_forest":
+
     INPUT_TABLE = (
-        DATA_CONFIG["random_forest_batch_input_table"]
+        DATA_CONFIG[
+            "random_forest_batch_input_table"
+        ]
     )
 
+
 else:
+
     raise ValueError(
-        f"Unsupported model type: {MODEL_TYPE}"
+        f"Unsupported model type: "
+        f"{MODEL_TYPE}"
     )
+
 
 INPUT_URI = (
     f"bq://{INPUT_TABLE}"
 )
 
+
+OUTPUT_URI = (
+    f"bq://{OUTPUT_DATASET}"
+)
+
+
 print(
-    f"Input table: {INPUT_TABLE}"
+    f"Input table: "
+    f"{INPUT_TABLE}"
 )
 
 
@@ -202,74 +268,33 @@ print(
 # 7. VALIDATE INPUT TABLE
 # ============================================================
 
-input_table = bq.get_table(
-    INPUT_TABLE
+input_table = (
+    bq.get_table(
+        INPUT_TABLE
+    )
 )
 
+
 if input_table.num_rows == 0:
+
     raise RuntimeError(
         "Batch input table is empty."
     )
 
-input_columns = [
-    field.name
-    for field in input_table.schema
-]
-
-if "provider_id" not in input_columns:
-    raise RuntimeError(
-        "Batch input table must contain provider_id."
-    )
-
-duplicate_query = f"""
-SELECT
-    COUNT(*) AS total_rows,
-    COUNT(DISTINCT provider_id) AS unique_providers,
-    COUNTIF(provider_id IS NULL) AS missing_provider_id
-
-FROM
-    `{INPUT_TABLE}`
-"""
-
-input_validation = next(
-    iter(
-        bq.query(
-            duplicate_query
-        ).result()
-    )
-)
-
-if int(
-    input_validation[
-        "missing_provider_id"
-    ]
-) > 0:
-    raise RuntimeError(
-        "Batch input contains null provider_id values."
-    )
-
-if (
-    int(
-        input_validation["total_rows"]
-    )
-    != int(
-        input_validation["unique_providers"]
-    )
-):
-    raise RuntimeError(
-        "provider_id must be unique in the batch input."
-    )
 
 print(
-    f"Input rows: {input_table.num_rows}"
-)
-print(
-    "Provider lineage validation: PASS"
+    f"Input rows: "
+    f"{input_table.num_rows}"
 )
 
 
 # ============================================================
 # 8. RESOLVE EXPERIMENT RUN
+#
+# If --run-id is supplied, use it.
+#
+# Otherwise use the latest successful experiment run
+# matching the model type.
 # ============================================================
 
 if RUN_ID is None:
@@ -292,6 +317,7 @@ if RUN_ID is None:
     LIMIT 1
     """
 
+
     job_config = (
         bigquery.QueryJobConfig(
             query_parameters=[
@@ -304,6 +330,7 @@ if RUN_ID is None:
         )
     )
 
+
     run_rows = list(
         bq.query(
             run_query,
@@ -311,19 +338,27 @@ if RUN_ID is None:
         ).result()
     )
 
+
     if not run_rows:
+
         raise RuntimeError(
             "No successful experiment run found "
             f"for model_type={MODEL_TYPE}."
         )
 
+
     EXPERIMENT_ID = (
-        run_rows[0]["experiment_id"]
+        run_rows[0][
+            "experiment_id"
+        ]
     )
 
     RUN_ID = (
-        run_rows[0]["run_id"]
+        run_rows[0][
+            "run_id"
+        ]
     )
+
 
 else:
 
@@ -341,6 +376,7 @@ else:
     LIMIT 1
     """
 
+
     job_config = (
         bigquery.QueryJobConfig(
             query_parameters=[
@@ -353,6 +389,7 @@ else:
         )
     )
 
+
     run_rows = list(
         bq.query(
             run_query,
@@ -360,87 +397,89 @@ else:
         ).result()
     )
 
+
     if not run_rows:
+
         raise RuntimeError(
-            f"Experiment run not found: {RUN_ID}"
+            f"Experiment run not found: "
+            f"{RUN_ID}"
         )
 
+
     EXPERIMENT_ID = (
-        run_rows[0]["experiment_id"]
+        run_rows[0][
+            "experiment_id"
+        ]
     )
 
+
 print(
-    f"Experiment ID: {EXPERIMENT_ID}"
+    f"Experiment ID: "
+    f"{EXPERIMENT_ID}"
 )
+
 print(
-    f"Run ID: {RUN_ID}"
+    f"Run ID: "
+    f"{RUN_ID}"
 )
 
 
 # ============================================================
-# 9. MODEL VERSION / GCS OUTPUT
+# 9. MODEL VERSION
+#
+# Keep the Vertex Model Registry resource ID as part of
+# downstream lineage.
 # ============================================================
 
 MODEL_VERSION = (
-    f"{MODEL_TYPE}:{MODEL_ID}"
+    f"{MODEL_TYPE}:"
+    f"{MODEL_ID}"
 )
 
-BATCH_TIMESTAMP = (
-    datetime.now(
-        timezone.utc
-    )
-    .strftime("%Y%m%dT%H%M%SZ")
-)
-
-OUTPUT_PREFIX = (
-    "batch_predictions/"
-    f"{MODEL_TYPE}/"
-    f"{RUN_ID}/"
-    f"{BATCH_TIMESTAMP}/"
-)
-
-OUTPUT_URI = (
-    f"gs://{BUCKET}/"
-    f"{OUTPUT_PREFIX}"
-)
 
 print(
-    f"Model version: {MODEL_VERSION}"
-)
-print(
-    f"Raw prediction output: {OUTPUT_URI}"
+    f"Model version: "
+    f"{MODEL_VERSION}"
 )
 
 
 # ============================================================
 # 10. RUN VERTEX BATCH PREDICTION
-#
-# Why GCS JSONL output?
-#
-# Vertex does not support key_field with BigQuery prediction
-# output for this batch path. JSONL output DOES support it.
-#
-# key_field="provider_id":
-#   1. removes provider_id before the model sees the instance
-#   2. returns provider_id as "key" in each prediction record
-#
-# The seven remaining BigQuery columns preserve the same order
-# used by the working XGBoost / sklearn batch input contract.
 # ============================================================
 
-job_service = (
-    aiplatform_v1.JobServiceClient(
-        client_options=ClientOptions(
-            api_endpoint=(
-                f"{REGION}-aiplatform.googleapis.com"
-            )
+print(
+    "\n=============================================="
+)
+
+print(
+    "STARTING BATCH PREDICTION"
+)
+
+print(
+    "=============================================="
+)
+
+
+# Keep provider_id as metadata without sending it into the
+# model feature payload.
+#
+# For XGBoost, BigQuery input is converted to an object and
+# provider_id is excluded before prediction. Because key_field
+# is NOT used, Vertex attaches excluded fields such as
+# provider_id back to the BigQuery output.
+#
+# We use the GAPIC JobService because the high-level
+# Model.batch_predict helper does not expose instance_config.
+job_service = aiplatform_v1.JobServiceClient(
+    client_options=ClientOptions(
+        api_endpoint=(
+            f"{REGION}-aiplatform.googleapis.com"
         )
     )
 )
 
 parent = (
-    f"projects/{PROJECT_ID}/"
-    f"locations/{REGION}"
+    f"projects/{PROJECT_ID}/locations/{REGION}"
 )
 
 batch_prediction_job = {
@@ -459,14 +498,39 @@ batch_prediction_job = {
         },
     },
 
-    "instance_config": {
-        "key_field": "provider_id",
-    },
+    "instance_config": (
+        {
+            # Custom XGBoost serving accepts JSON objects.
+            # Excluding provider_id keeps it out of the
+            # model feature dictionary while Vertex attaches
+            # it back to BigQuery prediction output.
+            "instance_type": "object",
+            "excluded_fields": [
+                "provider_id",
+            ],
+        }
+        if MODEL_TYPE == "xgboost"
+        else
+        {
+            # Scikit-learn serving expects positional values.
+            # ARRAY requires an explicit, ordered feature list.
+            "instance_type": "array",
+            "included_fields": [
+                "high_acuity_pct",
+                "pct_99214",
+                "pct_99215",
+                "referral_rate",
+                "eye_procedure_pct",
+                "avg_paid_per_claim",
+                "high_acuity_oe_ratio",
+            ],
+        }
+    ),
 
     "output_config": {
-        "predictions_format": "jsonl",
-        "gcs_destination": {
-            "output_uri_prefix": OUTPUT_URI,
+        "predictions_format": "bigquery",
+        "bigquery_destination": {
+            "output_uri": OUTPUT_URI,
         },
     },
 
@@ -489,7 +553,7 @@ batch_job = (
 )
 
 print(
-    "\nBatch prediction job submitted: "
+    f"\nBatch prediction job submitted: "
     f"{batch_job.name}"
 )
 
@@ -499,10 +563,7 @@ terminal_states = {
     aiplatform_v1.JobState.JOB_STATE_CANCELLED,
     aiplatform_v1.JobState.JOB_STATE_PAUSED,
     aiplatform_v1.JobState.JOB_STATE_EXPIRED,
-    (
-        aiplatform_v1.JobState
-        .JOB_STATE_PARTIALLY_SUCCEEDED
-    ),
+    aiplatform_v1.JobState.JOB_STATE_PARTIALLY_SUCCEEDED,
 }
 
 while True:
@@ -525,6 +586,7 @@ while True:
         30
     )
 
+
 if (
     batch_job.state
     != aiplatform_v1.JobState.JOB_STATE_SUCCEEDED
@@ -533,9 +595,7 @@ if (
     error_message = (
         batch_job.error.message
         if batch_job.error
-        else (
-            "Unknown Vertex batch prediction error."
-        )
+        else "Unknown Vertex batch prediction error."
     )
 
     raise RuntimeError(
@@ -544,374 +604,469 @@ if (
         f"Error={error_message}"
     )
 
+
 print(
     "\nBatch prediction job complete."
 )
+
 print(
-    f"Job resource: {batch_job.name}"
+    f"Job resource: "
+    f"{batch_job.name}"
 )
+
 print(
-    f"Job state: {batch_job.state}"
+    f"Job state: "
+    f"{batch_job.state}"
 )
+
 print(
-    f"Output info: {batch_job.output_info}"
+    f"Output info: "
+    f"{batch_job.output_info}"
 )
 
 
 # ============================================================
-# 11. FIND JSONL PREDICTION FILES
+# 11. RESOLVE VERTEX OUTPUT TABLE
 # ============================================================
 
 output_info = (
     batch_job.output_info
 )
 
-resolved_gcs_directory = (
-    output_info.gcs_output_directory
+
+output_dataset_uri = (
+    output_info.bigquery_output_dataset
 )
 
-if resolved_gcs_directory:
-    resolved_prefix = (
-        resolved_gcs_directory
-        .replace(
-            f"gs://{BUCKET}/",
-            "",
-            1,
-        )
-        .rstrip("/")
-        + "/"
-    )
-else:
-    resolved_prefix = OUTPUT_PREFIX
 
-print(
-    f"Resolved GCS output: "
-    f"gs://{BUCKET}/{resolved_prefix}"
+reported_output_table = (
+    output_info.bigquery_output_table
 )
 
-bucket = storage_client.bucket(
-    BUCKET
-)
 
-all_output_blobs = list(
-    storage_client.list_blobs(
-        BUCKET,
-        prefix=resolved_prefix,
-    )
-)
-
-prediction_blobs = [
-    blob
-    for blob in all_output_blobs
-    if (
-        "prediction.results" in blob.name
-        or blob.name.endswith(".jsonl")
-    )
-    and "error" not in blob.name.lower()
-]
-
-error_blobs = [
-    blob
-    for blob in all_output_blobs
-    if "error" in blob.name.lower()
-]
-
-if not prediction_blobs:
-
-    if error_blobs:
-        sample_error = (
-            error_blobs[0]
-            .download_as_text()
-        )
-
-        print(
-            "\nROW-LEVEL PREDICTION ERRORS"
-        )
-        print(
-            sample_error[:3000]
-        )
+if not output_dataset_uri:
 
     raise RuntimeError(
-        "No JSONL prediction result files were found "
-        f"under gs://{BUCKET}/{resolved_prefix}"
-    )
-
-print(
-    f"Prediction files: "
-    f"{len(prediction_blobs)}"
-)
-
-
-# ============================================================
-# 12. PARSE KEYED PREDICTIONS
-# ============================================================
-
-def extract_score(
-    prediction,
-):
-    """Normalize common Vertex prediction payload shapes."""
-
-    if isinstance(
-        prediction,
-        (int, float),
-    ):
-        return float(
-            prediction
-        )
-
-    if isinstance(
-        prediction,
-        str,
-    ):
-        return float(
-            prediction
-        )
-
-    if isinstance(
-        prediction,
-        list,
-    ):
-        if not prediction:
-            raise ValueError(
-                "Prediction list is empty."
-            )
-
-        # Binary classifiers can return a one-value score or
-        # a two-class probability vector. In the latter case,
-        # use the positive-class probability.
-        return float(
-            prediction[-1]
-        )
-
-    if isinstance(
-        prediction,
-        dict,
-    ):
-        for field_name in [
-            "fraud_score",
-            "score",
-            "probability",
-            "value",
-            "prediction",
-        ]:
-            if field_name in prediction:
-                return extract_score(
-                    prediction[
-                        field_name
-                    ]
-                )
-
-        for field_name in [
-            "probabilities",
-            "scores",
-        ]:
-            if field_name in prediction:
-                return extract_score(
-                    prediction[
-                        field_name
-                    ]
-                )
-
-    raise ValueError(
-        "Unsupported prediction payload: "
-        f"{prediction}"
+        "Vertex did not return a "
+        "BigQuery output dataset."
     )
 
 
-scored_providers = []
-
-for blob in prediction_blobs:
-
-    content = (
-        blob.download_as_text()
-    )
-
-    for line_number, line in enumerate(
-        content.splitlines(),
+resolved_output_dataset = (
+    output_dataset_uri
+    .replace(
+        "bq://",
+        "",
         1,
-    ):
+    )
+)
 
-        if not line.strip():
-            continue
 
-        record = json.loads(
-            line
+print(
+    f"\nResolved output dataset: "
+    f"{resolved_output_dataset}"
+)
+
+
+if reported_output_table:
+
+    print(
+        f"Vertex-reported output table: "
+        f"{reported_output_table}"
+    )
+
+
+# ============================================================
+# 12. IDENTIFY PREDICTION OR ERROR TABLE
+#
+# Vertex can create:
+#
+#   predictions_<timestamp>
+#
+# or:
+#
+#   errors_<timestamp>
+#
+# We use the tables created around the batch job completion
+# and prioritize the exact table name reported by Vertex.
+# ============================================================
+
+tables = list(
+    bq.list_tables(
+        resolved_output_dataset
+    )
+)
+
+
+prediction_table_id = None
+error_table_id = None
+
+
+# First try exact Vertex-reported prediction table.
+if reported_output_table:
+
+    candidate_id = (
+        f"{resolved_output_dataset}."
+        f"{reported_output_table}"
+    )
+
+    try:
+
+        bq.get_table(
+            candidate_id
         )
 
-        provider_id = (
-            record.get(
-                "key"
-            )
+        prediction_table_id = (
+            candidate_id
         )
 
-        if provider_id is None:
-            raise RuntimeError(
-                "Vertex prediction record is missing "
-                f"'key' in {blob.name}, "
-                f"line {line_number}."
-            )
+    except Exception:
 
-        if "prediction" not in record:
-            raise RuntimeError(
-                "Vertex prediction record is missing "
-                f"'prediction' in {blob.name}, "
-                f"line {line_number}."
-            )
+        prediction_table_id = None
 
-        fraud_score = extract_score(
-            record["prediction"]
+
+# If exact output table is unavailable, find most recent
+# predictions_* / errors_* tables.
+if prediction_table_id is None:
+
+    prediction_candidates = []
+    error_candidates = []
+
+
+    for table_item in tables:
+
+        full_table_id = (
+            f"{resolved_output_dataset}."
+            f"{table_item.table_id}"
         )
 
-        scored_providers.append(
-            {
-                "provider_id": str(
-                    provider_id
-                ),
-                "fraud_score": float(
-                    fraud_score
-                ),
-            }
+
+        if table_item.table_id.startswith(
+            "predictions_"
+        ):
+
+            table = (
+                bq.get_table(
+                    full_table_id
+                )
+            )
+
+            prediction_candidates.append(
+                (
+                    table.created,
+                    full_table_id,
+                )
+            )
+
+
+        elif table_item.table_id.startswith(
+            "errors_"
+        ):
+
+            table = (
+                bq.get_table(
+                    full_table_id
+                )
+            )
+
+            error_candidates.append(
+                (
+                    table.created,
+                    full_table_id,
+                )
+            )
+
+
+    if prediction_candidates:
+
+        prediction_candidates.sort(
+            key=lambda item: item[0],
+            reverse=True,
+        )
+
+        prediction_table_id = (
+            prediction_candidates[0][1]
+        )
+
+
+    if error_candidates:
+
+        error_candidates.sort(
+            key=lambda item: item[0],
+            reverse=True,
+        )
+
+        error_table_id = (
+            error_candidates[0][1]
         )
 
 
 # ============================================================
-# 13. VALIDATE PREDICTION LINEAGE
+# 13. FAIL FAST IF ONLY ERROR TABLE EXISTS
 # ============================================================
 
-if (
-    len(scored_providers)
-    != input_table.num_rows
-):
+if prediction_table_id is None:
+
+    if error_table_id:
+
+        print(
+            "\n=============================================="
+        )
+
+        print(
+            "ROW-LEVEL PREDICTION ERRORS"
+        )
+
+        print(
+            "=============================================="
+        )
+
+
+        error_query = f"""
+        SELECT
+            *
+
+        FROM
+            `{error_table_id}`
+
+        LIMIT 5
+        """
+
+
+        for row in (
+            bq.query(
+                error_query
+            ).result()
+        ):
+
+            print(
+                dict(
+                    row.items()
+                )
+            )
+
+
+        raise RuntimeError(
+            "Vertex batch job completed but "
+            "no predictions table was produced. "
+            f"Inspect {error_table_id}."
+        )
+
+
     raise RuntimeError(
-        "Prediction count does not match batch input. "
-        f"Input rows={input_table.num_rows}, "
-        f"predictions={len(scored_providers)}."
+        "No Vertex predictions table found."
     )
 
-provider_ids = [
-    row["provider_id"]
-    for row in scored_providers
-]
 
-if (
-    len(provider_ids)
-    != len(set(provider_ids))
-):
-    raise RuntimeError(
-        "Duplicate provider_id values were returned "
-        "from batch prediction."
+print(
+    f"\nRaw prediction table: "
+    f"{prediction_table_id}"
+)
+
+
+# ============================================================
+# 14. VALIDATE RAW PREDICTION COLUMN
+#
+# The custom XGBoost container returns probabilities, but
+# Vertex writes the `prediction` field into BigQuery as STRING.
+#
+# Example:
+#
+#   "0.028491"
+#   "0.732199"
+#
+# Downstream scoring therefore uses:
+#
+#   SAFE_CAST(prediction AS FLOAT64)
+# ============================================================
+
+invalid_prediction_query = f"""
+SELECT
+    COUNT(*) AS invalid_predictions
+
+FROM
+    `{prediction_table_id}`
+
+WHERE
+    prediction IS NOT NULL
+    AND SAFE_CAST(
+        prediction AS FLOAT64
+    ) IS NULL
+"""
+
+
+invalid_row = next(
+    iter(
+        bq.query(
+            invalid_prediction_query
+        ).result()
     )
+)
+
+
+invalid_predictions = int(
+    invalid_row[
+        "invalid_predictions"
+    ]
+)
+
+
+if invalid_predictions > 0:
+
+    raise RuntimeError(
+        "Raw Vertex prediction table contains "
+        f"{invalid_predictions} values that cannot "
+        "be converted to FLOAT64."
+    )
+
+
+# ============================================================
+# 15. PRINT RAW SCORE DISTRIBUTION
+# ============================================================
+
+distribution_query = f"""
+SELECT
+    COUNT(*) AS total_predictions,
+
+    COUNTIF(
+        SAFE_CAST(
+            prediction AS FLOAT64
+        ) >= 0.50
+    ) AS predicted_fraud,
+
+    COUNTIF(
+        SAFE_CAST(
+            prediction AS FLOAT64
+        ) < 0.50
+    ) AS predicted_normal,
+
+    MIN(
+        SAFE_CAST(
+            prediction AS FLOAT64
+        )
+    ) AS min_probability,
+
+    MAX(
+        SAFE_CAST(
+            prediction AS FLOAT64
+        )
+    ) AS max_probability,
+
+    AVG(
+        SAFE_CAST(
+            prediction AS FLOAT64
+        )
+    ) AS avg_probability
+
+FROM
+    `{prediction_table_id}`
+"""
+
+
+distribution_row = next(
+    iter(
+        bq.query(
+            distribution_query
+        ).result()
+    )
+)
+
 
 print(
     "\n=============================================="
 )
+
 print(
-    "RAW PREDICTION VALIDATION"
+    "RAW PREDICTION DISTRIBUTION"
 )
+
 print(
     "=============================================="
 )
+
+
 print(
-    f"Input providers: {input_table.num_rows}"
+    f"Total predictions: "
+    f"{distribution_row['total_predictions']}"
 )
+
 print(
-    f"Predictions returned: {len(scored_providers)}"
+    f"Predicted fraud @ 0.50: "
+    f"{distribution_row['predicted_fraud']}"
 )
+
 print(
-    "Provider lineage: PASS"
+    f"Predicted normal @ 0.50: "
+    f"{distribution_row['predicted_normal']}"
+)
+
+print(
+    f"Minimum probability: "
+    f"{distribution_row['min_probability']}"
+)
+
+print(
+    f"Maximum probability: "
+    f"{distribution_row['max_probability']}"
+)
+
+print(
+    f"Average probability: "
+    f"{distribution_row['avg_probability']}"
 )
 
 
 # ============================================================
-# 14. RANK / CLASSIFY PROVIDERS
+# 16. DETERMINE PROVIDER IDENTIFIER STRATEGY
+#
+# Your production xgboost_batch_input should contain
+# provider_id so the scored provider can be linked downstream.
+#
+# If provider_id is not present in the raw Vertex output,
+# fail instead of silently losing lineage.
 # ============================================================
 
-scored_providers.sort(
-    key=lambda row: (
-        -row["fraud_score"],
-        row["provider_id"],
+raw_table = (
+    bq.get_table(
+        prediction_table_id
     )
 )
 
-prediction_timestamp = (
-    datetime.now(
-        timezone.utc
+
+raw_columns = {
+    field.name
+    for field in raw_table.schema
+}
+
+
+if "provider_id" in raw_columns:
+
+    provider_identifier_column = (
+        "provider_id"
     )
-)
 
-prediction_date = (
-    prediction_timestamp
-    .date()
-    .isoformat()
-)
 
-rows_to_insert = []
+else:
 
-for risk_rank, row in enumerate(
-    scored_providers,
-    1,
-):
-
-    fraud_score = row[
-        "fraud_score"
-    ]
-
-    if fraud_score >= 0.80:
-        risk_category = "HIGH"
-        reason = (
-            "Very high model fraud probability"
-        )
-
-    elif fraud_score >= 0.50:
-        risk_category = "MEDIUM"
-        reason = (
-            "Elevated model fraud probability"
-        )
-
-    else:
-        risk_category = "LOW"
-        reason = (
-            "Below investigation threshold"
-        )
-
-    rows_to_insert.append(
-        {
-            "prediction_date": (
-                prediction_date
-            ),
-            "provider_id": (
-                row["provider_id"]
-            ),
-            "experiment_id": (
-                EXPERIMENT_ID
-            ),
-            "run_id": RUN_ID,
-            "model_name": (
-                MODEL_TYPE
-            ),
-            "model_version": (
-                MODEL_VERSION
-            ),
-            "fraud_score": (
-                fraud_score
-            ),
-            "risk_rank": (
-                risk_rank
-            ),
-            "risk_category": (
-                risk_category
-            ),
-            "reason": reason,
-            "created_at": (
-                prediction_timestamp
-                .isoformat()
-            ),
-        }
+    raise RuntimeError(
+        "provider_id is missing from the Vertex "
+        "prediction output. The batch input uses "
+        "excluded_fields=['provider_id'], so Vertex "
+        "should attach provider_id back to each output row."
     )
+
+
+print(
+    "Provider lineage column: "
+    f"{provider_identifier_column}"
+)
 
 
 # ============================================================
-# 15. IDEMPOTENT REPLACE FOR THIS RUN / MODEL
+# 17. IDEMPOTENT DELETE FOR THIS RUN / MODEL
+#
+# Rerunning the same scoring command should not duplicate the
+# curated provider_predictions rows.
 # ============================================================
 
 delete_query = f"""
@@ -923,6 +1078,7 @@ WHERE
     AND model_version = @model_version
 """
 
+
 delete_config = (
     bigquery.QueryJobConfig(
         query_parameters=[
@@ -931,6 +1087,7 @@ delete_config = (
                 "STRING",
                 RUN_ID,
             ),
+
             bigquery.ScalarQueryParameter(
                 "model_version",
                 "STRING",
@@ -940,25 +1097,193 @@ delete_config = (
     )
 )
 
+
 bq.query(
     delete_query,
     job_config=delete_config,
 ).result()
 
-errors = bq.insert_rows_json(
-    PROVIDER_PREDICTION_TABLE,
-    rows_to_insert,
+
+# ============================================================
+# 18. MATERIALIZE CURATED PROVIDER PREDICTIONS
+#
+# IMPORTANT:
+#
+# Raw Vertex:
+#
+#   prediction STRING
+#
+# Curated table:
+#
+#   fraud_score FLOAT64
+#
+# We preserve the probability rather than converting it to
+# a binary 0/1 flag.
+#
+# Ranking is therefore based on the continuous fraud score.
+# ============================================================
+
+prediction_date = (
+    datetime.now(
+        timezone.utc
+    )
+    .date()
+    .isoformat()
 )
 
-if errors:
-    raise RuntimeError(
-        "Failed to write curated provider predictions: "
-        f"{errors}"
+
+materialize_query = f"""
+INSERT INTO
+    `{PROVIDER_PREDICTION_TABLE}`
+(
+    prediction_date,
+    provider_id,
+    experiment_id,
+    run_id,
+    model_name,
+    model_version,
+    fraud_score,
+    risk_rank,
+    risk_category,
+    reason,
+    created_at
+)
+
+WITH scored AS
+(
+    SELECT
+        CAST(
+            `{provider_identifier_column}`
+            AS STRING
+        ) AS provider_id,
+
+        SAFE_CAST(
+            prediction AS FLOAT64
+        ) AS fraud_score
+
+    FROM
+        `{prediction_table_id}`
+
+    WHERE
+        SAFE_CAST(
+            prediction AS FLOAT64
+        ) IS NOT NULL
+),
+
+ranked AS
+(
+    SELECT
+        provider_id,
+        fraud_score,
+
+        ROW_NUMBER() OVER
+        (
+            ORDER BY
+                fraud_score DESC,
+                provider_id
+        ) AS risk_rank
+
+    FROM
+        scored
+)
+
+SELECT
+    DATE(@prediction_date)
+        AS prediction_date,
+
+    provider_id,
+
+    @experiment_id
+        AS experiment_id,
+
+    @run_id
+        AS run_id,
+
+    @model_name
+        AS model_name,
+
+    @model_version
+        AS model_version,
+
+    fraud_score,
+
+    risk_rank,
+
+    CASE
+        WHEN fraud_score >= 0.80
+            THEN 'HIGH'
+
+        WHEN fraud_score >= 0.50
+            THEN 'MEDIUM'
+
+        ELSE 'LOW'
+    END
+        AS risk_category,
+
+    CASE
+        WHEN fraud_score >= 0.80
+            THEN 'Very high model fraud probability'
+
+        WHEN fraud_score >= 0.50
+            THEN 'Elevated model fraud probability'
+
+        ELSE 'Below investigation threshold'
+    END
+        AS reason,
+
+    CURRENT_TIMESTAMP()
+        AS created_at
+
+FROM
+    ranked
+"""
+
+
+materialize_config = (
+    bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter(
+                "prediction_date",
+                "DATE",
+                prediction_date,
+            ),
+
+            bigquery.ScalarQueryParameter(
+                "experiment_id",
+                "STRING",
+                EXPERIMENT_ID,
+            ),
+
+            bigquery.ScalarQueryParameter(
+                "run_id",
+                "STRING",
+                RUN_ID,
+            ),
+
+            bigquery.ScalarQueryParameter(
+                "model_name",
+                "STRING",
+                MODEL_TYPE,
+            ),
+
+            bigquery.ScalarQueryParameter(
+                "model_version",
+                "STRING",
+                MODEL_VERSION,
+            ),
+        ]
     )
+)
+
+
+bq.query(
+    materialize_query,
+    job_config=materialize_config,
+).result()
 
 
 # ============================================================
-# 16. VERIFY CURATED OUTPUT
+# 19. VERIFY CURATED OUTPUT
 # ============================================================
 
 verification_query = f"""
@@ -989,6 +1314,7 @@ WHERE
     AND model_version = @model_version
 """
 
+
 verification_config = (
     bigquery.QueryJobConfig(
         query_parameters=[
@@ -997,6 +1323,7 @@ verification_config = (
                 "STRING",
                 RUN_ID,
             ),
+
             bigquery.ScalarQueryParameter(
                 "model_version",
                 "STRING",
@@ -1006,50 +1333,65 @@ verification_config = (
     )
 )
 
+
 verification_row = next(
     iter(
         bq.query(
             verification_query,
-            job_config=(
-                verification_config
-            ),
+            job_config=verification_config,
         ).result()
     )
 )
 
+
+# ============================================================
+# 20. FINAL RESULT
+# ============================================================
+
 print(
     "\n=============================================="
 )
+
 print(
     "CURATED PROVIDER PREDICTIONS"
 )
+
 print(
     "=============================================="
 )
+
+
 print(
     f"Output table: "
     f"{PROVIDER_PREDICTION_TABLE}"
 )
+
 print(
     f"Providers written: "
     f"{verification_row['providers']}"
 )
+
 print(
     f"Predicted fraud @ 0.50: "
     f"{verification_row['predicted_fraud']}"
 )
+
 print(
     f"Minimum fraud score: "
     f"{verification_row['min_score']}"
 )
+
 print(
     f"Maximum fraud score: "
     f"{verification_row['max_score']}"
 )
+
 print(
     f"Average fraud score: "
     f"{verification_row['avg_score']}"
 )
+
+
 print(
     "\nBatch scoring completed successfully."
 )
