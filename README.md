@@ -1490,6 +1490,8 @@ For Cloud Shell or another interactive Python environment, install the logging c
 pip install google-cloud-logging
 ```
 
+Managed workload service accounts should have permission to write log entries, typically through `roles/logging.logWriter` or an equivalent custom role containing `logging.logEntries.create`.
+
 The managed performance-monitoring container includes `google-cloud-logging` in its requirements. Rebuild that image after pulling this change:
 
 ```bash
