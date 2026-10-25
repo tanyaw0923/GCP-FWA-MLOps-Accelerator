@@ -33,9 +33,58 @@ CREATE TABLE IF NOT EXISTS
   monitoring_status STRING
 );
 
+-- Backward-compatible schema migration for tables created by
+-- earlier versions of the demo.
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS monitoring_timestamp TIMESTAMP;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS model_name STRING;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS dataset_name STRING;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS total_rows INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS unique_providers INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS duplicate_rows INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS null_feature_values INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS invalid_feature_values INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS monitoring_status STRING;
+
 
 INSERT INTO
   `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+(
+  monitoring_timestamp,
+  model_name,
+  dataset_name,
+  total_rows,
+  unique_providers,
+  duplicate_rows,
+  null_feature_values,
+  invalid_feature_values,
+  monitoring_status
+)
 
 WITH test_data AS (
 
@@ -195,9 +244,53 @@ CREATE TABLE IF NOT EXISTS
   monitoring_status STRING
 );
 
+-- Backward-compatible schema migration for tables created by
+-- earlier versions of the demo.
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS monitoring_timestamp TIMESTAMP;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS model_name STRING;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS feature_name STRING;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS baseline_mean FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS current_mean FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS baseline_std FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS standardized_mean_shift FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS monitoring_status STRING;
+
 
 INSERT INTO
   `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+(
+  monitoring_timestamp,
+  model_name,
+  feature_name,
+  baseline_mean,
+  current_mean,
+  baseline_std,
+  standardized_mean_shift,
+  monitoring_status
+)
 
 WITH feature_values AS (
 
