@@ -1,3 +1,6 @@
+substitutions:
+  _IMAGE_VERSION: v1.0.0
+
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
@@ -5,8 +8,8 @@ steps:
       - -f
       - docker/performance-monitoring/Dockerfile
       - -t
-      - us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/performance-monitoring:v1
+      - us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/performance-monitoring:${_IMAGE_VERSION}
       - .
 
 images:
-  - us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/performance-monitoring:v1
+  - us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/performance-monitoring:${_IMAGE_VERSION}
