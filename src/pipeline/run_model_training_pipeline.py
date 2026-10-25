@@ -44,6 +44,11 @@ MODEL_NAME = active_model["model_name"]
 EXPERIMENT_NAME = active_model["experiment_name"]
 MODEL_PARAMETERS = active_model["parameters"]
 
+TRAINING_IMAGE_URI = (
+    active_model["training_image"]
+    .strip()
+)
+
 SERVING_CONTAINER_IMAGE_URI = (
     active_model["serving_container_image_uri"]
     .strip()
@@ -106,13 +111,17 @@ CURRENT_FEATURE_SIGNATURE = build_signature(
 
 
 # The model signature is used by the retraining decision.
-# Changes to the algorithm, parameters, artifact format, or
-# serving configuration should create a new candidate.
+# Changes to the algorithm, parameters, training image,
+# artifact format, or serving configuration should create
+# a new candidate.
 CURRENT_MODEL_SIGNATURE = build_signature(
     {
         "model_type": MODEL_TYPE,
         "model_name": MODEL_NAME,
         "parameters": MODEL_PARAMETERS,
+        "training_image_uri": (
+            TRAINING_IMAGE_URI
+        ),
         "artifact_format": (
             MODEL_ARTIFACT_FORMAT
         ),
@@ -747,6 +756,11 @@ print(
     f"Model signature: "
     f"{CURRENT_MODEL_SIGNATURE[:12]}"
 )
+print(
+    f"Training image: "
+    f"{TRAINING_IMAGE_URI}"
+)
+
 print(
     f"Artifact format: "
     f"{MODEL_ARTIFACT_FORMAT}"
