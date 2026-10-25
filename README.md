@@ -1360,6 +1360,148 @@ Investigation feedback was then used to support supervised fraud modeling with R
 
 The current architecture preserves that experimentation history while focusing on a reusable, governed continuous-training workflow.
 
+## What's Missing from Production
+
+This repository demonstrates an end-to-end batch MLOps lifecycle, but it is intentionally not positioned as a complete enterprise production platform. A larger production implementation would add the following controls.
+
+### 1. Automated Rollback Process
+
+The current workflow supports candidate registration, manual approval, and promotion of a model artifact to production. A production system should also support an explicit rollback path.
+
+A stronger rollback design would include:
+
+- retain immutable versions of previously approved production artifacts
+- store the exact model version, feature version, dataset version, container image version, and Git commit for each production release
+- allow operators to mark a prior approved model as the active production version
+- restore both the model artifact and its associated serving / scoring configuration
+- verify rollback health with post-deployment validation before traffic or batch scoring resumes
+- preserve the rollback event in the model-governance audit trail
+
+Conceptually:
+
+```text
+Production model v3
+        |
+        | monitoring / operational issue
+        v
+Rollback decision
+        |
+        v
+Previously approved model v2
+        |
+        v
+Restore artifact + config + lineage
+        |
+        v
+Validation
+        |
+        v
+Resume production scoring
+```
+
+### 2. Automated CI/CD Test Gates
+
+The current repository contains reusable pipeline components and Cloud Build definitions, but a production implementation should automatically validate code and configuration before new artifacts or pipeline definitions are promoted.
+
+Typical CI/CD gates would include:
+
+- unit tests for rolling-window, signature, retraining, and promotion logic
+- schema and data-contract tests
+- feature-definition validation
+- model-training smoke tests
+- batch-scoring input / output contract tests
+- Docker image build validation
+- KFP pipeline compilation checks
+- security and dependency scanning
+- deployment to a non-production environment before production promotion
+
+A failed test gate should prevent the model, image, or pipeline change from advancing.
+
+```text
+Code / config change
+        |
+        v
+CI tests
+        |
+        +-- unit tests
+        +-- schema tests
+        +-- pipeline compile
+        +-- image build
+        +-- scoring contract tests
+        |
+        v
+All gates pass?
+     /       \
+   No         Yes
+   |           |
+   v           v
+ Stop      Deploy candidate
+```
+
+### 3. Large-Scale Feature Governance
+
+The current Feature Store layer demonstrates timestamped provider history, reusable feature definitions, and long-term / short-term feature refreshes. At enterprise scale, feature governance would need stronger controls.
+
+A larger implementation would typically add:
+
+- centralized ownership and stewardship for each feature
+- feature descriptions, business definitions, and approved use cases
+- versioned feature definitions
+- lineage from raw source to derived feature
+- freshness and quality SLAs
+- deprecation policies
+- access controls by team / domain
+- feature discovery and reuse across multiple models
+- automated validation for training-serving consistency
+- point-in-time correctness checks
+- audit history for changes to feature logic
+
+This prevents multiple teams from independently creating slightly different versions of the same business concept and improves reproducibility across models.
+
+### 4. IAM and Role-Based Access Control
+
+The demo focuses on the ML lifecycle rather than enterprise security administration. A production deployment should use least-privilege IAM and clearly separate responsibilities between data scientists, platform engineers, investigators, and model approvers.
+
+Example responsibilities could be separated as follows:
+
+```text
+Data Scientist
+  - read approved training data
+  - create experiments
+  - submit candidate training jobs
+  - cannot directly promote to production
+
+ML Platform / Service Account
+  - execute pipelines
+  - read / write required BigQuery tables
+  - access model artifacts
+  - register candidate models
+
+Model Approver
+  - review candidate metrics
+  - approve / reject production promotion
+
+Fraud Investigator
+  - access investigation queue
+  - write investigation outcomes
+  - no model-training permissions
+
+Production Operator
+  - manage deployment / rollback
+  - restricted access to production resources
+```
+
+Additional production controls would include:
+
+- dedicated service accounts per workload
+- least-privilege BigQuery dataset permissions
+- restricted Artifact Registry and Cloud Storage access
+- Secret Manager access only for required services
+- separation of development and production projects
+- audit logging for model registration, approval, promotion, and rollback
+
+These capabilities would strengthen the platform for enterprise deployment without changing the core design principle of the accelerator: model-specific data science can evolve while the governed MLOps workflow remains reusable.
+
 ## Current Scope
 
 This repository is a technical MLOps demonstration rather than a complete enterprise production platform.
