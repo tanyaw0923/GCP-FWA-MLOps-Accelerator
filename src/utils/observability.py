@@ -11,10 +11,13 @@ def configure_observability(
     """
     Configure structured operational logging.
 
-    On GCP, google-cloud-logging sends Python log records to
-    Cloud Logging. If the package or credentials are unavailable
-    (for example in a lightweight local environment), logging
-    falls back to stdout without breaking the workload.
+    On GCP, StructuredLogHandler writes structured JSON to stdout
+    so managed runtimes can collect it without a background log
+    transport thread. This avoids shutdown-time log loss from the
+    asynchronous CloudLoggingHandler.
+
+    If google-cloud-logging is unavailable, logging falls back to
+    the standard Python StreamHandler.
 
     Do not put claim-level payloads, member identifiers, or PHI
     into json_fields.
@@ -28,6 +31,8 @@ def configure_observability(
         logging.INFO
     )
 
+    logger.propagate = False
+
     if getattr(
         logger,
         "_fwa_observability_configured",
@@ -36,16 +41,18 @@ def configure_observability(
         return logger
 
     try:
-        import google.cloud.logging
-
-        cloud_logging_client = (
-            google.cloud.logging.Client(
-                project=project_id
-            )
+        from google.cloud.logging_v2.handlers import (
+            StructuredLogHandler,
         )
 
-        cloud_logging_client.setup_logging(
-            log_level=logging.INFO
+        handler = StructuredLogHandler()
+
+        handler.setLevel(
+            logging.INFO
+        )
+
+        logger.addHandler(
+            handler
         )
 
         logger.info(
@@ -57,6 +64,9 @@ def configure_observability(
                     ),
                     "service": service_name,
                     "project_id": project_id,
+                    "logging_handler": (
+                        "StructuredLogHandler"
+                    ),
                     "environment": (
                         os.environ.get(
                             "K_SERVICE",
@@ -68,19 +78,27 @@ def configure_observability(
         )
 
     except Exception as exc:
-        if not logging.getLogger().handlers:
-            logging.basicConfig(
-                level=logging.INFO,
-                format=(
-                    "%(asctime)s "
-                    "%(levelname)s "
-                    "%(name)s "
-                    "%(message)s"
-                ),
+        handler = logging.StreamHandler()
+
+        handler.setLevel(
+            logging.INFO
+        )
+
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s "
+                "%(levelname)s "
+                "%(name)s "
+                "%(message)s"
             )
+        )
+
+        logger.addHandler(
+            handler
+        )
 
         logger.warning(
-            "Cloud Logging unavailable; "
+            "Structured Cloud Logging unavailable; "
             "using standard Python logging. "
             "Reason=%s",
             exc,
@@ -103,9 +121,10 @@ def log_event(
     """
     Write one structured operational event.
 
-    Cloud Logging recognizes json_fields when using the Google
-    Cloud Logging Python handler. Values should be operational
-    metadata only, not raw claim/member payloads.
+    StructuredLogHandler emits json_fields as structured JSON to
+    stdout, which managed GCP runtimes can ingest into Cloud
+    Logging. Values should be operational metadata only, not raw
+    claim/member payloads.
     """
 
     payload = {
