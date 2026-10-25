@@ -42,6 +42,8 @@ The key design principle is:
 
 <img width="1998" height="1125" alt="image" src="https://github.com/user-attachments/assets/f3647476-e04e-44e6-b4d4-c84a5b64d422" />
 
+---
+
 The repository demonstrates three retraining use cases.
 
 <img width="1672" height="941" alt="MLOps accelerator architecture" src="https://github.com/user-attachments/assets/31a80327-2da5-4865-9902-bf6b5e9d701d" />
