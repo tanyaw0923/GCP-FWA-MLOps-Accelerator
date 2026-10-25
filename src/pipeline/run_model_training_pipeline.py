@@ -11,6 +11,10 @@ from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct, Value
 
 from src.config.load_config import load_config
+from src.utils.observability import (
+    configure_observability,
+    log_event,
+)
 
 
 # Load project configuration
@@ -19,6 +23,11 @@ config = load_config()
 PROJECT_ID = config["project_id"]
 REGION = config["region"]
 BUCKET = config["bucket"]
+
+logger = configure_observability(
+    project_id=PROJECT_ID,
+    service_name="fwa-training-orchestrator",
+)
 
 data_config = config["data"]
 model_config = config["model"]
@@ -904,6 +913,17 @@ print(
     f"{response.name}"
 )
 
+log_event(
+    logger,
+    "training_pipeline_submitted",
+    fields={
+        "run_id": RUN_ID,
+        "experiment_id": EXPERIMENT_ID,
+        "pipeline_job": response.name,
+        "model_type": MODEL_TYPE,
+    },
+)
+
 
 # ------------------------------------------------------------------
 # Wait for completion
@@ -952,6 +972,16 @@ while True:
         print(
             f"[{current_time}] "
             f"{state.name}"
+        )
+
+        log_event(
+            logger,
+            "training_pipeline_state_changed",
+            fields={
+                "run_id": RUN_ID,
+                "pipeline_job": response.name,
+                "state": state.name,
+            },
         )
 
         last_state = state
@@ -1045,6 +1075,20 @@ if (
         "Production remains unchanged until manual approval."
     )
 
+    log_event(
+        logger,
+        "training_pipeline_completed",
+        fields={
+            "run_id": RUN_ID,
+            "experiment_id": EXPERIMENT_ID,
+            "pipeline_job": response.name,
+            "state": pipeline_status.state.name,
+            "model_type": MODEL_TYPE,
+            "artifact_uri": MODEL_OUTPUT_URI,
+            "data_month": CURRENT_DATA_MONTH,
+        },
+    )
+
 else:
     print("CANDIDATE PIPELINE FAILED")
     print("=" * 70)
@@ -1069,6 +1113,21 @@ else:
             f"Error: "
             f"{pipeline_status.error}"
         )
+
+    log_event(
+        logger,
+        "training_pipeline_failed",
+        severity="ERROR",
+        fields={
+            "run_id": RUN_ID,
+            "experiment_id": EXPERIMENT_ID,
+            "pipeline_job": response.name,
+            "state": pipeline_status.state.name,
+            "error": str(
+                pipeline_status.error
+            ),
+        },
+    )
 
     raise RuntimeError(
         "Vertex AI candidate pipeline failed."
