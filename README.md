@@ -493,7 +493,7 @@ The resulting architecture stays simple enough for an interview demo while clear
 
 ## Batch Inference and Provider Lineage
 
-Batch inference uses BigQuery for both input and output.
+Batch inference uses the validated BigQuery-to-BigQuery serving contract.
 
 The scoring input table contains:
 
@@ -508,14 +508,7 @@ avg_paid_per_claim
 high_acuity_oe_ratio
 ```
 
-For the custom XGBoost model, Vertex AI uses:
-
-```text
-instance_type = object
-excluded_fields = [provider_id]
-```
-
-This keeps `provider_id` out of the model feature payload while preserving it in the BigQuery prediction output. The XGBoost serving container receives only the seven model features by name.
+The custom XGBoost serving container treats `provider_id` as metadata. When Vertex sends positional values, the container removes the first value as the provider identifier and sends only the remaining seven numeric features into XGBoost.
 
 ```text
 BigQuery batch input
@@ -524,30 +517,26 @@ provider_id + 7 model features
         v
 Vertex AI Batch Prediction
         |
-        | provider_id excluded from model input
-        | model receives 7 feature fields
+        | custom serving container strips provider_id
+        | XGBoost receives 7 model features
         v
-BigQuery raw prediction output
+BigQuery current-job output
 provider_id + prediction
         |
         v
 run_batch_prediction.py
         |
+        +-- binds output to this exact batch job
+        +-- fails on row-level errors
+        +-- validates prediction count
         +-- validates provider lineage
         +-- converts prediction to fraud_score
         +-- ranks providers
         v
 fraud_experiments.provider_predictions
-        |
-        +-- provider_id
-        +-- run_id
-        +-- model_version
-        +-- fraud_score
-        +-- risk_rank
-        +-- risk_category
 ```
 
-This preserves exact provider-to-prediction lineage without relying on row order.
+The scoring script never falls back to an older `predictions_*` table. If the current batch creates row-level errors, the run fails fast and the curated `provider_predictions` table is left unchanged.
 
 Run batch inference with:
 
