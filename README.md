@@ -275,7 +275,11 @@ When a candidate is manually promoted, its `candidate_run_id` becomes the new `a
 
 ## Vertex AI Feature Store and Two-Speed Features
 
-The fraud pipeline uses a timestamped provider feature history as the canonical feature source for feature reuse, batch inference, and future online serving.
+The repository contains two related feature layers with different responsibilities.
+
+The **active supervised model path** uses `fraud_features.provider_eye_features`. The Vertex training pipeline rebuilds this table from raw claims for the configured rolling TRAIN / TEST windows, and batch scoring uses the TEST feature contract from the same table. This keeps the current Random Forest and XGBoost training and scoring paths consistent.
+
+Separately, `fraud_features.provider_feature_history` is a timestamped historical feature layer used to demonstrate reusable provider history, two-speed feature refreshes, point-in-time feature storage, and a future Vertex AI Feature Store / online-serving path. It is **not currently the source table used by the supervised training pipeline**. Keeping that distinction explicit avoids claiming a training-serving integration that the current demo does not yet implement.
 
 For the interview demo, the feature layer uses two refresh speeds:
 
@@ -415,14 +419,14 @@ avg_member_provider_distance_7d
 high_acuity_oe_ratio_7d
 ```
 
-This lets the model compare stable behavior with recent behavior during batch inference.
+These short-term features are stored for experimentation and future scoring designs; they are not currently included in the active supervised model feature list.
 
 ```text
 referral_rate       -> trailing 6-month baseline
 referral_rate_7d    -> trailing 7-day behavior
 ```
 
-A large difference between the two can help identify a provider whose recent behavior has shifted from its longer-term pattern.
+A future model or monitoring rule could compare the two to identify providers whose recent behavior has shifted from their longer-term pattern.
 
 ### Canonical feature history
 
@@ -461,16 +465,16 @@ Provider A
 
 ### Why Feature Store is used
 
-The Feature Store design supports four goals:
+The current demo uses the Feature Store layer to show how provider features can be stored and reused beyond a single training run:
 
-- reduce training-serving skew by using one canonical provider feature source
-- support point-in-time historical feature retrieval from BigQuery
-- reuse the same registered provider features across Random Forest, XGBoost, and future models
-- provide a direct path to online serving through a Bigtable-backed Feature View
+- maintain timestamped provider feature history
+- support point-in-time feature inspection and backtesting
+- keep long-term and short-term provider behavior in one reusable history
+- provide a path to a registered Vertex AI Feature Group and future online serving
 
-BigQuery remains the offline feature store for high-volume training and batch prediction.
+For the **active batch model**, BigQuery `provider_eye_features` remains the execution contract for TRAIN / TEST and batch scoring. The Feature Store history is a parallel reusable layer rather than a second hidden training path.
 
-Vertex AI Feature Store provides the registered feature layer and future online-serving path on top of the same canonical provider feature history.
+This design choice is intentional for the interview demo: the production workflow is runnable today, while the Feature Store layer demonstrates how the architecture can evolve toward centralized point-in-time training and online feature serving without pretending that integration is already complete.
 
 ### Current Feature Store resources
 
@@ -485,7 +489,52 @@ Feature View:
 eye_provider_fraud_feature_view
 ```
 
-The resulting architecture stays simple enough for an interview demo while showing a realistic two-speed feature design: monthly long-term context plus daily recent behavior.
+The resulting architecture stays simple enough for an interview demo while clearly separating the runnable batch-model contract from the reusable historical / future-online Feature Store layer.
+
+## Investigation Capacity and Business Value
+
+Fraud operations are capacity constrained, so the model is evaluated as a ranking system in addition to standard PR-AUC / precision / recall / F1 metrics.
+
+The investigation queue is model-independent:
+
+```text
+Latest curated provider_predictions run
+        |
+        v
+Rank providers by fraud_score
+        |
+        v
+Top 50 investigation queue
+        |
+        +-- P1: ranks 1-10
+        +-- P2: ranks 11-25
+        +-- P3: ranks 26-50
+```
+
+This works the same way whether the current scored model is Random Forest or XGBoost.
+
+Operational evaluation lives in:
+
+```text
+sql/evaluation/model_business_value.sql
+```
+
+and reports model value at investigator capacities:
+
+```text
+K = 10
+K = 20
+K = 50
+```
+
+with:
+
+- **precision@K** — fraction of selected providers that are fraud
+- **recall@K** — fraction of the known fraud population captured within investigator capacity
+- **lift@K** — precision@K divided by the underlying fraud prevalence
+- **confirmed fraud dollars captured@K** — value already confirmed through investigation feedback
+
+For this synthetic demo, recall@K and lift@K use the synthetic provider label from the claim generator. In production, the same framework would use matured SIU, audit, recovery, or adjudication outcomes and would account for label delay and investigation-selection bias.
 
 ## Scheduled Performance Monitoring
 
@@ -777,6 +826,7 @@ GCP-FWA-MLOps-Accelerator/
 │       └── requirements.txt
 │
 ├── sql/
+│   ├── evaluation/
 │   ├── features/
 │   ├── feedback/
 │   ├── monitoring/
@@ -1297,7 +1347,10 @@ The current workflow focuses on:
 - candidate registration
 - manual approval
 - artifact promotion
+- model-independent, capacity-based investigation queue
+- top-K operational evaluation and confirmed fraud-dollar capture
 - scheduled investigator-feedback performance monitoring
+- continuous fraud-score distribution drift monitoring
 - monitoring email notifications
 - monitoring-driven retraining signals
 
