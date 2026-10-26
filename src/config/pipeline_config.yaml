@@ -143,12 +143,15 @@ data:
 
 
 # ============================================================
-# PROVIDER-LEVEL FEATURE ENGINEERING
+# PROVIDER-LEVEL BASE FEATURE ENGINEERING
 #
-# These definitions are model-independent.
+# These expressions are calculated directly from claim-level
+# columns during provider aggregation.
 #
-# Use Case 2:
-# avg_member_provider_distance was added as a new feature.
+# IMPORTANT:
+# Do not put high_acuity_oe_ratio here. It depends on an already
+# aggregated provider feature plus the split-level peer baseline,
+# so it must remain under derived_feature_sql.
 # ============================================================
 
 feature_sql:
@@ -169,6 +172,12 @@ feature_sql:
 
 # ============================================================
 # DERIVED FEATURES
+#
+# These expressions are evaluated after provider-level base
+# features and split-level baselines have been created.
+#
+# high_acuity_oe_ratio therefore becomes a physical column in
+# fraud_features.provider_eye_features before model training.
 # ============================================================
 
 derived_feature_sql:
@@ -180,11 +189,12 @@ derived_feature_sql:
 
 
 # ============================================================
-# MODEL FEATURES
+# FALLBACK MODEL FEATURES
 #
-# Default feature set kept for backward compatibility.
-# Active training and serving use model.<model_type>.features
-# so each registered model carries its exact feature contract.
+# Active training and serving use model.<model_type>.features.
+# This fallback is kept only for backward compatibility and is
+# the complete provider-feature superset used by the current
+# supervised models.
 # ============================================================
 
 features:
@@ -195,6 +205,7 @@ features:
   - eye_procedure_pct
   - avg_paid_per_claim
   - high_acuity_oe_ratio
+  - avg_member_provider_distance
 
 
 # ============================================================
