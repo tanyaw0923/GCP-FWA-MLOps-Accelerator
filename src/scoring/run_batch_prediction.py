@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 import time
 from datetime import datetime, timezone
 
@@ -341,43 +342,18 @@ log_event(
 
 
 # ============================================================
-# 6. SELECT MODEL-SPECIFIC BATCH INPUT TABLE
-# ============================================================
-
-if MODEL_TYPE == "xgboost":
-
-    INPUT_TABLE = (
-        DATA_CONFIG[
-            "xgboost_batch_input_table"
-        ]
-    )
-
-
-elif MODEL_TYPE == "random_forest":
-
-    INPUT_TABLE = (
-        DATA_CONFIG[
-            "random_forest_batch_input_table"
-        ]
-    )
-
-
-else:
-
-    raise ValueError(
-        f"Unsupported model type: "
-        f"{MODEL_TYPE}"
-    )
-
-
-# ============================================================
-# 6A. RESOLVE EXACT MODEL FEATURE CONTRACT
+# 6. RESOLVE MODEL FEATURE CONTRACT
 #
-# The same model-specific feature list is used for training,
-# serving registration, and batch prediction transformation.
+# pipeline_config.yaml is the single source of truth.
+# The active model's feature list drives:
 #
-# Vertex receives provider_id as the key field and sends only
-# these numeric feature columns to the custom serving container.
+#   - training
+#   - serving registration
+#   - batch input materialization
+#   - Vertex batch inference
+#
+# No model-specific scoring SQL needs to be edited when features
+# are added or removed.
 # ============================================================
 
 MODEL_FEATURES = (
@@ -393,6 +369,25 @@ if not MODEL_FEATURES:
     raise RuntimeError(
         "No model feature contract was configured for "
         f"model_type={MODEL_TYPE}."
+    )
+
+feature_name_pattern = (
+    r"^[A-Za-z_][A-Za-z0-9_]*$"
+)
+
+invalid_feature_names = [
+    feature
+    for feature in MODEL_FEATURES
+    if not re.fullmatch(
+        feature_name_pattern,
+        feature,
+    )
+]
+
+if invalid_feature_names:
+    raise RuntimeError(
+        "Invalid configured feature name(s): "
+        f"{invalid_feature_names}"
     )
 
 if registered_features != MODEL_FEATURES:
@@ -419,25 +414,97 @@ print(
 )
 
 
-INPUT_URI = (
-    f"bq://{INPUT_TABLE}"
+# ============================================================
+# 7. DYNAMICALLY MATERIALIZE SHARED BATCH INPUT
+#
+# The provider feature table is the reusable superset feature
+# source. Before every batch prediction we create one shared
+# scoring table with exactly:
+#
+#   provider_id + MODEL_FEATURES
+#
+# Example:
+#   XGBoost configured with 7 features -> table has 7 features.
+#   XGBoost configured with 8 features -> table has 8 features.
+#   Random Forest configured with 8 -> table has 8 features.
+#
+# This removes RF/XGBoost-specific batch-input schemas.
+# ============================================================
+
+SOURCE_FEATURE_TABLE = (
+    DATA_CONFIG[
+        "feature_table"
+    ]
 )
 
-
-OUTPUT_URI = (
-    f"bq://{OUTPUT_DATASET}"
+INPUT_TABLE = (
+    DATA_CONFIG[
+        "batch_input_table"
+    ]
 )
 
+source_table = (
+    bq.get_table(
+        SOURCE_FEATURE_TABLE
+    )
+)
+
+source_columns = {
+    field.name
+    for field in source_table.schema
+}
+
+required_source_columns = (
+    {"provider_id", "dataset_split"}
+    | set(MODEL_FEATURES)
+)
+
+missing_source_columns = sorted(
+    required_source_columns
+    - source_columns
+)
+
+if missing_source_columns:
+    raise RuntimeError(
+        "Provider feature table is missing configured "
+        f"batch-scoring columns: {missing_source_columns}. "
+        "Refresh provider features before scoring."
+    )
+
+feature_select_sql = ",\n".join(
+    (
+        f"  CAST(\`{feature}\` AS FLOAT64) "
+        f"AS \`{feature}\`"
+    )
+    for feature in MODEL_FEATURES
+)
+
+create_batch_input_query = f"""
+CREATE OR REPLACE TABLE `{INPUT_TABLE}` AS
+SELECT
+  CAST(provider_id AS STRING) AS provider_id,
+{feature_select_sql}
+FROM `{SOURCE_FEATURE_TABLE}`
+WHERE dataset_split = 'TEST'
+"""
 
 print(
-    f"Input table: "
+    "\nMaterializing batch input from pipeline_config.yaml..."
+)
+
+print(
+    f"Source feature table: "
+    f"{SOURCE_FEATURE_TABLE}"
+)
+
+print(
+    f"Shared batch input table: "
     f"{INPUT_TABLE}"
 )
 
-
-# ============================================================
-# 7. VALIDATE INPUT TABLE
-# ============================================================
+bq.query(
+    create_batch_input_query
+).result()
 
 input_table = (
     bq.get_table(
@@ -445,41 +512,38 @@ input_table = (
     )
 )
 
-
 if input_table.num_rows == 0:
-
     raise RuntimeError(
-        "Batch input table is empty."
+        "Dynamic batch input table is empty."
     )
-
-
-print(
-    f"Input rows: "
-    f"{input_table.num_rows}"
-)
 
 input_columns = [
     field.name
     for field in input_table.schema
 ]
 
-required_input_columns = (
+expected_input_columns = (
     ["provider_id"]
     + MODEL_FEATURES
 )
 
-missing_input_columns = [
-    column
-    for column in required_input_columns
-    if column not in input_columns
-]
-
-if missing_input_columns:
+if input_columns != expected_input_columns:
     raise RuntimeError(
-        "Batch input is missing required columns: "
-        f"{missing_input_columns}. "
-        f"Expected provider_id + {MODEL_FEATURES}"
+        "Dynamic batch-input schema does not match the "
+        "configured feature contract. "
+        f"Actual={input_columns}; "
+        f"Expected={expected_input_columns}"
     )
+
+print(
+    f"Batch input rows: "
+    f"{input_table.num_rows}"
+)
+
+print(
+    f"Batch input columns: "
+    f"{input_columns}"
+)
 
 print(
     "Vertex instance transformation: "
@@ -489,12 +553,22 @@ print(
 
 log_event(
     logger,
-    "batch_input_validated",
+    "batch_input_materialized",
     fields={
+        "source_feature_table": SOURCE_FEATURE_TABLE,
         "input_table": INPUT_TABLE,
         "input_rows": input_table.num_rows,
         "model_type": MODEL_TYPE,
+        "model_features": MODEL_FEATURES,
     },
+)
+
+INPUT_URI = (
+    f"bq://{INPUT_TABLE}"
+)
+
+OUTPUT_URI = (
+    f"bq://{OUTPUT_DATASET}"
 )
 
 
