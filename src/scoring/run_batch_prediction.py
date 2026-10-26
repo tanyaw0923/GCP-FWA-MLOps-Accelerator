@@ -1,7 +1,9 @@
 import argparse
+import time
 from datetime import datetime, timezone
 
 from google.cloud import aiplatform
+from google.cloud import aiplatform_v1
 from google.cloud import bigquery
 
 from src.config.load_config import load_config
@@ -73,6 +75,10 @@ DATA_CONFIG = config[
     "data"
 ]
 
+MODEL_CONFIG = config[
+    "model"
+]
+
 
 MODEL_ID = args.model_id
 RUN_ID = args.run_id
@@ -110,6 +116,17 @@ bq = bigquery.Client(
 aiplatform.init(
     project=PROJECT_ID,
     location=REGION,
+)
+
+job_client = (
+    aiplatform_v1.JobServiceClient(
+        client_options={
+            "api_endpoint": (
+                f"{REGION}-"
+                "aiplatform.googleapis.com"
+            )
+        }
+    )
 )
 
 logger = configure_observability(
@@ -275,6 +292,42 @@ else:
     )
 
 
+# ============================================================
+# 6A. RESOLVE EXACT MODEL FEATURE CONTRACT
+#
+# The same model-specific feature list is used for training,
+# serving registration, and batch prediction transformation.
+#
+# Vertex receives provider_id as the key field and sends only
+# these numeric feature columns to the custom serving container.
+# ============================================================
+
+MODEL_FEATURES = (
+    MODEL_CONFIG[
+        MODEL_TYPE
+    ].get(
+        "features",
+        config["features"],
+    )
+)
+
+if not MODEL_FEATURES:
+    raise RuntimeError(
+        "No model feature contract was configured for "
+        f"model_type={MODEL_TYPE}."
+    )
+
+print(
+    f"Model feature count: "
+    f"{len(MODEL_FEATURES)}"
+)
+
+print(
+    f"Model features: "
+    f"{MODEL_FEATURES}"
+)
+
+
 INPUT_URI = (
     f"bq://{INPUT_TABLE}"
 )
@@ -312,6 +365,34 @@ if input_table.num_rows == 0:
 print(
     f"Input rows: "
     f"{input_table.num_rows}"
+)
+
+input_columns = [
+    field.name
+    for field in input_table.schema
+]
+
+required_input_columns = (
+    ["provider_id"]
+    + MODEL_FEATURES
+)
+
+missing_input_columns = [
+    column
+    for column in required_input_columns
+    if column not in input_columns
+]
+
+if missing_input_columns:
+    raise RuntimeError(
+        "Batch input is missing required columns: "
+        f"{missing_input_columns}. "
+        f"Expected provider_id + {MODEL_FEATURES}"
+    )
+
+print(
+    "Vertex instance transformation: "
+    "provider_id -> key; model receives only configured features."
 )
 
 log_event(
@@ -494,20 +575,21 @@ print(
 # ============================================================
 # 10. RUN VERTEX BATCH PREDICTION
 #
-# Use the proven BigQuery -> BigQuery path.
+# IMPORTANT:
+# aiplatform.Model.batch_predict() does not expose Vertex
+# BatchPredictionJob.instance_config. We therefore use the
+# lower-level JobService API.
 #
-# The batch input contains:
-#   provider_id + seven numeric model features
+# key_field="provider_id":
+#   - removes provider_id before the instance reaches the model
+#   - writes provider_id back to BigQuery output as "key"
 #
-# The custom XGBoost serving container already understands
-# this production layout. When Vertex sends positional values,
-# the container treats the first value as provider_id metadata
-# and sends only the remaining seven values into XGBoost.
+# included_fields:
+#   - sends only the configured numeric model features
+#   - guarantees their positional order for array instances
 #
-# We intentionally do NOT use instance_config here. This keeps
-# the previously validated serving contract unchanged and lets
-# Vertex preserve the BigQuery instance fields, including
-# provider_id, in successful prediction output.
+# This prevents identifiers such as "P00175" from ever being
+# passed into RandomForestClassifier / XGBoost as a feature.
 # ============================================================
 
 print(
@@ -520,46 +602,135 @@ print(
     "=============================================="
 )
 
-batch_job = model.batch_predict(
-    job_display_name=(
+parent = (
+    f"projects/{PROJECT_ID}/"
+    f"locations/{REGION}"
+)
+
+batch_prediction_job_spec = {
+    "display_name": (
         f"provider-fraud-"
         f"{MODEL_TYPE.replace('_', '-')}-"
         f"batch"
     ),
 
-    bigquery_source=(
-        INPUT_URI
+    "model": (
+        model.resource_name
     ),
 
-    bigquery_destination_prefix=(
-        OUTPUT_URI
-    ),
+    "input_config": {
+        "instances_format": "bigquery",
+        "bigquery_source": {
+            "input_uri": INPUT_URI,
+        },
+    },
 
-    instances_format=(
-        "bigquery"
-    ),
+    "instance_config": {
+        "instance_type": "array",
+        "key_field": "provider_id",
+        "included_fields": MODEL_FEATURES,
+    },
 
-    predictions_format=(
-        "bigquery"
-    ),
+    "output_config": {
+        "predictions_format": "bigquery",
+        "bigquery_destination": {
+            "output_uri": OUTPUT_URI,
+        },
+    },
 
-    machine_type=(
-        MACHINE_TYPE
-    ),
+    "dedicated_resources": {
+        "machine_spec": {
+            "machine_type": MACHINE_TYPE,
+        },
+        "starting_replica_count": 1,
+        "max_replica_count": 1,
+    },
+}
 
-    sync=True,
+batch_job = (
+    job_client.create_batch_prediction_job(
+        parent=parent,
+        batch_prediction_job=(
+            batch_prediction_job_spec
+        ),
+    )
 )
+
+print(
+    f"Batch job resource: "
+    f"{batch_job.name}"
+)
+
+terminal_states = {
+    (
+        aiplatform_v1.types
+        .JobState
+        .JOB_STATE_SUCCEEDED
+    ),
+    (
+        aiplatform_v1.types
+        .JobState
+        .JOB_STATE_FAILED
+    ),
+    (
+        aiplatform_v1.types
+        .JobState
+        .JOB_STATE_CANCELLED
+    ),
+    (
+        aiplatform_v1.types
+        .JobState
+        .JOB_STATE_PAUSED
+    ),
+}
+
+last_state = None
+
+while True:
+    batch_job = (
+        job_client.get_batch_prediction_job(
+            name=batch_job.name
+        )
+    )
+
+    if batch_job.state != last_state:
+        print(
+            f"Batch job state: "
+            f"{batch_job.state.name}"
+        )
+
+        last_state = (
+            batch_job.state
+        )
+
+    if batch_job.state in terminal_states:
+        break
+
+    time.sleep(30)
+
+if (
+    batch_job.state
+    !=
+    aiplatform_v1.types
+    .JobState
+    .JOB_STATE_SUCCEEDED
+):
+    raise RuntimeError(
+        "Vertex batch prediction job failed. "
+        f"State={batch_job.state.name}; "
+        f"Error={batch_job.error}"
+    )
 
 print(
     "\nBatch prediction job complete."
 )
 print(
     f"Job resource: "
-    f"{batch_job.resource_name}"
+    f"{batch_job.name}"
 )
 print(
     f"Job state: "
-    f"{batch_job.state}"
+    f"{batch_job.state.name}"
 )
 print(
     f"Output info: "
@@ -942,11 +1113,10 @@ print(
 # ============================================================
 # 16. DETERMINE PROVIDER IDENTIFIER STRATEGY
 #
-# Your production xgboost_batch_input should contain
-# provider_id so the scored provider can be linked downstream.
+# Vertex instance_config.key_field removes provider_id from the
+# model instance and writes it back to BigQuery as "key".
 #
-# If provider_id is not present in the raw Vertex output,
-# fail instead of silently losing lineage.
+# Keep provider_id as a legacy fallback for older batch outputs.
 # ============================================================
 
 raw_table = (
@@ -955,29 +1125,30 @@ raw_table = (
     )
 )
 
-
 raw_columns = {
     field.name
     for field in raw_table.schema
 }
 
+if "key" in raw_columns:
 
-if "provider_id" in raw_columns:
+    provider_identifier_column = (
+        "key"
+    )
+
+elif "provider_id" in raw_columns:
 
     provider_identifier_column = (
         "provider_id"
     )
 
-
 else:
 
     raise RuntimeError(
-        "provider_id is missing from the Vertex "
-        "prediction output. The batch input uses "
-        "excluded_fields=['provider_id'], so Vertex "
-        "should attach provider_id back to each output row."
+        "Provider lineage is missing from the Vertex "
+        "prediction output. Expected 'key' from "
+        "instance_config.key_field='provider_id'."
     )
-
 
 print(
     "Provider lineage column: "
