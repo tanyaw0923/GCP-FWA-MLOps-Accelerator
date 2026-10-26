@@ -131,9 +131,9 @@ data:
 
   experiment_metrics_table: fwa-mlops-accelerator-demo.fraud_experiments.experiment_metrics
   
-  random_forest_batch_input_table: fwa-mlops-accelerator-demo.fraud_features.random_forest_batch_input
-
-  xgboost_batch_input_table: fwa-mlops-accelerator-demo.fraud_features.xgboost_batch_input  
+  # Shared materialized scoring table. Its schema is regenerated
+  # dynamically from model.<model_type>.features before each batch job.
+  batch_input_table: fwa-mlops-accelerator-demo.fraud_features.model_batch_input
 
   provider_prediction_table: fwa-mlops-accelerator-demo.fraud_experiments.provider_predictions
 
