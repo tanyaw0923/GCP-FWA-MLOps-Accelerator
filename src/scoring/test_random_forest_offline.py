@@ -152,7 +152,7 @@ def main():
     query = f"""
     SELECT
         {selected_columns}
-    FROM \`{input_table}\`
+    FROM `{input_table}`
     {where_clause}
     LIMIT 1
     """
