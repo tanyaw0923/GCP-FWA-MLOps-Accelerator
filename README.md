@@ -1130,62 +1130,6 @@ check_retraining_decision_component.py
 daily training pipeline
 ```
 
-## Build-Time vs Run-Time Flow
-
-Training-image creation and pipeline execution are separate concerns.
-
-### Build time
-
-```text
-cloudbuild-random-forest.yaml
-        ↓
-docker/random_forest/Dockerfile
-        ↓
-Random Forest training image
-        ↓
-Artifact Registry
-
-
-cloudbuild-xgboost.yaml
-        ↓
-docker/xgboost/Dockerfile
-        ↓
-XGBoost training image
-        ↓
-Artifact Registry
-```
-
-### Run time
-
-```text
-pipeline_config.yaml
-        ↓
-run_model_training_pipeline.py
-        ↓
-Vertex AI Pipeline
-        ↓
-train_*_component.py
-        ↓
-previously built training image
-        ↓
-run_*_training.py
-        ↓
-train_*.py
-```
-
-In short:
-
-```text
-Cloud Build
-    → builds the model-training environment
-
-Vertex AI Pipelines
-    → orchestrates when and how training runs
-
-train_random_forest.py / train_xgboost.py
-    → contain the model-specific ML logic
-```
-
 ## Where to Start Reading the Code
 
 For a first pass through the repository, read the files in this order:
