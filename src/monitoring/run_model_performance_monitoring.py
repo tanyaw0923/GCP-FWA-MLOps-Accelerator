@@ -46,6 +46,14 @@ PERFORMANCE_TABLE = (
     ]
 )
 
+TRAINING_STATE_TABLE = (
+    config["monitoring"][
+        "training_state_table"
+    ]
+)
+
+STATE_KEY = "provider_fraud_model"
+
 
 client = bigquery.Client(
     project=PROJECT_ID
@@ -243,53 +251,156 @@ client.query(
 ).result()
 
 
-# Find the most recent model/run with completed investigation feedback.
-latest_run_query = f"""
+# Resolve the model that is actually approved for production.
+#
+# Monitoring must follow production state, not whichever model happens
+# to have the newest investigator feedback. This makes the monitor
+# algorithm-agnostic: Random Forest or XGBoost can be production.
+client.query(
+    f"""
+    ALTER TABLE `{TRAINING_STATE_TABLE}`
+    ADD COLUMN IF NOT EXISTS approved_model_resource STRING
+    """
+).result()
+
+production_state_query = f"""
 SELECT
-    model_name,
-    model_version,
-    run_id,
-    MAX(created_at) AS latest_feedback_timestamp
-
-FROM `{FEEDBACK_TABLE}`
-
-WHERE
-    run_id IS NOT NULL
-    AND model_name IS NOT NULL
-    AND model_version IS NOT NULL
-
-    AND investigation_result IN (
-        'CONFIRMED_FRAUD',
-        'CONFIRMED_NORMAL'
-    )
-
-GROUP BY
-    model_name,
-    model_version,
-    run_id
-
-ORDER BY
-    latest_feedback_timestamp DESC
-
+    approved_model_type,
+    approved_run_id,
+    approved_model_resource
+FROM `{TRAINING_STATE_TABLE}`
+WHERE model_name = @state_key
 LIMIT 1
 """
 
-latest_run_rows = list(
+production_state_config = bigquery.QueryJobConfig(
+    query_parameters=[
+        bigquery.ScalarQueryParameter(
+            "state_key",
+            "STRING",
+            STATE_KEY,
+        )
+    ]
+)
+
+production_state_rows = list(
     client.query(
-        latest_run_query
+        production_state_query,
+        job_config=production_state_config,
     ).result()
 )
 
-if not latest_run_rows:
+if not production_state_rows:
     raise RuntimeError(
-        "No completed investigation results were found."
+        "No production training state was found for "
+        f"state_key={STATE_KEY}."
     )
 
-latest_run = latest_run_rows[0]
+production_state = production_state_rows[0]
 
-model_name = latest_run.model_name
-model_version = latest_run.model_version
-run_id = latest_run.run_id
+model_name = production_state.approved_model_type
+run_id = production_state.approved_run_id
+approved_model_resource = (
+    production_state.approved_model_resource
+)
+
+if not model_name or not run_id:
+    raise RuntimeError(
+        "Production model is not fully approved. "
+        "approved_model_type and approved_run_id are required."
+    )
+
+
+# Resolve the exact scored model version for the approved run.
+#
+# New promotions persist approved_model_resource. For older state rows
+# that predate that column being populated, fall back to the scored
+# prediction/feedback lineage for the approved model and run.
+approved_model_id = None
+
+if approved_model_resource:
+    approved_model_id = (
+        approved_model_resource
+        .rstrip("/")
+        .split("/")[-1]
+    )
+
+expected_model_version = (
+    f"{model_name}:{approved_model_id}"
+    if approved_model_id
+    else None
+)
+
+model_version_query = f"""
+SELECT
+    p.model_version,
+    MAX(f.created_at) AS latest_feedback_timestamp
+FROM `{PREDICTIONS_TABLE}` p
+INNER JOIN `{FEEDBACK_TABLE}` f
+    ON p.provider_id = f.provider_id
+    AND p.run_id = f.run_id
+    AND p.model_version = f.model_version
+WHERE
+    p.model_name = @model_name
+    AND p.run_id = @run_id
+    AND f.model_name = @model_name
+    AND f.run_id = @run_id
+    AND f.investigation_result IN (
+        'CONFIRMED_FRAUD',
+        'CONFIRMED_NORMAL'
+    )
+    AND (
+        @expected_model_version IS NULL
+        OR p.model_version = @expected_model_version
+    )
+GROUP BY
+    p.model_version
+ORDER BY
+    latest_feedback_timestamp DESC
+LIMIT 1
+"""
+
+model_version_config = bigquery.QueryJobConfig(
+    query_parameters=[
+        bigquery.ScalarQueryParameter(
+            "model_name",
+            "STRING",
+            model_name,
+        ),
+        bigquery.ScalarQueryParameter(
+            "run_id",
+            "STRING",
+            run_id,
+        ),
+        bigquery.ScalarQueryParameter(
+            "expected_model_version",
+            "STRING",
+            expected_model_version,
+        ),
+    ]
+)
+
+model_version_rows = list(
+    client.query(
+        model_version_query,
+        job_config=model_version_config,
+    ).result()
+)
+
+if not model_version_rows:
+    raise RuntimeError(
+        "No completed production investigation results were found "
+        f"for approved model_type={model_name}, run_id={run_id}"
+        + (
+            f", model_version={expected_model_version}."
+            if expected_model_version
+            else "."
+        )
+    )
+
+model_version = (
+    model_version_rows[0].model_version
+)
 
 
 print("=" * 60)
@@ -297,7 +408,12 @@ print("PRODUCTION PERFORMANCE MONITORING")
 print("=" * 60)
 
 print(
-    f"Model: {model_name}"
+    f"Approved production model: {model_name}"
+)
+
+print(
+    f"Approved model resource: "
+    f"{approved_model_resource or 'legacy state / inferred from lineage'}"
 )
 
 print(
