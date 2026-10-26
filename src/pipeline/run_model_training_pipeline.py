@@ -88,10 +88,19 @@ else:
 # Feature configuration
 # ------------------------------------------------------------------
 
-FEATURE_COLUMNS = active_model.get(
-    "features",
-    config["features"],
-)
+if "features" not in active_model:
+    raise ValueError(
+        "Each model must define its own features list in "
+        "pipeline_config.yaml under model.<model_type>.features. "
+        f"Missing features for model_type={MODEL_TYPE}."
+    )
+
+FEATURE_COLUMNS = active_model["features"]
+
+if not FEATURE_COLUMNS:
+    raise ValueError(
+        f"Feature list is empty for model_type={MODEL_TYPE}."
+    )
 FEATURE_SQL = config["feature_sql"]
 DERIVED_FEATURE_SQL = config[
     "derived_feature_sql"
