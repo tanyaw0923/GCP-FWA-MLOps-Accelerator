@@ -1282,6 +1282,25 @@ The generated file can then be loaded into the configured BigQuery claims table.
 
 Custom project images use explicit semantic-style versions rather than floating tags.
 
+`v1.0.0` follows standard semantic versioning more closely. The usual pattern is:
+
+```text
+MAJOR.MINOR.PATCH
+```
+
+So:
+
+```text
+v1.0.0
+```
+
+means:
+
+- `1` = major version
+- `0` = minor version
+- `0` = patch version
+
+
 ```text
 Random Forest training
 random-forest-training:v1.0.0
