@@ -497,50 +497,67 @@ The resulting architecture stays simple enough for an interview demo while clear
 
 ## Batch Inference and Provider Lineage
 
-Batch inference uses the validated BigQuery-to-BigQuery serving contract.
+`pipeline_config.yaml` is the single source of truth for the model feature contract.
 
-The scoring input table contains:
+For the selected model type, `run_batch_prediction.py` reads:
 
 ```text
-provider_id
-high_acuity_pct
-pct_99214
-pct_99215
-referral_rate
-eye_procedure_pct
-avg_paid_per_claim
-high_acuity_oe_ratio
+model.<model_type>.features
 ```
 
-The custom XGBoost serving container treats `provider_id` as metadata. When Vertex sends positional values, the container removes the first value as the provider identifier and sends only the remaining seven numeric features into XGBoost.
+and dynamically materializes one shared scoring table:
 
 ```text
-BigQuery batch input
-provider_id + 7 model features
+fraud_features.model_batch_input
+```
+
+from the provider-level feature table. The schema is rebuilt immediately before each batch job as:
+
+```text
+provider_id + exactly the configured model features
+```
+
+This means a feature added to Random Forest or XGBoost in `pipeline_config.yaml` automatically flows into training, serving registration, and batch inference without editing model-specific scoring SQL.
+
+`provider_id` is lineage metadata, not a model feature. Vertex batch prediction uses object instances with:
+
+```text
+excluded_fields = ["provider_id"]
+```
+
+so the serving container receives only configured model features while `provider_id` is attached back to the BigQuery prediction output.
+
+```text
+pipeline_config.yaml
         |
         v
+model.<model_type>.features
+        |
+        +-----------------------+
+        |                       |
+        v                       v
+training                 dynamic batch input
+                                |
+                                v
+provider_id + configured features
+                                |
+                                v
 Vertex AI Batch Prediction
-        |
-        | custom serving container strips provider_id
-        | XGBoost receives 7 model features
-        v
+provider_id excluded from model instance
+                                |
+                                v
+model-specific serving app
+RF predict_proba / XGBoost predict
+                                |
+                                v
 BigQuery current-job output
 provider_id + prediction
-        |
-        v
-run_batch_prediction.py
-        |
-        +-- binds output to this exact batch job
-        +-- fails on row-level errors
-        +-- validates prediction count
-        +-- validates provider lineage
-        +-- converts prediction to fraud_score
-        +-- ranks providers
-        v
+                                |
+                                v
 fraud_experiments.provider_predictions
 ```
 
-The scoring script never falls back to an older `predictions_*` table. If the current batch creates row-level errors, the run fails fast and the curated `provider_predictions` table is left unchanged.
+The scoring script validates that the registered Vertex model carries the same feature contract and serving image as `pipeline_config.yaml`, fails fast on row-level prediction errors, and never reuses an older `predictions_*` table.
 
 Run batch inference with:
 
@@ -1510,28 +1527,11 @@ predictRoute: /predict
 healthRoute: /health
 ```
 
-### 6. Create the Batch-Scoring Input
+### 6. Batch-Scoring Input Is Generated Automatically
 
-```bash
-bq query \
-  --use_legacy_sql=false \
-  < sql/scoring/create_batch_scoring_input.sql
-```
+There is no model-specific batch-scoring SQL to maintain. When batch inference starts, `run_batch_prediction.py` reads the active model's `features` list from `pipeline_config.yaml` and recreates the shared `fraud_features.model_batch_input` table from `fraud_features.provider_eye_features`.
 
-The XGBoost input contains:
-
-```text
-provider_id
-high_acuity_pct
-pct_99214
-pct_99215
-referral_rate
-eye_procedure_pct
-avg_paid_per_claim
-high_acuity_oe_ratio
-```
-
-`provider_id` is lineage metadata and is not used as an XGBoost feature.
+The table always contains `provider_id` plus exactly the features configured for the selected model. `provider_id` remains lineage metadata and is excluded from the model instance by Vertex.
 
 ### 7. Run Batch Inference
 
