@@ -54,9 +54,9 @@ if (
         "JSON array of feature names."
     )
 
-METADATA_FIELDS = [
-    "provider_id",
-]
+# provider_id is removed upstream by Vertex BatchPredictionJob
+# instance_config.key_field and is returned separately as "key".
+# The model container therefore receives model features only.
 
 
 def ensure_model_file():
@@ -199,45 +199,29 @@ def predict(
 
         elif isinstance(instance, list):
 
-            expected_features_only = len(
+            expected_features = len(
                 FEATURES
-            )
-
-            expected_with_metadata = (
-                len(FEATURES)
-                + len(METADATA_FIELDS)
             )
 
             if (
                 len(instance)
-                == expected_features_only
+                != expected_features
             ):
-                feature_values = instance
-
-            elif (
-                len(instance)
-                == expected_with_metadata
-            ):
-                feature_values = (
-                    instance[1:]
-                )
-
-            else:
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         "Unexpected input field count. "
-                        f"Received {len(instance)} fields. "
-                        f"Expected {expected_features_only} "
-                        "feature-only fields or "
-                        f"{expected_with_metadata} fields "
-                        "including provider_id."
+                        f"Received {len(instance)} fields; "
+                        f"expected exactly {expected_features} "
+                        "model features. provider_id must be "
+                        "removed upstream using Vertex "
+                        "instance_config.key_field."
                     ),
                 )
 
             feature_values = [
                 float(value)
-                for value in feature_values
+                for value in instance
             ]
 
         else:
