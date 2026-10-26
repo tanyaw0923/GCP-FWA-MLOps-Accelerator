@@ -620,6 +620,9 @@ Production performance monitoring is intentionally separated from the Vertex AI 
 
 The monitoring workflow runs twice per month:
 
+#### Example Email Output Attached Below:
+[FWA Model Performance Monitoring - ALERT email.pdf](https://github.com/user-attachments/files/33799524/FWA.Model.Performance.Monitoring.-.ALERT.email.pdf)
+
 ```text
 Cloud Scheduler
 1st and 15th at 7:00 AM
