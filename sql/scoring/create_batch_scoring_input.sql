@@ -1,75 +1,38 @@
 -- ============================================================
--- BATCH SCORING INPUT
+-- DEPRECATED: STATIC BATCH-SCORING INPUT SQL
 --
--- Preserve provider_id as a key for downstream lineage while the
--- model receives only the configured numeric feature columns.
+-- Batch-scoring input is now materialized dynamically by:
 --
--- run_batch_prediction.py submits provider_id as Vertex key_field,
--- so Vertex excludes the key from the model instance and writes it
--- back to the prediction output as "key".
+--   python -m src.scoring.run_batch_prediction --model-id MODEL_ID
+--
+-- pipeline_config.yaml is the single source of truth.
+--
+-- run_batch_prediction.py reads:
+--
+--   model.<model_type>.features
+--
+-- and creates:
+--
+--   fraud_features.model_batch_input
+--
+-- with exactly:
+--
+--   provider_id + the configured model features
+--
+-- Therefore:
+--
+--   - adding/removing an RF feature requires only YAML changes
+--   - adding/removing an XGBoost feature requires only YAML changes
+--   - no model-specific scoring SQL needs to be maintained
+--
+-- The source is:
+--
+--   fraud_features.provider_eye_features
+--
+-- filtered to:
+--
+--   dataset_split = 'TEST'
+--
+-- This file intentionally contains no executable SQL so it cannot
+-- drift away from the model feature contract in pipeline_config.yaml.
 -- ============================================================
-
-CREATE OR REPLACE TABLE
-  `fwa-mlops-accelerator-demo.fraud_features.xgboost_batch_input`
-AS
-
-SELECT
-  CAST(provider_id AS STRING) AS provider_id,
-
-  CAST(high_acuity_pct AS FLOAT64)
-    AS high_acuity_pct,
-
-  CAST(pct_99214 AS FLOAT64)
-    AS pct_99214,
-
-  CAST(pct_99215 AS FLOAT64)
-    AS pct_99215,
-
-  CAST(referral_rate AS FLOAT64)
-    AS referral_rate,
-
-  CAST(eye_procedure_pct AS FLOAT64)
-    AS eye_procedure_pct,
-
-  CAST(avg_paid_per_claim AS FLOAT64)
-    AS avg_paid_per_claim,
-
-  CAST(high_acuity_oe_ratio AS FLOAT64)
-    AS high_acuity_oe_ratio
-
-FROM
-  `fwa-mlops-accelerator-demo.fraud_features.provider_eye_features`
-
-WHERE
-  dataset_split = 'TEST';
-
-
--- Random Forest artifact expects eight numeric features.
--- provider_id remains metadata, not a model feature.
-CREATE OR REPLACE TABLE
-  `fwa-mlops-accelerator-demo.fraud_features.random_forest_batch_input`
-AS
-SELECT
-  CAST(provider_id AS STRING) AS provider_id,
-  CAST(high_acuity_pct AS FLOAT64) AS high_acuity_pct,
-  CAST(pct_99214 AS FLOAT64) AS pct_99214,
-  CAST(pct_99215 AS FLOAT64) AS pct_99215,
-  CAST(referral_rate AS FLOAT64) AS referral_rate,
-  CAST(eye_procedure_pct AS FLOAT64) AS eye_procedure_pct,
-  CAST(avg_paid_per_claim AS FLOAT64) AS avg_paid_per_claim,
-  CAST(high_acuity_oe_ratio AS FLOAT64) AS high_acuity_oe_ratio,
-  CAST(avg_member_provider_distance AS FLOAT64)
-    AS avg_member_provider_distance
-FROM
-  `fwa-mlops-accelerator-demo.fraud_features.provider_eye_features`
-WHERE
-  dataset_split = 'TEST';
-
--- QA
-SELECT
-  COUNT(*) AS providers,
-  COUNT(DISTINCT provider_id) AS unique_providers,
-  COUNTIF(provider_id IS NULL) AS missing_provider_id
-
-FROM
-  `fwa-mlops-accelerator-demo.fraud_features.xgboost_batch_input`;
