@@ -26,6 +26,13 @@ FEEDBACK_TABLE = (
     "fraud_feedback.investigation_results"
 )
 
+TRAINING_STATE_TABLE = (
+    f"{PROJECT_ID}."
+    "fraud_monitoring.model_training_state"
+)
+
+STATE_KEY = "provider_fraud_model"
+
 INVESTIGATION_CAPACITY = 50
 
 RANDOM_SEED = 42
@@ -53,66 +60,149 @@ investigation_date = (
 
 
 # ============================================================
-# 1. FIND LATEST PREDICTION RUN
+# 1. RESOLVE APPROVED PRODUCTION PREDICTION RUN
 #
-# The investigation workflow should follow the newest
-# prediction population written into provider_predictions.
-#
-# No model type is hard-coded here.
+# Investigation must follow the model that is actually approved
+# in production rather than the newest experiment / prediction.
 # ============================================================
 
-latest_run_query = f"""
+client.query(
+    f"""
+    ALTER TABLE `{TRAINING_STATE_TABLE}`
+    ADD COLUMN IF NOT EXISTS approved_model_resource STRING
+    """
+).result()
+
+production_state_query = f"""
+SELECT
+    approved_model_type,
+    approved_run_id,
+    approved_model_resource
+FROM `{TRAINING_STATE_TABLE}`
+WHERE model_name = @state_key
+LIMIT 1
+"""
+
+production_state_config = bigquery.QueryJobConfig(
+    query_parameters=[
+        bigquery.ScalarQueryParameter(
+            "state_key",
+            "STRING",
+            STATE_KEY,
+        )
+    ]
+)
+
+production_state_rows = list(
+    client.query(
+        production_state_query,
+        job_config=production_state_config,
+    ).result()
+)
+
+if not production_state_rows:
+    raise RuntimeError(
+        "No production training state was found for "
+        f"state_key={STATE_KEY}."
+    )
+
+production_state = production_state_rows[0]
+
+model_name = production_state.approved_model_type
+run_id = production_state.approved_run_id
+approved_model_resource = (
+    production_state.approved_model_resource
+)
+
+if not model_name or not run_id:
+    raise RuntimeError(
+        "Production model is not fully approved. "
+        "approved_model_type and approved_run_id are required."
+    )
+
+approved_model_id = None
+
+if approved_model_resource:
+    approved_model_id = (
+        approved_model_resource
+        .rstrip("/")
+        .split("/")[-1]
+    )
+
+expected_model_version = (
+    f"{model_name}:{approved_model_id}"
+    if approved_model_id
+    else None
+)
+
+production_prediction_query = f"""
 SELECT
     model_name,
     model_version,
     run_id,
-
-    MAX(created_at)
-        AS latest_prediction_timestamp
-
+    MAX(created_at) AS latest_prediction_timestamp
 FROM `{PREDICTIONS_TABLE}`
-
 WHERE
-    run_id IS NOT NULL
-    AND model_name IS NOT NULL
-    AND model_version IS NOT NULL
-
+    model_name = @model_name
+    AND run_id = @run_id
+    AND (
+        @expected_model_version IS NULL
+        OR model_version = @expected_model_version
+    )
 GROUP BY
     model_name,
     model_version,
     run_id
-
 ORDER BY
     latest_prediction_timestamp DESC
-
 LIMIT 1
 """
 
-latest_run_rows = list(
+production_prediction_config = bigquery.QueryJobConfig(
+    query_parameters=[
+        bigquery.ScalarQueryParameter(
+            "model_name",
+            "STRING",
+            model_name,
+        ),
+        bigquery.ScalarQueryParameter(
+            "run_id",
+            "STRING",
+            run_id,
+        ),
+        bigquery.ScalarQueryParameter(
+            "expected_model_version",
+            "STRING",
+            expected_model_version,
+        ),
+    ]
+)
+
+production_prediction_rows = list(
     client.query(
-        latest_run_query
+        production_prediction_query,
+        job_config=production_prediction_config,
     ).result()
 )
 
-if not latest_run_rows:
+if not production_prediction_rows:
     raise RuntimeError(
-        "No provider predictions were found."
+        "No provider predictions were found for the "
+        "approved production model. "
+        f"model_type={model_name}, run_id={run_id}"
+        + (
+            f", model_version={expected_model_version}."
+            if expected_model_version
+            else "."
+        )
     )
 
-latest_run = (
-    latest_run_rows[0]
-)
-
-model_name = (
-    latest_run.model_name
+production_prediction = (
+    production_prediction_rows[0]
 )
 
 model_version = (
-    latest_run.model_version
-)
-
-run_id = (
-    latest_run.run_id
+    production_prediction.model_version
 )
 
 
@@ -121,7 +211,7 @@ print(
 )
 
 print(
-    "INVESTIGATION SOURCE"
+    "PRODUCTION INVESTIGATION SOURCE"
 )
 
 print(
@@ -129,8 +219,13 @@ print(
 )
 
 print(
-    f"Model: "
+    f"Approved production model: "
     f"{model_name}"
+)
+
+print(
+    f"Approved model resource: "
+    f"{approved_model_resource or 'legacy state / inferred from lineage'}"
 )
 
 print(
