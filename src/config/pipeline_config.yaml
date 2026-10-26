@@ -17,7 +17,7 @@ bucket: fwa-mlops-accelerator-demo-folder
 # ============================================================
 
 model:
-  model_type: xgboost
+  model_type: random_forest
 
   positive_class: 1
   normal_class: 0
