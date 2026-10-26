@@ -38,6 +38,16 @@ model:
 
     serving_container_image_uri: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-serving:v1.0.0
 
+    features:
+      - high_acuity_pct
+      - pct_99214
+      - pct_99215
+      - referral_rate
+      - eye_procedure_pct
+      - avg_paid_per_claim
+      - high_acuity_oe_ratio
+      - avg_member_provider_distance
+
 
   xgboost:
     model_name: xgboost
@@ -57,6 +67,15 @@ model:
     training_image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-training:v1.0.0
 
     serving_container_image_uri: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:v1.0.0
+
+    features:
+      - high_acuity_pct
+      - pct_99214
+      - pct_99215
+      - referral_rate
+      - eye_procedure_pct
+      - avg_paid_per_claim
+      - high_acuity_oe_ratio
 
 
 # ============================================================
@@ -145,7 +164,7 @@ feature_sql:
 
   avg_paid_per_claim: "AVG(total_paid_amount)"
 
-  #avg_member_provider_distance: "AVG(member_provider_distance)"
+  avg_member_provider_distance: "AVG(member_provider_distance)"
 
 
 # ============================================================
@@ -163,10 +182,9 @@ derived_feature_sql:
 # ============================================================
 # MODEL FEATURES
 #
-# Shared feature set used by both Random Forest and XGBoost.
-#
-# Individual model-specific feature sets can be added later
-# if needed.
+# Default feature set kept for backward compatibility.
+# Active training and serving use model.<model_type>.features
+# so each registered model carries its exact feature contract.
 # ============================================================
 
 features:
@@ -177,7 +195,6 @@ features:
   - eye_procedure_pct
   - avg_paid_per_claim
   - high_acuity_oe_ratio
-  #- avg_member_provider_distance
 
 
 # ============================================================
