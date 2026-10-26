@@ -1340,9 +1340,29 @@ Update the configuration for the experiment you want to run. Common changes incl
 
 Because `pipeline_config.yaml` is the shared source of truth, these settings drive retraining signatures, model training, serving registration, and batch-scoring feature selection.
 
-### 3. Build the Custom Serving Images
+### 3. Build the Required Container Images
 
-Random Forest:
+Build the training image when the model-training code or training environment changes.
+
+Random Forest training:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-random-forest.yaml \
+  .
+```
+
+XGBoost training:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-xgboost.yaml \
+  .
+```
+
+Build the serving image when prediction logic or the serving environment changes.
+
+Random Forest serving:
 
 ```bash
 gcloud builds submit \
@@ -1350,13 +1370,15 @@ gcloud builds submit \
   .
 ```
 
-XGBoost:
+XGBoost serving:
 
 ```bash
 gcloud builds submit \
   --config cloudbuild-xgboost-serving.yaml \
   .
 ```
+
+You do not need to rebuild every image for every run. Rebuild only the image affected by your code or environment change.
 
 ### 4. Compile and Run the Candidate Training Pipeline
 
