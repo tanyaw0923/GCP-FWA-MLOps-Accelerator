@@ -1424,16 +1424,16 @@ The launcher:
 
 The following commands reflect the current demo workflow from candidate training through manual approval, model lookup, batch inference, investigation, and monitoring.
 
-### 1. Pull the Current Demo Branch
+### 1. Pull the Latest Main Branch
 
 ```bash
-git checkout demo-readiness-five-fixes
-git pull origin demo-readiness-five-fixes
+git checkout main
+git pull origin main
 ```
 
 ### 2. Build the Custom Serving Images
 
-Both Random Forest and XGBoost batch inputs preserve `provider_id` for lineage. Their custom serving containers remove that identifier before constructing the numeric feature matrix.
+Both Random Forest and XGBoost batch inputs preserve `provider_id` for lineage. Vertex batch prediction excludes `provider_id` from the model instance before the request reaches the custom serving container, while preserving the identifier in the BigQuery output for downstream lineage.
 
 Random Forest:
 
