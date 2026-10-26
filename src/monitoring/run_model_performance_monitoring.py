@@ -1,5 +1,6 @@
 import os
 import smtplib
+import ssl
 from datetime import datetime, timezone
 from email.message import EmailMessage
 
@@ -146,15 +147,17 @@ def send_monitoring_email(
     message.set_content(body)
 
     try:
-        with smtplib.SMTP(
-            "smtp.gmail.com",
-            587,
-            timeout=30,
-        ) as smtp:
+        # Gmail SMTP uses a Google App Password rather than the
+        # account's normal sign-in password. Use implicit TLS on
+        # port 465 to avoid STARTTLS connection instability.
+        tls_context = ssl.create_default_context()
 
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.ehlo()
+        with smtplib.SMTP_SSL(
+            "smtp.gmail.com",
+            465,
+            timeout=30,
+            context=tls_context,
+        ) as smtp:
 
             smtp.login(
                 sender,
@@ -179,6 +182,8 @@ def send_monitoring_email(
             f"{recipient}"
         )
 
+        return True
+
     except Exception as exc:
         log_event(
             logger,
@@ -191,7 +196,8 @@ def send_monitoring_email(
         )
 
         print(
-            "\nEmail sending failed."
+            "\nEmail sending failed, but the monitoring "
+            "result was already written successfully."
         )
 
         print(
@@ -204,7 +210,7 @@ def send_monitoring_email(
             f"{exc}"
         )
 
-        raise
+        return False
 
 
 # Create the monitoring table if it does not exist.
