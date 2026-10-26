@@ -61,11 +61,9 @@ if (
     )
 
 
-# provider_id is metadata.
-# It must NOT be sent into XGBoost.
-METADATA_FIELDS = [
-    "provider_id",
-]
+# provider_id is removed upstream by Vertex BatchPredictionJob
+# instance_config.key_field and is returned separately as "key".
+# The model container therefore receives model features only.
 
 
 # ============================================================
@@ -314,82 +312,32 @@ def predict(
             list,
         ):
 
-            expected_features_only = (
+            expected_features = (
                 len(
                     FEATURES
                 )
             )
-
-            expected_with_metadata = (
-                len(
-                    FEATURES
-                )
-                + len(
-                    METADATA_FIELDS
-                )
-            )
-
-
-            # --------------------------------------------
-            # Feature-only input
-            #
-            # Used by the consistency test table.
-            # --------------------------------------------
 
             if (
                 len(instance)
-                ==
-                expected_features_only
+                !=
+                expected_features
             ):
-
-                provider_id = None
-
-                feature_values = (
-                    instance
-                )
-
-
-            # --------------------------------------------
-            # Production input
-            #
-            # First field = provider_id
-            # Remaining fields = model features
-            # --------------------------------------------
-
-            elif (
-                len(instance)
-                ==
-                expected_with_metadata
-            ):
-
-                provider_id = (
-                    instance[0]
-                )
-
-                feature_values = (
-                    instance[1:]
-                )
-
-
-            else:
-
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         "Unexpected input field count. "
-                        f"Received {len(instance)} fields. "
-                        f"Expected "
-                        f"{expected_features_only} "
-                        "feature-only fields or "
-                        f"{expected_with_metadata} "
-                        "fields including provider_id."
+                        f"Received {len(instance)} fields; "
+                        f"expected exactly {expected_features} "
+                        "model features. provider_id must be "
+                        "removed upstream using Vertex "
+                        "instance_config.key_field."
                     ),
                 )
 
-
             row = [
                 float(value)
-                for value in feature_values
+                for value in instance
             ]
 
 
