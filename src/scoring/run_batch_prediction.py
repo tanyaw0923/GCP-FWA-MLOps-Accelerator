@@ -356,13 +356,21 @@ log_event(
 # are added or removed.
 # ============================================================
 
-MODEL_FEATURES = (
+active_model_config = (
     MODEL_CONFIG[
         MODEL_TYPE
-    ].get(
-        "features",
-        config["features"],
+    ]
+)
+
+if "features" not in active_model_config:
+    raise RuntimeError(
+        "Each model must define its own features list in "
+        "pipeline_config.yaml under model.<model_type>.features. "
+        f"Missing features for model_type={MODEL_TYPE}."
     )
+
+MODEL_FEATURES = (
+    active_model_config["features"]
 )
 
 if not MODEL_FEATURES:
