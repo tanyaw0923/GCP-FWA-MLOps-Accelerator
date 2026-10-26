@@ -495,18 +495,6 @@ eye_provider_fraud_feature_view
 
 The resulting architecture stays simple enough for an interview demo while clearly separating the runnable batch-model contract from the reusable historical / future-online Feature Store layer.
 
-## Monitoring Email Configuration
-
-Production performance monitoring can send a summary email when these environment variables are set:
-
-```bash
-export EMAIL_ADDRESS="sender@gmail.com"
-export EMAIL_PASSWORD="GOOGLE_APP_PASSWORD"
-export MONITORING_EMAIL="recipient@gmail.com"
-```
-
-For Gmail, `EMAIL_PASSWORD` must be a Google App Password, not the normal Gmail sign-in password. Email delivery uses SMTP over implicit TLS on port 465. A notification failure is logged but does not invalidate a monitoring result that was already written to BigQuery.
-
 ## Batch Inference and Provider Lineage
 
 `pipeline_config.yaml` is the single source of truth for the model feature contract.
@@ -736,6 +724,19 @@ PENDING_APPROVAL
 ```
 
 Email credentials are not stored in Git. The Cloud Run Job receives the sender and recipient as environment variables and reads the Gmail App Password from Secret Manager.
+
+## Monitoring Email Configuration
+
+Production performance monitoring can send a summary email when these environment variables are set:
+
+```bash
+export EMAIL_ADDRESS="sender@gmail.com"
+export EMAIL_PASSWORD="GOOGLE_APP_PASSWORD"
+export MONITORING_EMAIL="recipient@gmail.com"
+```
+
+For Gmail, `EMAIL_PASSWORD` must be a Google App Password, not the normal Gmail sign-in password. Email delivery uses SMTP over implicit TLS on port 465. A notification failure is logged but does not invalidate a monitoring result that was already written to BigQuery.
+
 
 ## Experiment Tracking
 
