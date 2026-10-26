@@ -68,7 +68,7 @@ def main():
 
     input_table = (
         config["data"][
-            "random_forest_batch_input_table"
+            "feature_table"
         ]
     )
 
@@ -95,7 +95,8 @@ def main():
     SELECT
         {selected_columns}
     FROM `{input_table}`
-    WHERE provider_id = @provider_id
+    WHERE dataset_split = 'TEST'
+      AND provider_id = @provider_id
     LIMIT 1
     """
 
