@@ -92,7 +92,7 @@ def main():
 
     input_table = (
         config["data"][
-            "random_forest_batch_input_table"
+            "feature_table"
         ]
     )
 
@@ -132,7 +132,7 @@ def main():
 
     if args.provider_id:
         where_clause = (
-            "WHERE provider_id = @provider_id"
+            "AND provider_id = @provider_id"
         )
 
         job_config = bigquery.QueryJobConfig(
@@ -153,6 +153,7 @@ def main():
     SELECT
         {selected_columns}
     FROM `{input_table}`
+    WHERE dataset_split = 'TEST'
     {where_clause}
     LIMIT 1
     """
