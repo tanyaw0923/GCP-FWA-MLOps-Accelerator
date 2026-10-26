@@ -257,6 +257,15 @@ def approve_candidate(
     state_key,
     candidate_data_month,
 ):
+    # Preserve the exact Vertex model resource that was approved.
+    # Older training-state tables may not have this column yet.
+    bq_client.query(
+        f"""
+        ALTER TABLE `{training_state_table}`
+        ADD COLUMN IF NOT EXISTS approved_model_resource STRING
+        """
+    ).result()
+
     query = f"""
     UPDATE `{training_state_table}`
 
@@ -275,6 +284,9 @@ def approve_candidate(
 
       approved_model_type =
         candidate_model_type,
+
+      approved_model_resource =
+        candidate_model_resource,
 
       approved_run_id =
         candidate_run_id,
