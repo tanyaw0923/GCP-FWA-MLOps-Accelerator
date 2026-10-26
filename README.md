@@ -1402,9 +1402,19 @@ git checkout demo-readiness-five-fixes
 git pull origin demo-readiness-five-fixes
 ```
 
-### 2. Build the Custom XGBoost Serving Image
+### 2. Build the Custom Serving Images
 
-The XGBoost batch input preserves `provider_id` for lineage, so the registered XGBoost model uses a custom serving container that removes the identifier before constructing the numeric feature matrix.
+Both Random Forest and XGBoost batch inputs preserve `provider_id` for lineage. Their custom serving containers remove that identifier before constructing the numeric feature matrix.
+
+Random Forest:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-random-forest-serving.yaml \
+  .
+```
+
+XGBoost:
 
 ```bash
 gcloud builds submit \
