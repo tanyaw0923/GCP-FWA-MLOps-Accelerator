@@ -133,6 +133,20 @@ if (
         f"{len(FEATURES)}: {FEATURES}"
     )
 
+if hasattr(model, "feature_names_in_"):
+    artifact_feature_names = [
+        str(feature)
+        for feature in model.feature_names_in_
+    ]
+
+    if artifact_feature_names != FEATURES:
+        raise RuntimeError(
+            "Random Forest artifact feature names/order "
+            "do not match the pipeline serving contract. "
+            f"Artifact={artifact_feature_names}, "
+            f"Pipeline={FEATURES}"
+        )
+
 app = FastAPI()
 
 
