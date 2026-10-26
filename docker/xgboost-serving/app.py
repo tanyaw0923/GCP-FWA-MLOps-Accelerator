@@ -1,3 +1,4 @@
+import json
 import os
 from urllib.parse import urlparse
 
@@ -24,15 +25,40 @@ AIP_STORAGE_URI = os.environ.get(
 )
 
 
-FEATURES = [
-    "high_acuity_pct",
-    "pct_99214",
-    "pct_99215",
-    "referral_rate",
-    "eye_procedure_pct",
-    "avg_paid_per_claim",
-    "high_acuity_oe_ratio",
-]
+FEATURE_COLUMNS_JSON = os.environ.get(
+    "FEATURE_COLUMNS_JSON",
+    "",
+)
+
+if not FEATURE_COLUMNS_JSON:
+    raise RuntimeError(
+        "FEATURE_COLUMNS_JSON is required. "
+        "The training pipeline must pass the exact "
+        "model feature contract into the serving container."
+    )
+
+try:
+    FEATURES = json.loads(
+        FEATURE_COLUMNS_JSON
+    )
+except json.JSONDecodeError as exc:
+    raise RuntimeError(
+        "FEATURE_COLUMNS_JSON is not valid JSON."
+    ) from exc
+
+if (
+    not isinstance(FEATURES, list)
+    or not FEATURES
+    or not all(
+        isinstance(feature, str)
+        and feature
+        for feature in FEATURES
+    )
+):
+    raise RuntimeError(
+        "FEATURE_COLUMNS_JSON must be a non-empty "
+        "JSON array of feature names."
+    )
 
 
 # provider_id is metadata.
@@ -124,6 +150,32 @@ booster = xgb.Booster()
 booster.load_model(
     MODEL_PATH
 )
+
+booster_feature_names = (
+    booster.feature_names
+)
+
+if (
+    booster_feature_names
+    and booster_feature_names != FEATURES
+):
+    raise RuntimeError(
+        "XGBoost artifact feature names do not match "
+        "the pipeline serving contract. "
+        f"Artifact={booster_feature_names}, "
+        f"Pipeline={FEATURES}"
+    )
+
+if (
+    booster.num_features()
+    != len(FEATURES)
+):
+    raise RuntimeError(
+        f"XGBoost artifact expects "
+        f"{booster.num_features()} features, "
+        f"but pipeline serving contract contains "
+        f"{len(FEATURES)}: {FEATURES}"
+    )
 
 
 # ============================================================
@@ -252,9 +304,9 @@ def predict(
         #
         #   1 metadata field
         #   +
-        #   7 model features
+        #   model-specific numeric features
         #   =
-        #   8 values
+        #   1 metadata field + len(FEATURES)
         # ====================================================
 
         elif isinstance(
