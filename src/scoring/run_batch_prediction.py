@@ -473,8 +473,8 @@ if missing_source_columns:
 
 feature_select_sql = ",\n".join(
     (
-        f"  CAST(\`{feature}\` AS FLOAT64) "
-        f"AS \`{feature}\`"
+        f"  CAST(`{feature}` AS FLOAT64) "
+        f"AS `{feature}`"
     )
     for feature in MODEL_FEATURES
 )
