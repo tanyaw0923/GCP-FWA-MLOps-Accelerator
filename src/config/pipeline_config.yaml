@@ -36,7 +36,7 @@ model:
 
     training_image: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-training:v1.0.0
 
-    serving_container_image_uri: us-docker.pkg.dev/vertex-ai/prediction/sklearn-cpu.1-6:latest
+    serving_container_image_uri: us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/random-forest-serving:v1.0.0
 
 
   xgboost:
