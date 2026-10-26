@@ -189,26 +189,6 @@ derived_feature_sql:
 
 
 # ============================================================
-# FALLBACK MODEL FEATURES
-#
-# Active training and serving use model.<model_type>.features.
-# This fallback is kept only for backward compatibility and is
-# the complete provider-feature superset used by the current
-# supervised models.
-# ============================================================
-
-features:
-  - high_acuity_pct
-  - pct_99214
-  - pct_99215
-  - referral_rate
-  - eye_procedure_pct
-  - avg_paid_per_claim
-  - high_acuity_oe_ratio
-  - avg_member_provider_distance
-
-
-# ============================================================
 # MONITORING
 #
 # Monitoring stays shared across model types.
