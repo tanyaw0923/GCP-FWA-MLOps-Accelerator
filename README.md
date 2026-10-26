@@ -1319,7 +1319,25 @@ git checkout main
 git pull origin main
 ```
 
-### 2. Build the Custom Serving Images
+### 2. Modify `pipeline_config.yaml`
+
+Before running the pipeline, review:
+
+```text
+src/config/pipeline_config.yaml
+```
+
+Update the configuration for the experiment you want to run. Common changes include:
+
+- `model.model_type` — choose `random_forest` or `xgboost`
+- `data.current_data_month` — set the dataset month used by the rolling train/test windows
+- `model.<model_type>.features` — select the feature contract for training and batch inference
+- `model.<model_type>.parameters` — adjust model hyperparameters when testing a new modeling idea
+- training or serving image versions when a new container version is released
+
+Because `pipeline_config.yaml` is the shared source of truth, these settings drive retraining signatures, model training, serving registration, and batch-scoring feature selection.
+
+### 3. Build the Custom Serving Images
 
 Random Forest:
 
@@ -1337,7 +1355,7 @@ gcloud builds submit \
   .
 ```
 
-### 3. Compile and Run the Candidate Training Pipeline
+### 4. Compile and Run the Candidate Training Pipeline
 
 Compile the Vertex AI pipeline after any serving-image or component change:
 
@@ -1351,7 +1369,7 @@ Run the candidate training pipeline:
 python -m src.pipeline.run_model_training_pipeline
 ```
 
-### 4. Manually Promote the Candidate
+### 5. Manually Promote the Candidate
 
 After reviewing the candidate metrics and confirming the model is ready for production:
 
@@ -1359,7 +1377,7 @@ After reviewing the candidate metrics and confirming the model is ready for prod
 python -m src.models.promote_model_candidate
 ```
 
-### 5. List Registered Vertex Model IDs
+### 6. List Registered Vertex Model IDs
 
 List all models in the project:
 
@@ -1378,11 +1396,11 @@ gcloud ai models describe MODEL_ID \
   --format="yaml(displayName,artifactUri,containerSpec.imageUri,containerSpec.predictRoute,containerSpec.healthRoute)"
 ```
 
-### 6. Batch-Scoring Input Is Generated Automatically
+### 7. Batch-Scoring Input Is Generated Automatically
 
 No separate preparation command is required; `run_batch_prediction.py` materializes the scoring input from the configured feature contract.
 
-### 7. Run Batch Inference
+### 8. Run Batch Inference
 
 Run scoring with the selected Vertex model:
 
@@ -1414,7 +1432,7 @@ WHERE
 '
 ```
 
-### 8. Create the Investigation Queue
+### 9. Create the Investigation Queue
 
 ```bash
 bq query \
@@ -1424,13 +1442,13 @@ bq query \
 
 The queue is model-independent and prioritizes the top-scoring providers according to investigator capacity.
 
-### 9. Simulate Investigator Feedback
+### 10. Simulate Investigator Feedback
 
 ```bash
 python -m src.feedback.simulate_investigation_feedback
 ```
 
-### 10. Evaluate Business Value
+### 11. Evaluate Business Value
 
 ```bash
 bq query \
@@ -1438,7 +1456,7 @@ bq query \
   < sql/evaluation/model_business_value.sql
 ```
 
-### 11. Run Data / Feature / Prediction Monitoring
+### 12. Run Data / Feature / Prediction Monitoring
 
 ```bash
 bq query \
@@ -1446,7 +1464,7 @@ bq query \
   < sql/monitoring/model_monitoring.sql
 ```
 
-### 12. Run Investigator-Feedback Performance Monitoring
+### 13. Run Investigator-Feedback Performance Monitoring
 
 ```bash
 python -m src.monitoring.run_model_performance_monitoring
