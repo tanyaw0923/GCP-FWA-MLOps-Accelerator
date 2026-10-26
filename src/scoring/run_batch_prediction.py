@@ -483,7 +483,8 @@ if missing_input_columns:
 
 print(
     "Vertex instance transformation: "
-    "provider_id -> key; model receives only configured features."
+    "object instance; provider_id excluded from model input "
+    "and attached back to BigQuery output."
 )
 
 log_event(
@@ -671,13 +672,16 @@ print(
 # BatchPredictionJob.instance_config. We therefore use the
 # lower-level JobService API.
 #
-# key_field="provider_id":
-#   - removes provider_id before the instance reaches the model
-#   - writes provider_id back to BigQuery output as "key"
+# BigQuery output does not support key_field, so use:
 #
-# included_fields:
-#   - sends only the configured numeric model features
-#   - guarantees their positional order for array instances
+# instance_type="object"
+# excluded_fields=["provider_id"]
+#
+# Vertex removes provider_id from the instance sent to the model
+# and attaches the excluded field back to the BigQuery output.
+#
+# The custom serving apps accept object instances and explicitly
+# select FEATURES by name, so feature ordering is deterministic.
 #
 # This prevents identifiers such as "P00175" from ever being
 # passed into RandomForestClassifier / XGBoost as a feature.
@@ -717,9 +721,10 @@ batch_prediction_job_spec = {
     },
 
     "instance_config": {
-        "instance_type": "array",
-        "key_field": "provider_id",
-        "included_fields": MODEL_FEATURES,
+        "instance_type": "object",
+        "excluded_fields": [
+            "provider_id"
+        ],
     },
 
     "output_config": {
@@ -1204,10 +1209,10 @@ print(
 # ============================================================
 # 16. DETERMINE PROVIDER IDENTIFIER STRATEGY
 #
-# Vertex instance_config.key_field removes provider_id from the
-# model instance and writes it back to BigQuery as "key".
+# Vertex instance_config.excluded_fields removes provider_id
+# from the model instance and attaches it back to BigQuery output.
 #
-# Keep provider_id as a legacy fallback for older batch outputs.
+# Keep "key" as a compatibility fallback for older outputs.
 # ============================================================
 
 raw_table = (
@@ -1221,24 +1226,24 @@ raw_columns = {
     for field in raw_table.schema
 }
 
-if "key" in raw_columns:
-
-    provider_identifier_column = (
-        "key"
-    )
-
-elif "provider_id" in raw_columns:
+if "provider_id" in raw_columns:
 
     provider_identifier_column = (
         "provider_id"
+    )
+
+elif "key" in raw_columns:
+
+    provider_identifier_column = (
+        "key"
     )
 
 else:
 
     raise RuntimeError(
         "Provider lineage is missing from the Vertex "
-        "prediction output. Expected 'key' from "
-        "instance_config.key_field='provider_id'."
+        "prediction output. Expected provider_id to be "
+        "attached from instance_config.excluded_fields."
     )
 
 print(
