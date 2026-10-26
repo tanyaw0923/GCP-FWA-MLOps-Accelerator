@@ -44,16 +44,26 @@ WHERE
   dataset_split = 'TEST';
 
 
--- Random Forest uses the same scoring contract.
+-- Random Forest artifact expects eight numeric features.
+-- provider_id remains metadata, not a model feature.
 CREATE OR REPLACE TABLE
   `fwa-mlops-accelerator-demo.fraud_features.random_forest_batch_input`
 AS
-
 SELECT
-  *
+  CAST(provider_id AS STRING) AS provider_id,
+  CAST(high_acuity_pct AS FLOAT64) AS high_acuity_pct,
+  CAST(pct_99214 AS FLOAT64) AS pct_99214,
+  CAST(pct_99215 AS FLOAT64) AS pct_99215,
+  CAST(referral_rate AS FLOAT64) AS referral_rate,
+  CAST(eye_procedure_pct AS FLOAT64) AS eye_procedure_pct,
+  CAST(avg_paid_per_claim AS FLOAT64) AS avg_paid_per_claim,
+  CAST(high_acuity_oe_ratio AS FLOAT64) AS high_acuity_oe_ratio,
+  CAST(avg_member_provider_distance AS FLOAT64)
+    AS avg_member_provider_distance
 FROM
-  `fwa-mlops-accelerator-demo.fraud_features.xgboost_batch_input`;
-
+  `fwa-mlops-accelerator-demo.fraud_features.provider_eye_features`
+WHERE
+  dataset_split = 'TEST';
 
 -- QA
 SELECT
