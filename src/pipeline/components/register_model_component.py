@@ -59,7 +59,11 @@ def register_model_component(
         "sync": True,
     }
 
-    if "xgboost-serving" in serving_container_image_uri:
+    if (
+        "xgboost-serving" in serving_container_image_uri
+        or "random-forest-serving"
+        in serving_container_image_uri
+    ):
         upload_kwargs.update(
             {
                 "serving_container_predict_route": (
