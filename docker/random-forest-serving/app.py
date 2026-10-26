@@ -1,3 +1,4 @@
+import json
 import os
 from urllib.parse import urlparse
 
@@ -18,15 +19,40 @@ AIP_STORAGE_URI = os.environ.get(
     "",
 )
 
-FEATURES = [
-    "high_acuity_pct",
-    "pct_99214",
-    "pct_99215",
-    "referral_rate",
-    "eye_procedure_pct",
-    "avg_paid_per_claim",
-    "high_acuity_oe_ratio",
-]
+FEATURE_COLUMNS_JSON = os.environ.get(
+    "FEATURE_COLUMNS_JSON",
+    "",
+)
+
+if not FEATURE_COLUMNS_JSON:
+    raise RuntimeError(
+        "FEATURE_COLUMNS_JSON is required. "
+        "The training pipeline must pass the exact "
+        "model feature contract into the serving container."
+    )
+
+try:
+    FEATURES = json.loads(
+        FEATURE_COLUMNS_JSON
+    )
+except json.JSONDecodeError as exc:
+    raise RuntimeError(
+        "FEATURE_COLUMNS_JSON is not valid JSON."
+    ) from exc
+
+if (
+    not isinstance(FEATURES, list)
+    or not FEATURES
+    or not all(
+        isinstance(feature, str)
+        and feature
+        for feature in FEATURES
+    )
+):
+    raise RuntimeError(
+        "FEATURE_COLUMNS_JSON must be a non-empty "
+        "JSON array of feature names."
+    )
 
 METADATA_FIELDS = [
     "provider_id",
@@ -95,6 +121,17 @@ ensure_model_file()
 model = joblib.load(
     MODEL_PATH
 )
+
+if (
+    hasattr(model, "n_features_in_")
+    and model.n_features_in_ != len(FEATURES)
+):
+    raise RuntimeError(
+        f"Random Forest artifact expects "
+        f"{model.n_features_in_} features, "
+        f"but pipeline serving contract contains "
+        f"{len(FEATURES)}: {FEATURES}"
+    )
 
 app = FastAPI()
 
