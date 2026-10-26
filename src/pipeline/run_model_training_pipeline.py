@@ -88,7 +88,10 @@ else:
 # Feature configuration
 # ------------------------------------------------------------------
 
-FEATURE_COLUMNS = config["features"]
+FEATURE_COLUMNS = active_model.get(
+    "features",
+    config["features"],
+)
 FEATURE_SQL = config["feature_sql"]
 DERIVED_FEATURE_SQL = config[
     "derived_feature_sql"
