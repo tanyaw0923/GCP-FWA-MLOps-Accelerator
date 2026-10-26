@@ -1,5 +1,5 @@
 substitutions:
-  _IMAGE_VERSION: v1.0.0
+  _IMAGE_VERSION: v1.0.1
 
 steps:
   - name: gcr.io/cloud-builders/docker
