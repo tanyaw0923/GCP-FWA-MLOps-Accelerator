@@ -1,4 +1,5 @@
 import argparse
+import json
 import time
 from datetime import datetime, timezone
 
@@ -250,6 +251,83 @@ print(
     f"{MODEL_TYPE}"
 )
 
+
+# ============================================================
+# 5A. PREFLIGHT: VERIFY REGISTERED VERTEX SERVING CONTRACT
+#
+# Fail before starting a 10-15 minute batch job when the
+# registered Vertex model still points to an old serving image
+# or is missing the feature contract environment variable.
+# ============================================================
+
+expected_serving_image = (
+    MODEL_CONFIG[
+        MODEL_TYPE
+    ][
+        "serving_container_image_uri"
+    ]
+)
+
+registered_container_spec = (
+    model.gca_resource.container_spec
+)
+
+registered_serving_image = (
+    registered_container_spec.image_uri
+)
+
+registered_env = {
+    item.name: item.value
+    for item in registered_container_spec.env
+}
+
+print(
+    f"Expected serving image: "
+    f"{expected_serving_image}"
+)
+
+print(
+    f"Registered serving image: "
+    f"{registered_serving_image}"
+)
+
+if (
+    registered_serving_image
+    != expected_serving_image
+):
+    raise RuntimeError(
+        "VERTEX MODEL PREFLIGHT FAILED: the registered model "
+        "uses a different serving image than pipeline_config.yaml. "
+        f"Expected={expected_serving_image}; "
+        f"Registered={registered_serving_image}. "
+        "Re-register the model with the rebuilt serving image "
+        "before launching batch prediction."
+    )
+
+registered_feature_json = (
+    registered_env.get(
+        "FEATURE_COLUMNS_JSON"
+    )
+)
+
+if not registered_feature_json:
+    raise RuntimeError(
+        "VERTEX MODEL PREFLIGHT FAILED: the registered model "
+        "does not contain FEATURE_COLUMNS_JSON. "
+        "Re-register it through the updated training pipeline."
+    )
+
+try:
+    registered_features = json.loads(
+        registered_feature_json
+    )
+except json.JSONDecodeError as exc:
+    raise RuntimeError(
+        "VERTEX MODEL PREFLIGHT FAILED: registered "
+        "FEATURE_COLUMNS_JSON is not valid JSON."
+    ) from exc
+
+
 log_event(
     logger,
     "batch_model_resolved",
@@ -316,6 +394,19 @@ if not MODEL_FEATURES:
         "No model feature contract was configured for "
         f"model_type={MODEL_TYPE}."
     )
+
+if registered_features != MODEL_FEATURES:
+    raise RuntimeError(
+        "VERTEX MODEL PREFLIGHT FAILED: registered feature "
+        "contract does not match pipeline_config.yaml. "
+        f"Registered={registered_features}; "
+        f"Expected={MODEL_FEATURES}. "
+        "Re-register the model before batch prediction."
+    )
+
+print(
+    "Vertex model preflight: PASS"
+)
 
 print(
     f"Model feature count: "
