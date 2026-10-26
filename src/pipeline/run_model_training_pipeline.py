@@ -11,6 +11,10 @@ from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct, Value
 
 from src.config.load_config import load_config
+from src.utils.observability import (
+    configure_observability,
+    log_event,
+)
 
 
 # Load project configuration
@@ -19,6 +23,11 @@ config = load_config()
 PROJECT_ID = config["project_id"]
 REGION = config["region"]
 BUCKET = config["bucket"]
+
+logger = configure_observability(
+    project_id=PROJECT_ID,
+    service_name="fwa-training-orchestrator",
+)
 
 data_config = config["data"]
 model_config = config["model"]
@@ -43,6 +52,11 @@ active_model = model_config[MODEL_TYPE]
 MODEL_NAME = active_model["model_name"]
 EXPERIMENT_NAME = active_model["experiment_name"]
 MODEL_PARAMETERS = active_model["parameters"]
+
+TRAINING_IMAGE_URI = (
+    active_model["training_image"]
+    .strip()
+)
 
 SERVING_CONTAINER_IMAGE_URI = (
     active_model["serving_container_image_uri"]
@@ -74,7 +88,10 @@ else:
 # Feature configuration
 # ------------------------------------------------------------------
 
-FEATURE_COLUMNS = config["features"]
+FEATURE_COLUMNS = active_model.get(
+    "features",
+    config["features"],
+)
 FEATURE_SQL = config["feature_sql"]
 DERIVED_FEATURE_SQL = config[
     "derived_feature_sql"
@@ -106,13 +123,17 @@ CURRENT_FEATURE_SIGNATURE = build_signature(
 
 
 # The model signature is used by the retraining decision.
-# Changes to the algorithm, parameters, artifact format, or
-# serving configuration should create a new candidate.
+# Changes to the algorithm, parameters, training image,
+# artifact format, or serving configuration should create
+# a new candidate.
 CURRENT_MODEL_SIGNATURE = build_signature(
     {
         "model_type": MODEL_TYPE,
         "model_name": MODEL_NAME,
         "parameters": MODEL_PARAMETERS,
+        "training_image_uri": (
+            TRAINING_IMAGE_URI
+        ),
         "artifact_format": (
             MODEL_ARTIFACT_FORMAT
         ),
@@ -748,6 +769,11 @@ print(
     f"{CURRENT_MODEL_SIGNATURE[:12]}"
 )
 print(
+    f"Training image: "
+    f"{TRAINING_IMAGE_URI}"
+)
+
+print(
     f"Artifact format: "
     f"{MODEL_ARTIFACT_FORMAT}"
 )
@@ -890,6 +916,17 @@ print(
     f"{response.name}"
 )
 
+log_event(
+    logger,
+    "training_pipeline_submitted",
+    fields={
+        "run_id": RUN_ID,
+        "experiment_id": EXPERIMENT_ID,
+        "pipeline_job": response.name,
+        "model_type": MODEL_TYPE,
+    },
+)
+
 
 # ------------------------------------------------------------------
 # Wait for completion
@@ -938,6 +975,16 @@ while True:
         print(
             f"[{current_time}] "
             f"{state.name}"
+        )
+
+        log_event(
+            logger,
+            "training_pipeline_state_changed",
+            fields={
+                "run_id": RUN_ID,
+                "pipeline_job": response.name,
+                "state": state.name,
+            },
         )
 
         last_state = state
@@ -1031,6 +1078,20 @@ if (
         "Production remains unchanged until manual approval."
     )
 
+    log_event(
+        logger,
+        "training_pipeline_completed",
+        fields={
+            "run_id": RUN_ID,
+            "experiment_id": EXPERIMENT_ID,
+            "pipeline_job": response.name,
+            "state": pipeline_status.state.name,
+            "model_type": MODEL_TYPE,
+            "artifact_uri": MODEL_OUTPUT_URI,
+            "data_month": CURRENT_DATA_MONTH,
+        },
+    )
+
 else:
     print("CANDIDATE PIPELINE FAILED")
     print("=" * 70)
@@ -1055,6 +1116,21 @@ else:
             f"Error: "
             f"{pipeline_status.error}"
         )
+
+    log_event(
+        logger,
+        "training_pipeline_failed",
+        severity="ERROR",
+        fields={
+            "run_id": RUN_ID,
+            "experiment_id": EXPERIMENT_ID,
+            "pipeline_job": response.name,
+            "state": pipeline_status.state.name,
+            "error": str(
+                pipeline_status.error
+            ),
+        },
+    )
 
     raise RuntimeError(
         "Vertex AI candidate pipeline failed."

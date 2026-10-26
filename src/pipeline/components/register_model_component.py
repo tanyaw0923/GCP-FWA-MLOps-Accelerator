@@ -13,6 +13,7 @@ def register_model_component(
     model_display_name: str,
     artifact_uri: str,
     serving_container_image_uri: str,
+    feature_columns_json: str,
 ) -> str:
     from google.cloud import aiplatform
 
@@ -50,11 +51,44 @@ def register_model_component(
         f"{serving_container_image_uri}"
     )
 
+    print(
+        f"Serving feature contract: "
+        f"{feature_columns_json}"
+    )
+
+    upload_kwargs = {
+        "display_name": model_display_name,
+        "artifact_uri": artifact_uri,
+        "serving_container_image_uri": (
+            serving_container_image_uri
+        ),
+        "serving_container_environment_variables": {
+            "FEATURE_COLUMNS_JSON": feature_columns_json,
+        },
+        "sync": True,
+    }
+
+    if (
+        "xgboost-serving" in serving_container_image_uri
+        or "random-forest-serving"
+        in serving_container_image_uri
+    ):
+        upload_kwargs.update(
+            {
+                "serving_container_predict_route": (
+                    "/predict"
+                ),
+                "serving_container_health_route": (
+                    "/health"
+                ),
+                "serving_container_ports": [
+                    8080
+                ],
+            }
+        )
+
     model = aiplatform.Model.upload(
-        display_name=model_display_name,
-        artifact_uri=artifact_uri,
-        serving_container_image_uri=serving_container_image_uri,
-        sync=True,
+        **upload_kwargs
     )
 
     print("\nModel registered successfully.")

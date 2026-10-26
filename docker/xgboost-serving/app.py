@@ -1,7 +1,10 @@
+import json
 import os
+from urllib.parse import urlparse
 
 import numpy as np
 import xgboost as xgb
+from google.cloud import storage
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -16,34 +19,161 @@ MODEL_PATH = os.environ.get(
     "/model/model.bst",
 )
 
-
-FEATURES = [
-    "high_acuity_pct",
-    "pct_99214",
-    "pct_99215",
-    "referral_rate",
-    "eye_procedure_pct",
-    "avg_paid_per_claim",
-    "high_acuity_oe_ratio",
-]
+AIP_STORAGE_URI = os.environ.get(
+    "AIP_STORAGE_URI",
+    "",
+)
 
 
-# provider_id is metadata.
-# It must NOT be sent into XGBoost.
-METADATA_FIELDS = [
-    "provider_id",
-]
+FEATURE_COLUMNS_JSON = os.environ.get(
+    "FEATURE_COLUMNS_JSON",
+    "",
+)
+
+if not FEATURE_COLUMNS_JSON:
+    raise RuntimeError(
+        "FEATURE_COLUMNS_JSON is required. "
+        "The training pipeline must pass the exact "
+        "model feature contract into the serving container."
+    )
+
+try:
+    FEATURES = json.loads(
+        FEATURE_COLUMNS_JSON
+    )
+except json.JSONDecodeError as exc:
+    raise RuntimeError(
+        "FEATURE_COLUMNS_JSON is not valid JSON."
+    ) from exc
+
+if (
+    not isinstance(FEATURES, list)
+    or not FEATURES
+    or not all(
+        isinstance(feature, str)
+        and feature
+        for feature in FEATURES
+    )
+):
+    raise RuntimeError(
+        "FEATURE_COLUMNS_JSON must be a non-empty "
+        "JSON array of feature names."
+    )
+
+
+# provider_id is removed upstream by Vertex BatchPredictionJob
+# instance_config.key_field and is returned separately as "key".
+# The model container therefore receives model features only.
 
 
 # ============================================================
 # LOAD MODEL
+#
+# For Vertex custom prediction containers, AIP_STORAGE_URI
+# points to the model artifact directory copied by Vertex.
+# Download model.bst at startup when it is not baked into the
+# image. Local development can still use MODEL_PATH directly.
 # ============================================================
+
+def ensure_model_file():
+
+    if os.path.exists(
+        MODEL_PATH
+    ):
+        return
+
+    if not AIP_STORAGE_URI:
+        raise RuntimeError(
+            "model.bst was not found locally and "
+            "AIP_STORAGE_URI is empty."
+        )
+
+    parsed = urlparse(
+        AIP_STORAGE_URI
+    )
+
+    if parsed.scheme != "gs":
+        raise RuntimeError(
+            "AIP_STORAGE_URI must be a gs:// URI."
+        )
+
+    bucket_name = (
+        parsed.netloc
+    )
+
+    prefix = (
+        parsed.path
+        .lstrip("/")
+        .rstrip("/")
+    )
+
+    blob_name = (
+        f"{prefix}/model.bst"
+        if prefix
+        else "model.bst"
+    )
+
+    os.makedirs(
+        os.path.dirname(
+            MODEL_PATH
+        ),
+        exist_ok=True,
+    )
+
+    client = storage.Client()
+
+    bucket = client.bucket(
+        bucket_name
+    )
+
+    blob = bucket.blob(
+        blob_name
+    )
+
+    if not blob.exists():
+        raise RuntimeError(
+            "model.bst was not found under "
+            f"{AIP_STORAGE_URI}"
+        )
+
+    blob.download_to_filename(
+        MODEL_PATH
+    )
+
+
+ensure_model_file()
 
 booster = xgb.Booster()
 
 booster.load_model(
     MODEL_PATH
 )
+
+booster_feature_names = (
+    booster.feature_names
+)
+
+if (
+    booster_feature_names
+    and booster_feature_names != FEATURES
+):
+    raise RuntimeError(
+        "XGBoost artifact feature names do not match "
+        "the pipeline serving contract. "
+        f"Artifact={booster_feature_names}, "
+        f"Pipeline={FEATURES}"
+    )
+
+if (
+    booster.num_features()
+    != len(FEATURES)
+):
+    raise RuntimeError(
+        f"XGBoost artifact expects "
+        f"{booster.num_features()} features, "
+        f"but pipeline serving contract contains "
+        f"{len(FEATURES)}: {FEATURES}"
+    )
 
 
 # ============================================================
@@ -172,9 +302,9 @@ def predict(
         #
         #   1 metadata field
         #   +
-        #   7 model features
+        #   model-specific numeric features
         #   =
-        #   8 values
+        #   1 metadata field + len(FEATURES)
         # ====================================================
 
         elif isinstance(
@@ -182,82 +312,32 @@ def predict(
             list,
         ):
 
-            expected_features_only = (
+            expected_features = (
                 len(
                     FEATURES
                 )
             )
-
-            expected_with_metadata = (
-                len(
-                    FEATURES
-                )
-                + len(
-                    METADATA_FIELDS
-                )
-            )
-
-
-            # --------------------------------------------
-            # Feature-only input
-            #
-            # Used by the consistency test table.
-            # --------------------------------------------
 
             if (
                 len(instance)
-                ==
-                expected_features_only
+                !=
+                expected_features
             ):
-
-                provider_id = None
-
-                feature_values = (
-                    instance
-                )
-
-
-            # --------------------------------------------
-            # Production input
-            #
-            # First field = provider_id
-            # Remaining fields = model features
-            # --------------------------------------------
-
-            elif (
-                len(instance)
-                ==
-                expected_with_metadata
-            ):
-
-                provider_id = (
-                    instance[0]
-                )
-
-                feature_values = (
-                    instance[1:]
-                )
-
-
-            else:
-
                 raise HTTPException(
                     status_code=400,
                     detail=(
                         "Unexpected input field count. "
-                        f"Received {len(instance)} fields. "
-                        f"Expected "
-                        f"{expected_features_only} "
-                        "feature-only fields or "
-                        f"{expected_with_metadata} "
-                        "fields including provider_id."
+                        f"Received {len(instance)} fields; "
+                        f"expected exactly {expected_features} "
+                        "model features. provider_id must be "
+                        "removed upstream using Vertex "
+                        "instance_config.key_field."
                     ),
                 )
 
-
             row = [
                 float(value)
-                for value in feature_values
+                for value in instance
             ]
 
 

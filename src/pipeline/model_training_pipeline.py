@@ -315,6 +315,9 @@ def model_training_pipeline(
                         serving_container_image_uri=(
                             serving_container_image_uri
                         ),
+                        feature_columns_json=(
+                            feature_columns_json
+                        ),
                     )
                 )
 
@@ -472,6 +475,9 @@ def model_training_pipeline(
                         ),
                         serving_container_image_uri=(
                             serving_container_image_uri
+                        ),
+                        feature_columns_json=(
+                            feature_columns_json
                         ),
                     )
                 )

@@ -1,0 +1,20 @@
+substitutions:
+  _IMAGE_VERSION: v1.0.1
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - docker/xgboost-serving/Dockerfile
+      - -t
+      - us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:${_IMAGE_VERSION}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:${_IMAGE_VERSION}
+
+images:
+  - us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:${_IMAGE_VERSION}

@@ -58,7 +58,7 @@ def train_xgboost_component(
             "us-central1-docker.pkg.dev/"
             "fwa-mlops-accelerator-demo/"
             "fwa-mlops/"
-            "xgboost-training:v1"
+            "xgboost-training:v1.0.0"
         ),
 
         args=[

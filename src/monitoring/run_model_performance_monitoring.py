@@ -1,11 +1,16 @@
 import os
 import smtplib
+import ssl
 from datetime import datetime, timezone
 from email.message import EmailMessage
 
 from google.cloud import bigquery
 
 from src.config.load_config import load_config
+from src.utils.observability import (
+    configure_observability,
+    log_event,
+)
 
 
 MIN_COMPLETED_CASES = 20
@@ -18,6 +23,11 @@ F1_DEGRADATION_THRESHOLD = 0.10
 config = load_config()
 
 PROJECT_ID = config["project_id"]
+
+logger = configure_observability(
+    project_id=PROJECT_ID,
+    service_name="fwa-performance-monitoring",
+)
 
 PREDICTIONS_TABLE = (
     config["data"]["provider_prediction_table"]
@@ -36,6 +46,14 @@ PERFORMANCE_TABLE = (
         "performance_degradation_table"
     ]
 )
+
+TRAINING_STATE_TABLE = (
+    config["monitoring"][
+        "training_state_table"
+    ]
+)
+
+STATE_KEY = "provider_fraud_model"
 
 
 client = bigquery.Client(
@@ -129,15 +147,17 @@ def send_monitoring_email(
     message.set_content(body)
 
     try:
-        with smtplib.SMTP(
-            "smtp.gmail.com",
-            587,
-            timeout=30,
-        ) as smtp:
+        # Gmail SMTP uses a Google App Password rather than the
+        # account's normal sign-in password. Use implicit TLS on
+        # port 465 to avoid STARTTLS connection instability.
+        tls_context = ssl.create_default_context()
 
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.ehlo()
+        with smtplib.SMTP_SSL(
+            "smtp.gmail.com",
+            465,
+            timeout=30,
+            context=tls_context,
+        ) as smtp:
 
             smtp.login(
                 sender,
@@ -148,14 +168,36 @@ def send_monitoring_email(
                 message
             )
 
+        log_event(
+            logger,
+            "monitoring_email_sent",
+            fields={
+                "recipient_configured": True,
+                "subject": subject,
+            },
+        )
+
         print(
             f"Monitoring email sent to "
             f"{recipient}"
         )
 
+        return True
+
     except Exception as exc:
+        log_event(
+            logger,
+            "monitoring_email_failed",
+            severity="ERROR",
+            fields={
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+
         print(
-            "\nEmail sending failed."
+            "\nEmail sending failed, but the monitoring "
+            "result was already written successfully."
         )
 
         print(
@@ -168,7 +210,7 @@ def send_monitoring_email(
             f"{exc}"
         )
 
-        raise
+        return False
 
 
 # Create the monitoring table if it does not exist.
@@ -215,53 +257,156 @@ client.query(
 ).result()
 
 
-# Find the most recent model/run with completed investigation feedback.
-latest_run_query = f"""
+# Resolve the model that is actually approved for production.
+#
+# Monitoring must follow production state, not whichever model happens
+# to have the newest investigator feedback. This makes the monitor
+# algorithm-agnostic: Random Forest or XGBoost can be production.
+client.query(
+    f"""
+    ALTER TABLE `{TRAINING_STATE_TABLE}`
+    ADD COLUMN IF NOT EXISTS approved_model_resource STRING
+    """
+).result()
+
+production_state_query = f"""
 SELECT
-    model_name,
-    model_version,
-    run_id,
-    MAX(created_at) AS latest_feedback_timestamp
-
-FROM `{FEEDBACK_TABLE}`
-
-WHERE
-    run_id IS NOT NULL
-    AND model_name IS NOT NULL
-    AND model_version IS NOT NULL
-
-    AND investigation_result IN (
-        'CONFIRMED_FRAUD',
-        'CONFIRMED_NORMAL'
-    )
-
-GROUP BY
-    model_name,
-    model_version,
-    run_id
-
-ORDER BY
-    latest_feedback_timestamp DESC
-
+    approved_model_type,
+    approved_run_id,
+    approved_model_resource
+FROM `{TRAINING_STATE_TABLE}`
+WHERE model_name = @state_key
 LIMIT 1
 """
 
-latest_run_rows = list(
+production_state_config = bigquery.QueryJobConfig(
+    query_parameters=[
+        bigquery.ScalarQueryParameter(
+            "state_key",
+            "STRING",
+            STATE_KEY,
+        )
+    ]
+)
+
+production_state_rows = list(
     client.query(
-        latest_run_query
+        production_state_query,
+        job_config=production_state_config,
     ).result()
 )
 
-if not latest_run_rows:
+if not production_state_rows:
     raise RuntimeError(
-        "No completed investigation results were found."
+        "No production training state was found for "
+        f"state_key={STATE_KEY}."
     )
 
-latest_run = latest_run_rows[0]
+production_state = production_state_rows[0]
 
-model_name = latest_run.model_name
-model_version = latest_run.model_version
-run_id = latest_run.run_id
+model_name = production_state.approved_model_type
+run_id = production_state.approved_run_id
+approved_model_resource = (
+    production_state.approved_model_resource
+)
+
+if not model_name or not run_id:
+    raise RuntimeError(
+        "Production model is not fully approved. "
+        "approved_model_type and approved_run_id are required."
+    )
+
+
+# Resolve the exact scored model version for the approved run.
+#
+# New promotions persist approved_model_resource. For older state rows
+# that predate that column being populated, fall back to the scored
+# prediction/feedback lineage for the approved model and run.
+approved_model_id = None
+
+if approved_model_resource:
+    approved_model_id = (
+        approved_model_resource
+        .rstrip("/")
+        .split("/")[-1]
+    )
+
+expected_model_version = (
+    f"{model_name}:{approved_model_id}"
+    if approved_model_id
+    else None
+)
+
+model_version_query = f"""
+SELECT
+    p.model_version,
+    MAX(f.created_at) AS latest_feedback_timestamp
+FROM `{PREDICTIONS_TABLE}` p
+INNER JOIN `{FEEDBACK_TABLE}` f
+    ON p.provider_id = f.provider_id
+    AND p.run_id = f.run_id
+    AND p.model_version = f.model_version
+WHERE
+    p.model_name = @model_name
+    AND p.run_id = @run_id
+    AND f.model_name = @model_name
+    AND f.run_id = @run_id
+    AND f.investigation_result IN (
+        'CONFIRMED_FRAUD',
+        'CONFIRMED_NORMAL'
+    )
+    AND (
+        @expected_model_version IS NULL
+        OR p.model_version = @expected_model_version
+    )
+GROUP BY
+    p.model_version
+ORDER BY
+    latest_feedback_timestamp DESC
+LIMIT 1
+"""
+
+model_version_config = bigquery.QueryJobConfig(
+    query_parameters=[
+        bigquery.ScalarQueryParameter(
+            "model_name",
+            "STRING",
+            model_name,
+        ),
+        bigquery.ScalarQueryParameter(
+            "run_id",
+            "STRING",
+            run_id,
+        ),
+        bigquery.ScalarQueryParameter(
+            "expected_model_version",
+            "STRING",
+            expected_model_version,
+        ),
+    ]
+)
+
+model_version_rows = list(
+    client.query(
+        model_version_query,
+        job_config=model_version_config,
+    ).result()
+)
+
+if not model_version_rows:
+    raise RuntimeError(
+        "No completed production investigation results were found "
+        f"for approved model_type={model_name}, run_id={run_id}"
+        + (
+            f", model_version={expected_model_version}."
+            if expected_model_version
+            else "."
+        )
+    )
+
+model_version = (
+    model_version_rows[0].model_version
+)
 
 
 print("=" * 60)
@@ -269,7 +414,12 @@ print("PRODUCTION PERFORMANCE MONITORING")
 print("=" * 60)
 
 print(
-    f"Model: {model_name}"
+    f"Approved production model: {model_name}"
+)
+
+print(
+    f"Approved model resource: "
+    f"{approved_model_resource or 'legacy state / inferred from lineage'}"
 )
 
 print(
@@ -278,6 +428,16 @@ print(
 
 print(
     f"Run ID: {run_id}"
+)
+
+log_event(
+    logger,
+    "performance_monitoring_started",
+    fields={
+        "model_name": model_name,
+        "model_version": model_version,
+        "run_id": run_id,
+    },
 )
 
 
@@ -939,6 +1099,18 @@ errors = client.insert_rows_json(
 )
 
 if errors:
+    log_event(
+        logger,
+        "performance_monitoring_write_failed",
+        severity="ERROR",
+        fields={
+            "model_name": model_name,
+            "model_version": model_version,
+            "run_id": run_id,
+            "errors": str(errors),
+        },
+    )
+
     raise RuntimeError(
         "Failed to write monitoring result: "
         f"{errors}"
@@ -1076,4 +1248,30 @@ print("=" * 60)
 print(
     f"Monitoring table: "
     f"{PERFORMANCE_TABLE}"
+)
+
+log_event(
+    logger,
+    "performance_monitoring_completed",
+    severity=(
+        "WARNING"
+        if monitoring_status == "ALERT"
+        else "INFO"
+    ),
+    fields={
+        "model_name": model_name,
+        "model_version": model_version,
+        "run_id": run_id,
+        "evaluated_cases": evaluated_cases,
+        "confirmed_fraud_cases": (
+            confirmed_fraud_cases
+        ),
+        "precision": precision,
+        "recall": recall,
+        "f1_score": f1,
+        "fraud_yield": fraud_yield,
+        "monitoring_status": monitoring_status,
+        "alert_reason": alert_reason,
+        "performance_table": PERFORMANCE_TABLE,
+    },
 )

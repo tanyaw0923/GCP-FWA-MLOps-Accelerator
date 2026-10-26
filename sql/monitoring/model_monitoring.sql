@@ -33,9 +33,58 @@ CREATE TABLE IF NOT EXISTS
   monitoring_status STRING
 );
 
+-- Backward-compatible schema migration for tables created by
+-- earlier versions of the demo.
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS monitoring_timestamp TIMESTAMP;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS model_name STRING;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS dataset_name STRING;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS total_rows INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS unique_providers INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS duplicate_rows INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS null_feature_values INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS invalid_feature_values INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+ADD COLUMN IF NOT EXISTS monitoring_status STRING;
+
 
 INSERT INTO
   `fwa-mlops-accelerator-demo.fraud_monitoring.model_data_quality`
+(
+  monitoring_timestamp,
+  model_name,
+  dataset_name,
+  total_rows,
+  unique_providers,
+  duplicate_rows,
+  null_feature_values,
+  invalid_feature_values,
+  monitoring_status
+)
 
 WITH test_data AS (
 
@@ -85,9 +134,6 @@ dq AS (
       + COUNTIF(
           high_acuity_oe_ratio IS NULL
         )
-      + COUNTIF(
-          avg_member_provider_distance IS NULL
-        )
     ) AS null_feature_values,
 
     (
@@ -122,10 +168,6 @@ dq AS (
 
       + COUNTIF(
           high_acuity_oe_ratio < 0
-        )
-
-      + COUNTIF(
-          avg_member_provider_distance < 0
         )
     ) AS invalid_feature_values
 
@@ -202,9 +244,53 @@ CREATE TABLE IF NOT EXISTS
   monitoring_status STRING
 );
 
+-- Backward-compatible schema migration for tables created by
+-- earlier versions of the demo.
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS monitoring_timestamp TIMESTAMP;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS model_name STRING;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS feature_name STRING;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS baseline_mean FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS current_mean FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS baseline_std FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS standardized_mean_shift FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+ADD COLUMN IF NOT EXISTS monitoring_status STRING;
+
 
 INSERT INTO
   `fwa-mlops-accelerator-demo.fraud_monitoring.model_feature_drift`
+(
+  monitoring_timestamp,
+  model_name,
+  feature_name,
+  baseline_mean,
+  current_mean,
+  baseline_std,
+  standardized_mean_shift,
+  monitoring_status
+)
 
 WITH feature_values AS (
 
@@ -225,8 +311,7 @@ WITH feature_values AS (
       referral_rate,
       eye_procedure_pct,
       avg_paid_per_claim,
-      high_acuity_oe_ratio,
-      avg_member_provider_distance
+      high_acuity_oe_ratio
     )
   )
 
@@ -335,17 +420,24 @@ FROM
 
 
 -- ============================================================
--- 3. PREDICTION DRIFT MONITORING
+-- 3. PREDICTION-SCORE DRIFT MONITORING
 --
--- Assumes scored provider predictions are stored in:
+-- Curated provider_predictions stores continuous fraud_score,
+-- so drift should monitor the score distribution rather than an
+-- obsolete binary prediction field.
 --
---   fraud_experiments.provider_predictions
+-- Compare the newest scored run with the immediately previous run
+-- for the SAME model version.
 --
--- Expected fields:
---   prediction
+-- Metrics:
+--   PSI across ten fixed score buckets
+--   mean fraud-score shift
+--   p50 / p90 / p95 movement
 --
--- Target:
---   fraud_monitoring.model_prediction_drift
+-- Demo interpretation:
+--   PSI < 0.10       PASS
+--   0.10 <= PSI < .20 WATCH
+--   PSI >= 0.20      ALERT
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS
@@ -353,98 +445,395 @@ CREATE TABLE IF NOT EXISTS
 (
   check_date DATE,
   model_name STRING,
-
-  total_predictions INT64,
-  positive_count INT64,
-  negative_count INT64,
-
-  positive_rate FLOAT64,
-  baseline_rate FLOAT64,
-  rate_change FLOAT64,
-
   status STRING
 );
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS monitoring_timestamp TIMESTAMP;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS model_version STRING;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS baseline_run_id STRING;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS current_run_id STRING;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS baseline_count INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS current_count INT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS baseline_mean_score FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS current_mean_score FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS mean_score_shift FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS baseline_p50 FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS current_p50 FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS baseline_p90 FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS current_p90 FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS baseline_p95 FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS current_p95 FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS population_stability_index FLOAT64;
+
+ALTER TABLE
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS alert_reason STRING;
 
 
 INSERT INTO
   `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+(
+  check_date,
+  monitoring_timestamp,
+  model_name,
+  model_version,
+  baseline_run_id,
+  current_run_id,
+  baseline_count,
+  current_count,
+  baseline_mean_score,
+  current_mean_score,
+  mean_score_shift,
+  baseline_p50,
+  current_p50,
+  baseline_p90,
+  current_p90,
+  baseline_p95,
+  current_p95,
+  population_stability_index,
+  status,
+  alert_reason
+)
 
-WITH prediction_metrics AS (
-
+WITH runs AS (
   SELECT
-    COUNT(*)
-      AS total_predictions,
-
-    COUNTIF(
-      CAST(prediction AS STRING)
-      = '1'
-    ) AS positive_count,
-
-    COUNTIF(
-      CAST(prediction AS STRING)
-      = '0'
-    ) AS negative_count,
-
-    SAFE_DIVIDE(
-      COUNTIF(
-        CAST(prediction AS STRING)
-        = '1'
-      ),
-      COUNT(*)
-    ) AS positive_rate
+    model_name,
+    model_version,
+    run_id,
+    MAX(created_at) AS run_created_at
 
   FROM
     `fwa-mlops-accelerator-demo.fraud_experiments.provider_predictions`
 
+  WHERE fraud_score IS NOT NULL
+
+  GROUP BY
+    model_name,
+    model_version,
+    run_id
 ),
 
-drift AS (
-
+current_run AS (
   SELECT
-    total_predictions,
-    positive_count,
-    negative_count,
-    positive_rate,
+    model_name,
+    model_version,
+    run_id,
+    run_created_at
 
-    0.10
-      AS baseline_rate,
+  FROM runs
 
-    ABS(
-      positive_rate
-      - 0.10
-    ) AS rate_change
+  QUALIFY ROW_NUMBER() OVER (
+    ORDER BY run_created_at DESC
+  ) = 1
+),
+
+baseline_run AS (
+  SELECT
+    r.model_name,
+    r.model_version,
+    r.run_id,
+    r.run_created_at
+
+  FROM runs r
+
+  JOIN current_run c
+    USING(model_version)
+
+  WHERE
+    r.run_id != c.run_id
+
+  QUALIFY ROW_NUMBER() OVER (
+    ORDER BY r.run_created_at DESC
+  ) = 1
+),
+
+score_rows AS (
+  SELECT
+    'CURRENT' AS population,
+    p.fraud_score
 
   FROM
-    prediction_metrics
+    `fwa-mlops-accelerator-demo.fraud_experiments.provider_predictions` p
 
+  JOIN current_run r
+    ON p.run_id = r.run_id
+    AND p.model_version = r.model_version
+
+  WHERE p.fraud_score IS NOT NULL
+
+  UNION ALL
+
+  SELECT
+    'BASELINE' AS population,
+    p.fraud_score
+
+  FROM
+    `fwa-mlops-accelerator-demo.fraud_experiments.provider_predictions` p
+
+  JOIN baseline_run r
+    ON p.run_id = r.run_id
+    AND p.model_version = r.model_version
+
+  WHERE p.fraud_score IS NOT NULL
+),
+
+summary AS (
+  SELECT
+    population,
+    COUNT(*) AS row_count,
+    AVG(fraud_score) AS mean_score,
+    APPROX_QUANTILES(
+      fraud_score,
+      100
+    )[OFFSET(50)] AS p50,
+    APPROX_QUANTILES(
+      fraud_score,
+      100
+    )[OFFSET(90)] AS p90,
+    APPROX_QUANTILES(
+      fraud_score,
+      100
+    )[OFFSET(95)] AS p95
+
+  FROM score_rows
+
+  GROUP BY population
+),
+
+bucket_counts AS (
+  SELECT
+    population,
+
+    LEAST(
+      CAST(
+        FLOOR(fraud_score * 10)
+        AS INT64
+      ),
+      9
+    ) AS score_bucket,
+
+    COUNT(*) AS bucket_count
+
+  FROM score_rows
+
+  GROUP BY
+    population,
+    score_bucket
+),
+
+bucket_rates AS (
+  SELECT
+    b.population,
+    b.score_bucket,
+
+    SAFE_DIVIDE(
+      b.bucket_count,
+      s.row_count
+    ) AS bucket_rate
+
+  FROM bucket_counts b
+
+  JOIN summary s
+    USING(population)
+),
+
+all_buckets AS (
+  SELECT score_bucket
+
+  FROM UNNEST(
+    GENERATE_ARRAY(0, 9)
+  ) AS score_bucket
+),
+
+psi AS (
+  SELECT
+    SUM(
+      (
+        GREATEST(
+          COALESCE(c.bucket_rate, 0),
+          0.0001
+        )
+        -
+        GREATEST(
+          COALESCE(b.bucket_rate, 0),
+          0.0001
+        )
+      )
+      *
+      LN(
+        SAFE_DIVIDE(
+          GREATEST(
+            COALESCE(c.bucket_rate, 0),
+            0.0001
+          ),
+          GREATEST(
+            COALESCE(b.bucket_rate, 0),
+            0.0001
+          )
+        )
+      )
+    ) AS population_stability_index
+
+  FROM all_buckets x
+
+  LEFT JOIN bucket_rates b
+    ON x.score_bucket = b.score_bucket
+    AND b.population = 'BASELINE'
+
+  LEFT JOIN bucket_rates c
+    ON x.score_bucket = c.score_bucket
+    AND c.population = 'CURRENT'
+),
+
+final AS (
+  SELECT
+    c.model_name,
+    c.model_version,
+    b.run_id AS baseline_run_id,
+    c.run_id AS current_run_id,
+
+    bs.row_count AS baseline_count,
+    cs.row_count AS current_count,
+
+    bs.mean_score AS baseline_mean_score,
+    cs.mean_score AS current_mean_score,
+
+    ABS(
+      cs.mean_score
+      - bs.mean_score
+    ) AS mean_score_shift,
+
+    bs.p50 AS baseline_p50,
+    cs.p50 AS current_p50,
+    bs.p90 AS baseline_p90,
+    cs.p90 AS current_p90,
+    bs.p95 AS baseline_p95,
+    cs.p95 AS current_p95,
+
+    p.population_stability_index
+
+  FROM current_run c
+
+  LEFT JOIN baseline_run b
+    USING(model_version)
+
+  LEFT JOIN summary bs
+    ON bs.population = 'BASELINE'
+
+  LEFT JOIN summary cs
+    ON cs.population = 'CURRENT'
+
+  CROSS JOIN psi p
 )
 
 SELECT
   CURRENT_DATE()
     AS check_date,
 
-  'provider_fraud_model'
-    AS model_name,
+  CURRENT_TIMESTAMP()
+    AS monitoring_timestamp,
 
-  total_predictions,
-  positive_count,
-  negative_count,
-  positive_rate,
-  baseline_rate,
-  rate_change,
+  model_name,
+  model_version,
+  baseline_run_id,
+  current_run_id,
+  baseline_count,
+  current_count,
+  baseline_mean_score,
+  current_mean_score,
+  mean_score_shift,
+  baseline_p50,
+  current_p50,
+  baseline_p90,
+  current_p90,
+  baseline_p95,
+  current_p95,
+  population_stability_index,
 
   CASE
-    WHEN total_predictions = 0
+    WHEN baseline_run_id IS NULL
+      THEN 'INSUFFICIENT_DATA'
+
+    WHEN baseline_count = 0
+      OR current_count = 0
+      THEN 'INSUFFICIENT_DATA'
+
+    WHEN population_stability_index >= 0.20
       THEN 'ALERT'
 
-    WHEN rate_change >= 0.10
+    WHEN mean_score_shift >= 0.10
       THEN 'ALERT'
+
+    WHEN population_stability_index >= 0.10
+      THEN 'WATCH'
 
     ELSE 'PASS'
-  END AS status
+  END AS status,
 
-FROM
-  drift;
+  CASE
+    WHEN baseline_run_id IS NULL
+      THEN 'No previous scored run exists for the same model version.'
+
+    WHEN population_stability_index >= 0.20
+      THEN 'Prediction score PSI exceeded 0.20.'
+
+    WHEN mean_score_shift >= 0.10
+      THEN 'Mean fraud score shifted by at least 0.10.'
+
+    WHEN population_stability_index >= 0.10
+      THEN 'Prediction score PSI is in the watch range.'
+
+    ELSE 'Prediction score distribution is stable.'
+  END AS alert_reason
+
+FROM final;
 
 
 

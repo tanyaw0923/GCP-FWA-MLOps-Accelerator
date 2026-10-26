@@ -1,10 +1,18 @@
 import argparse
+import json
+import re
+import time
 from datetime import datetime, timezone
 
 from google.cloud import aiplatform
+from google.cloud import aiplatform_v1
 from google.cloud import bigquery
 
 from src.config.load_config import load_config
+from src.utils.observability import (
+    configure_observability,
+    log_event,
+)
 
 
 # ============================================================
@@ -69,6 +77,10 @@ DATA_CONFIG = config[
     "data"
 ]
 
+MODEL_CONFIG = config[
+    "model"
+]
+
 
 MODEL_ID = args.model_id
 RUN_ID = args.run_id
@@ -106,6 +118,32 @@ bq = bigquery.Client(
 aiplatform.init(
     project=PROJECT_ID,
     location=REGION,
+)
+
+job_client = (
+    aiplatform_v1.JobServiceClient(
+        client_options={
+            "api_endpoint": (
+                f"{REGION}-"
+                "aiplatform.googleapis.com"
+            )
+        }
+    )
+)
+
+logger = configure_observability(
+    project_id=PROJECT_ID,
+    service_name="fwa-batch-scoring",
+)
+
+log_event(
+    logger,
+    "batch_scoring_started",
+    fields={
+        "model_id": MODEL_ID,
+        "requested_run_id": RUN_ID,
+        "machine_type": MACHINE_TYPE,
+    },
 )
 
 
@@ -216,54 +254,257 @@ print(
 
 
 # ============================================================
-# 6. SELECT MODEL-SPECIFIC BATCH INPUT TABLE
+# 5A. PREFLIGHT: VERIFY REGISTERED VERTEX SERVING CONTRACT
+#
+# Fail before starting a 10-15 minute batch job when the
+# registered Vertex model still points to an old serving image
+# or is missing the feature contract environment variable.
 # ============================================================
 
-if MODEL_TYPE == "xgboost":
-
-    INPUT_TABLE = (
-        f"{PROJECT_ID}."
-        "fraud_features."
-        "xgboost_batch_input"
-    )
-
-
-elif MODEL_TYPE == "random_forest":
-
-    INPUT_TABLE = (
-        f"{PROJECT_ID}."
-        "fraud_features."
-        "random_forest_batch_input"
-    )
-
-
-else:
-
-    raise ValueError(
-        f"Unsupported model type: "
-        f"{MODEL_TYPE}"
-    )
-
-
-INPUT_URI = (
-    f"bq://{INPUT_TABLE}"
+expected_serving_image = (
+    MODEL_CONFIG[
+        MODEL_TYPE
+    ][
+        "serving_container_image_uri"
+    ]
 )
 
-
-OUTPUT_URI = (
-    f"bq://{OUTPUT_DATASET}"
+registered_container_spec = (
+    model.gca_resource.container_spec
 )
 
+registered_serving_image = (
+    registered_container_spec.image_uri
+)
+
+registered_env = {
+    item.name: item.value
+    for item in registered_container_spec.env
+}
 
 print(
-    f"Input table: "
+    f"Expected serving image: "
+    f"{expected_serving_image}"
+)
+
+print(
+    f"Registered serving image: "
+    f"{registered_serving_image}"
+)
+
+if (
+    registered_serving_image
+    != expected_serving_image
+):
+    raise RuntimeError(
+        "VERTEX MODEL PREFLIGHT FAILED: the registered model "
+        "uses a different serving image than pipeline_config.yaml. "
+        f"Expected={expected_serving_image}; "
+        f"Registered={registered_serving_image}. "
+        "Re-register the model with the rebuilt serving image "
+        "before launching batch prediction."
+    )
+
+registered_feature_json = (
+    registered_env.get(
+        "FEATURE_COLUMNS_JSON"
+    )
+)
+
+if not registered_feature_json:
+    raise RuntimeError(
+        "VERTEX MODEL PREFLIGHT FAILED: the registered model "
+        "does not contain FEATURE_COLUMNS_JSON. "
+        "Re-register it through the updated training pipeline."
+    )
+
+try:
+    registered_features = json.loads(
+        registered_feature_json
+    )
+except json.JSONDecodeError as exc:
+    raise RuntimeError(
+        "VERTEX MODEL PREFLIGHT FAILED: registered "
+        "FEATURE_COLUMNS_JSON is not valid JSON."
+    ) from exc
+
+
+log_event(
+    logger,
+    "batch_model_resolved",
+    fields={
+        "model_id": MODEL_ID,
+        "model_type": MODEL_TYPE,
+        "model_display_name": model.display_name,
+        "model_resource": model.resource_name,
+    },
+)
+
+
+# ============================================================
+# 6. RESOLVE MODEL FEATURE CONTRACT
+#
+# pipeline_config.yaml is the single source of truth.
+# The active model's feature list drives:
+#
+#   - training
+#   - serving registration
+#   - batch input materialization
+#   - Vertex batch inference
+#
+# No model-specific scoring SQL needs to be edited when features
+# are added or removed.
+# ============================================================
+
+MODEL_FEATURES = (
+    MODEL_CONFIG[
+        MODEL_TYPE
+    ].get(
+        "features",
+        config["features"],
+    )
+)
+
+if not MODEL_FEATURES:
+    raise RuntimeError(
+        "No model feature contract was configured for "
+        f"model_type={MODEL_TYPE}."
+    )
+
+feature_name_pattern = (
+    r"^[A-Za-z_][A-Za-z0-9_]*$"
+)
+
+invalid_feature_names = [
+    feature
+    for feature in MODEL_FEATURES
+    if not re.fullmatch(
+        feature_name_pattern,
+        feature,
+    )
+]
+
+if invalid_feature_names:
+    raise RuntimeError(
+        "Invalid configured feature name(s): "
+        f"{invalid_feature_names}"
+    )
+
+if registered_features != MODEL_FEATURES:
+    raise RuntimeError(
+        "VERTEX MODEL PREFLIGHT FAILED: registered feature "
+        "contract does not match pipeline_config.yaml. "
+        f"Registered={registered_features}; "
+        f"Expected={MODEL_FEATURES}. "
+        "Re-register the model before batch prediction."
+    )
+
+print(
+    "Vertex model preflight: PASS"
+)
+
+print(
+    f"Model feature count: "
+    f"{len(MODEL_FEATURES)}"
+)
+
+print(
+    f"Model features: "
+    f"{MODEL_FEATURES}"
+)
+
+
+# ============================================================
+# 7. DYNAMICALLY MATERIALIZE SHARED BATCH INPUT
+#
+# The provider feature table is the reusable superset feature
+# source. Before every batch prediction we create one shared
+# scoring table with exactly:
+#
+#   provider_id + MODEL_FEATURES
+#
+# Example:
+#   XGBoost configured with 7 features -> table has 7 features.
+#   XGBoost configured with 8 features -> table has 8 features.
+#   Random Forest configured with 8 -> table has 8 features.
+#
+# This removes RF/XGBoost-specific batch-input schemas.
+# ============================================================
+
+SOURCE_FEATURE_TABLE = (
+    DATA_CONFIG[
+        "feature_table"
+    ]
+)
+
+INPUT_TABLE = (
+    DATA_CONFIG[
+        "batch_input_table"
+    ]
+)
+
+source_table = (
+    bq.get_table(
+        SOURCE_FEATURE_TABLE
+    )
+)
+
+source_columns = {
+    field.name
+    for field in source_table.schema
+}
+
+required_source_columns = (
+    {"provider_id", "dataset_split"}
+    | set(MODEL_FEATURES)
+)
+
+missing_source_columns = sorted(
+    required_source_columns
+    - source_columns
+)
+
+if missing_source_columns:
+    raise RuntimeError(
+        "Provider feature table is missing configured "
+        f"batch-scoring columns: {missing_source_columns}. "
+        "Refresh provider features before scoring."
+    )
+
+feature_select_sql = ",\n".join(
+    (
+        f"  CAST(`{feature}` AS FLOAT64) "
+        f"AS `{feature}`"
+    )
+    for feature in MODEL_FEATURES
+)
+
+create_batch_input_query = f"""
+CREATE OR REPLACE TABLE `{INPUT_TABLE}` AS
+SELECT
+  CAST(provider_id AS STRING) AS provider_id,
+{feature_select_sql}
+FROM `{SOURCE_FEATURE_TABLE}`
+WHERE dataset_split = 'TEST'
+"""
+
+print(
+    "\nMaterializing batch input from pipeline_config.yaml..."
+)
+
+print(
+    f"Source feature table: "
+    f"{SOURCE_FEATURE_TABLE}"
+)
+
+print(
+    f"Shared batch input table: "
     f"{INPUT_TABLE}"
 )
 
-
-# ============================================================
-# 7. VALIDATE INPUT TABLE
-# ============================================================
+bq.query(
+    create_batch_input_query
+).result()
 
 input_table = (
     bq.get_table(
@@ -271,17 +512,63 @@ input_table = (
     )
 )
 
-
 if input_table.num_rows == 0:
-
     raise RuntimeError(
-        "Batch input table is empty."
+        "Dynamic batch input table is empty."
     )
 
+input_columns = [
+    field.name
+    for field in input_table.schema
+]
+
+expected_input_columns = (
+    ["provider_id"]
+    + MODEL_FEATURES
+)
+
+if input_columns != expected_input_columns:
+    raise RuntimeError(
+        "Dynamic batch-input schema does not match the "
+        "configured feature contract. "
+        f"Actual={input_columns}; "
+        f"Expected={expected_input_columns}"
+    )
 
 print(
-    f"Input rows: "
+    f"Batch input rows: "
     f"{input_table.num_rows}"
+)
+
+print(
+    f"Batch input columns: "
+    f"{input_columns}"
+)
+
+print(
+    "Vertex instance transformation: "
+    "object instance; provider_id excluded from model input "
+    "and attached back to BigQuery output."
+)
+
+log_event(
+    logger,
+    "batch_input_materialized",
+    fields={
+        "source_feature_table": SOURCE_FEATURE_TABLE,
+        "input_table": INPUT_TABLE,
+        "input_rows": input_table.num_rows,
+        "model_type": MODEL_TYPE,
+        "model_features": MODEL_FEATURES,
+    },
+)
+
+INPUT_URI = (
+    f"bq://{INPUT_TABLE}"
+)
+
+OUTPUT_URI = (
+    f"bq://{OUTPUT_DATASET}"
 )
 
 
@@ -420,6 +707,17 @@ print(
     f"{RUN_ID}"
 )
 
+log_event(
+    logger,
+    "batch_lineage_resolved",
+    fields={
+        "experiment_id": EXPERIMENT_ID,
+        "run_id": RUN_ID,
+        "model_type": MODEL_TYPE,
+        "model_id": MODEL_ID,
+    },
+)
+
 
 # ============================================================
 # 9. MODEL VERSION
@@ -442,66 +740,168 @@ print(
 
 # ============================================================
 # 10. RUN VERTEX BATCH PREDICTION
+#
+# IMPORTANT:
+# aiplatform.Model.batch_predict() does not expose Vertex
+# BatchPredictionJob.instance_config. We therefore use the
+# lower-level JobService API.
+#
+# BigQuery output does not support key_field, so use:
+#
+# instance_type="object"
+# excluded_fields=["provider_id"]
+#
+# Vertex removes provider_id from the instance sent to the model
+# and attaches the excluded field back to the BigQuery output.
+#
+# The custom serving apps accept object instances and explicitly
+# select FEATURES by name, so feature ordering is deterministic.
+#
+# This prevents identifiers such as "P00175" from ever being
+# passed into RandomForestClassifier / XGBoost as a feature.
 # ============================================================
 
 print(
     "\n=============================================="
 )
-
 print(
     "STARTING BATCH PREDICTION"
 )
-
 print(
     "=============================================="
 )
 
+parent = (
+    f"projects/{PROJECT_ID}/"
+    f"locations/{REGION}"
+)
 
-batch_job = model.batch_predict(
-    job_display_name=(
+batch_prediction_job_spec = {
+    "display_name": (
         f"provider-fraud-"
         f"{MODEL_TYPE.replace('_', '-')}-"
         f"batch"
     ),
 
-    bigquery_source=(
-        INPUT_URI
+    "model": (
+        model.resource_name
     ),
 
-    bigquery_destination_prefix=(
-        OUTPUT_URI
-    ),
+    "input_config": {
+        "instances_format": "bigquery",
+        "bigquery_source": {
+            "input_uri": INPUT_URI,
+        },
+    },
 
-    instances_format=(
-        "bigquery"
-    ),
+    "instance_config": {
+        "instance_type": "object",
+        "excluded_fields": [
+            "provider_id"
+        ],
+    },
 
-    predictions_format=(
-        "bigquery"
-    ),
+    "output_config": {
+        "predictions_format": "bigquery",
+        "bigquery_destination": {
+            "output_uri": OUTPUT_URI,
+        },
+    },
 
-    machine_type=(
-        MACHINE_TYPE
-    ),
+    "dedicated_resources": {
+        "machine_spec": {
+            "machine_type": MACHINE_TYPE,
+        },
+        "starting_replica_count": 1,
+        "max_replica_count": 1,
+    },
+}
 
-    sync=True,
+batch_job = (
+    job_client.create_batch_prediction_job(
+        parent=parent,
+        batch_prediction_job=(
+            batch_prediction_job_spec
+        ),
+    )
 )
 
+print(
+    f"Batch job resource: "
+    f"{batch_job.name}"
+)
+
+terminal_states = {
+    (
+        aiplatform_v1.types
+        .JobState
+        .JOB_STATE_SUCCEEDED
+    ),
+    (
+        aiplatform_v1.types
+        .JobState
+        .JOB_STATE_FAILED
+    ),
+    (
+        aiplatform_v1.types
+        .JobState
+        .JOB_STATE_CANCELLED
+    ),
+    (
+        aiplatform_v1.types
+        .JobState
+        .JOB_STATE_PAUSED
+    ),
+}
+
+last_state = None
+
+while True:
+    batch_job = (
+        job_client.get_batch_prediction_job(
+            name=batch_job.name
+        )
+    )
+
+    if batch_job.state != last_state:
+        print(
+            f"Batch job state: "
+            f"{batch_job.state.name}"
+        )
+
+        last_state = (
+            batch_job.state
+        )
+
+    if batch_job.state in terminal_states:
+        break
+
+    time.sleep(30)
+
+if (
+    batch_job.state
+    !=
+    aiplatform_v1.types
+    .JobState
+    .JOB_STATE_SUCCEEDED
+):
+    raise RuntimeError(
+        "Vertex batch prediction job failed. "
+        f"State={batch_job.state.name}; "
+        f"Error={batch_job.error}"
+    )
 
 print(
     "\nBatch prediction job complete."
 )
-
 print(
     f"Job resource: "
-    f"{batch_job.resource_name}"
+    f"{batch_job.name}"
 )
-
 print(
     f"Job state: "
-    f"{batch_job.state}"
+    f"{batch_job.state.name}"
 )
-
 print(
     f"Output info: "
     f"{batch_job.output_info}"
@@ -509,31 +909,40 @@ print(
 
 
 # ============================================================
-# 11. RESOLVE VERTEX OUTPUT TABLE
+# 11. RESOLVE CURRENT JOB OUTPUT
+#
+# IMPORTANT:
+# Never select an arbitrary "latest" predictions_* table from
+# the shared dataset. That can accidentally reuse predictions
+# from an earlier batch job when the current job produced only
+# row-level errors.
+#
+# Vertex reports the table for THIS batch job. Its suffix is
+# also used to locate the matching predictions/errors table.
 # ============================================================
 
 output_info = (
     batch_job.output_info
 )
 
-
 output_dataset_uri = (
     output_info.bigquery_output_dataset
 )
-
 
 reported_output_table = (
     output_info.bigquery_output_table
 )
 
-
 if not output_dataset_uri:
-
     raise RuntimeError(
-        "Vertex did not return a "
-        "BigQuery output dataset."
+        "Vertex did not return a BigQuery output dataset."
     )
 
+if not reported_output_table:
+    raise RuntimeError(
+        "Vertex did not return a BigQuery output table "
+        "for the current batch job."
+    )
 
 resolved_output_dataset = (
     output_dataset_uri
@@ -544,202 +953,174 @@ resolved_output_dataset = (
     )
 )
 
-
 print(
     f"\nResolved output dataset: "
     f"{resolved_output_dataset}"
 )
-
-
-if reported_output_table:
-
-    print(
-        f"Vertex-reported output table: "
-        f"{reported_output_table}"
-    )
-
-
-# ============================================================
-# 12. IDENTIFY PREDICTION OR ERROR TABLE
-#
-# Vertex can create:
-#
-#   predictions_<timestamp>
-#
-# or:
-#
-#   errors_<timestamp>
-#
-# We use the tables created around the batch job completion
-# and prioritize the exact table name reported by Vertex.
-# ============================================================
-
-tables = list(
-    bq.list_tables(
-        resolved_output_dataset
-    )
+print(
+    f"Vertex-reported output table: "
+    f"{reported_output_table}"
 )
 
 
-prediction_table_id = None
-error_table_id = None
+# ============================================================
+# 12. MATCH PREDICTIONS / ERRORS TO THIS EXACT JOB
+# ============================================================
 
+if reported_output_table.startswith(
+    "predictions_"
+):
+    output_suffix = (
+        reported_output_table[
+            len("predictions_"):
+        ]
+    )
 
-# First try exact Vertex-reported prediction table.
-if reported_output_table:
+elif reported_output_table.startswith(
+    "errors_"
+):
+    output_suffix = (
+        reported_output_table[
+            len("errors_"):
+        ]
+    )
 
-    candidate_id = (
-        f"{resolved_output_dataset}."
+else:
+    raise RuntimeError(
+        "Unexpected Vertex BigQuery output table name: "
         f"{reported_output_table}"
     )
 
-    try:
+prediction_table_id = (
+    f"{resolved_output_dataset}."
+    f"predictions_{output_suffix}"
+)
 
+error_table_id = (
+    f"{resolved_output_dataset}."
+    f"errors_{output_suffix}"
+)
+
+try:
+    prediction_table = (
         bq.get_table(
-            candidate_id
+            prediction_table_id
         )
+    )
+except Exception:
+    prediction_table = None
 
-        prediction_table_id = (
-            candidate_id
+try:
+    error_table = (
+        bq.get_table(
+            error_table_id
         )
+    )
+except Exception:
+    error_table = None
 
-    except Exception:
+prediction_rows = (
+    prediction_table.num_rows
+    if prediction_table
+    else 0
+)
 
-        prediction_table_id = None
+error_rows = (
+    error_table.num_rows
+    if error_table
+    else 0
+)
 
-
-# If exact output table is unavailable, find most recent
-# predictions_* / errors_* tables.
-if prediction_table_id is None:
-
-    prediction_candidates = []
-    error_candidates = []
-
-
-    for table_item in tables:
-
-        full_table_id = (
-            f"{resolved_output_dataset}."
-            f"{table_item.table_id}"
-        )
-
-
-        if table_item.table_id.startswith(
-            "predictions_"
-        ):
-
-            table = (
-                bq.get_table(
-                    full_table_id
-                )
-            )
-
-            prediction_candidates.append(
-                (
-                    table.created,
-                    full_table_id,
-                )
-            )
-
-
-        elif table_item.table_id.startswith(
-            "errors_"
-        ):
-
-            table = (
-                bq.get_table(
-                    full_table_id
-                )
-            )
-
-            error_candidates.append(
-                (
-                    table.created,
-                    full_table_id,
-                )
-            )
-
-
-    if prediction_candidates:
-
-        prediction_candidates.sort(
-            key=lambda item: item[0],
-            reverse=True,
-        )
-
-        prediction_table_id = (
-            prediction_candidates[0][1]
-        )
-
-
-    if error_candidates:
-
-        error_candidates.sort(
-            key=lambda item: item[0],
-            reverse=True,
-        )
-
-        error_table_id = (
-            error_candidates[0][1]
-        )
+print(
+    f"Current-job prediction rows: "
+    f"{prediction_rows}"
+)
+print(
+    f"Current-job error rows: "
+    f"{error_rows}"
+)
 
 
 # ============================================================
-# 13. FAIL FAST IF ONLY ERROR TABLE EXISTS
+# 13. FAIL FAST ON CURRENT-JOB ROW ERRORS
+#
+# For this demo pipeline we require a complete provider batch:
+# every provider must receive exactly one prediction.
+# Any row-level errors therefore fail the scoring run instead
+# of allowing stale or partial predictions to flow downstream.
 # ============================================================
 
-if prediction_table_id is None:
+if error_rows > 0:
 
-    if error_table_id:
-
-        print(
-            "\n=============================================="
-        )
-
-        print(
-            "ROW-LEVEL PREDICTION ERRORS"
-        )
-
-        print(
-            "=============================================="
-        )
-
-
-        error_query = f"""
-        SELECT
-            *
-
-        FROM
-            `{error_table_id}`
-
-        LIMIT 5
-        """
-
-
-        for row in (
-            bq.query(
-                error_query
-            ).result()
-        ):
-
-            print(
-                dict(
-                    row.items()
-                )
-            )
-
-
-        raise RuntimeError(
-            "Vertex batch job completed but "
-            "no predictions table was produced. "
-            f"Inspect {error_table_id}."
-        )
-
-
-    raise RuntimeError(
-        "No Vertex predictions table found."
+    log_event(
+        logger,
+        "batch_row_errors",
+        severity="ERROR",
+        fields={
+            "model_id": MODEL_ID,
+            "run_id": RUN_ID,
+            "error_rows": error_rows,
+            "prediction_rows": prediction_rows,
+            "error_table": error_table_id,
+        },
     )
 
+    print(
+        "\n=============================================="
+    )
+    print(
+        "CURRENT BATCH ROW-LEVEL ERRORS"
+    )
+    print(
+        "=============================================="
+    )
+
+    error_query = f"""
+    SELECT
+        *
+
+    FROM
+        `{error_table_id}`
+
+    LIMIT 5
+    """
+
+    for row in (
+        bq.query(
+            error_query
+        ).result()
+    ):
+        print(
+            dict(
+                row.items()
+            )
+        )
+
+    raise RuntimeError(
+        "Current Vertex batch job produced "
+        f"{error_rows} row-level prediction errors. "
+        "Curated provider_predictions was NOT updated. "
+        f"Inspect {error_table_id}."
+    )
+
+if prediction_rows == 0:
+    raise RuntimeError(
+        "Current Vertex batch job produced zero "
+        "successful prediction rows. "
+        "Curated provider_predictions was NOT updated."
+    )
+
+if (
+    prediction_rows
+    != input_table.num_rows
+):
+    raise RuntimeError(
+        "Current batch prediction count does not match "
+        "the input provider count. "
+        f"Input={input_table.num_rows}, "
+        f"Predictions={prediction_rows}. "
+        "Curated provider_predictions was NOT updated."
+    )
 
 print(
     f"\nRaw prediction table: "
@@ -902,11 +1283,10 @@ print(
 # ============================================================
 # 16. DETERMINE PROVIDER IDENTIFIER STRATEGY
 #
-# Your production xgboost_batch_input should contain
-# provider_id so the scored provider can be linked downstream.
+# Vertex instance_config.excluded_fields removes provider_id
+# from the model instance and attaches it back to BigQuery output.
 #
-# If provider_id is not present in the raw Vertex output,
-# fail instead of silently losing lineage.
+# Keep "key" as a compatibility fallback for older outputs.
 # ============================================================
 
 raw_table = (
@@ -915,21 +1295,35 @@ raw_table = (
     )
 )
 
-
 raw_columns = {
     field.name
     for field in raw_table.schema
 }
 
+if "provider_id" in raw_columns:
 
-if "provider_id" not in raw_columns:
+    provider_identifier_column = (
+        "provider_id"
+    )
+
+elif "key" in raw_columns:
+
+    provider_identifier_column = (
+        "key"
+    )
+
+else:
 
     raise RuntimeError(
-        "provider_id is missing from the Vertex "
-        "prediction output. The production scoring "
-        "input/output contract must preserve provider_id "
-        "before materializing provider_predictions."
+        "Provider lineage is missing from the Vertex "
+        "prediction output. Expected provider_id to be "
+        "attached from instance_config.excluded_fields."
     )
+
+print(
+    "Provider lineage column: "
+    f"{provider_identifier_column}"
+)
 
 
 # ============================================================
@@ -1022,7 +1416,10 @@ INSERT INTO
 WITH scored AS
 (
     SELECT
-        provider_id,
+        CAST(
+            `{provider_identifier_column}`
+            AS STRING
+        ) AS provider_id,
 
         SAFE_CAST(
             prediction AS FLOAT64

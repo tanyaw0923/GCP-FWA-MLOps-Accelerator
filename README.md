@@ -38,7 +38,11 @@ The key design principle is:
 
 > Data, features, and modeling techniques can evolve independently while the same governed MLOps workflow is reused.
 
-## Demo Scenario
+## Architect Overview
+
+<img width="1998" height="1125" alt="image" src="https://github.com/user-attachments/assets/f3647476-e04e-44e6-b4d4-c84a5b64d422" />
+
+---
 
 The repository demonstrates three retraining use cases.
 
@@ -275,7 +279,11 @@ When a candidate is manually promoted, its `candidate_run_id` becomes the new `a
 
 ## Vertex AI Feature Store and Two-Speed Features
 
-The fraud pipeline uses a timestamped provider feature history as the canonical feature source for feature reuse, batch inference, and future online serving.
+The repository contains two related feature layers with different responsibilities.
+
+The **active supervised model path** uses `fraud_features.provider_eye_features`. The Vertex training pipeline rebuilds this table from raw claims for the configured rolling TRAIN / TEST windows, and batch scoring uses the TEST feature contract from the same table. This keeps the current Random Forest and XGBoost training and scoring paths consistent.
+
+Separately, `fraud_features.provider_feature_history` is a timestamped historical feature layer used to demonstrate reusable provider history, two-speed feature refreshes, point-in-time feature storage, and a future Vertex AI Feature Store / online-serving path. It is **not currently the source table used by the supervised training pipeline**. Keeping that distinction explicit avoids claiming a training-serving integration that the current demo does not yet implement.
 
 For the interview demo, the feature layer uses two refresh speeds:
 
@@ -313,7 +321,7 @@ refresh_short_term_provider_features.py
         v
 fraud_features.provider_feature_history
         |
-        +--> BigQuery batch inference
+        +--> historical feature analysis / backtesting
         |
         +--> Vertex AI Feature Group
         |      eye_provider_fraud_features
@@ -415,14 +423,14 @@ avg_member_provider_distance_7d
 high_acuity_oe_ratio_7d
 ```
 
-This lets the model compare stable behavior with recent behavior during batch inference.
+These short-term features are stored for experimentation and future scoring designs; they are not currently included in the active supervised model feature list.
 
 ```text
 referral_rate       -> trailing 6-month baseline
 referral_rate_7d    -> trailing 7-day behavior
 ```
 
-A large difference between the two can help identify a provider whose recent behavior has shifted from its longer-term pattern.
+A future model or monitoring rule could compare the two to identify providers whose recent behavior has shifted from their longer-term pattern.
 
 ### Canonical feature history
 
@@ -461,16 +469,16 @@ Provider A
 
 ### Why Feature Store is used
 
-The Feature Store design supports four goals:
+The current demo uses the Feature Store layer to show how provider features can be stored and reused beyond a single training run:
 
-- reduce training-serving skew by using one canonical provider feature source
-- support point-in-time historical feature retrieval from BigQuery
-- reuse the same registered provider features across Random Forest, XGBoost, and future models
-- provide a direct path to online serving through a Bigtable-backed Feature View
+- maintain timestamped provider feature history
+- support point-in-time feature inspection and backtesting
+- keep long-term and short-term provider behavior in one reusable history
+- provide a path to a registered Vertex AI Feature Group and future online serving
 
-BigQuery remains the offline feature store for high-volume training and batch prediction.
+For the **active batch model**, BigQuery `provider_eye_features` remains the execution contract for TRAIN / TEST and batch scoring. The Feature Store history is a parallel reusable layer rather than a second hidden training path.
 
-Vertex AI Feature Store provides the registered feature layer and future online-serving path on top of the same canonical provider feature history.
+This design choice is intentional for the interview demo: the production workflow is runnable today, while the Feature Store layer demonstrates how the architecture can evolve toward centralized point-in-time training and online feature serving without pretending that integration is already complete.
 
 ### Current Feature Store resources
 
@@ -485,7 +493,138 @@ Feature View:
 eye_provider_fraud_feature_view
 ```
 
-The resulting architecture stays simple enough for an interview demo while showing a realistic two-speed feature design: monthly long-term context plus daily recent behavior.
+The resulting architecture stays simple enough for an interview demo while clearly separating the runnable batch-model contract from the reusable historical / future-online Feature Store layer.
+
+## Monitoring Email Configuration
+
+Production performance monitoring can send a summary email when these environment variables are set:
+
+```bash
+export EMAIL_ADDRESS="sender@gmail.com"
+export EMAIL_PASSWORD="GOOGLE_APP_PASSWORD"
+export MONITORING_EMAIL="recipient@gmail.com"
+```
+
+For Gmail, `EMAIL_PASSWORD` must be a Google App Password, not the normal Gmail sign-in password. Email delivery uses SMTP over implicit TLS on port 465. A notification failure is logged but does not invalidate a monitoring result that was already written to BigQuery.
+
+## Batch Inference and Provider Lineage
+
+`pipeline_config.yaml` is the single source of truth for the model feature contract.
+
+For the selected model type, `run_batch_prediction.py` reads:
+
+```text
+model.<model_type>.features
+```
+
+and dynamically materializes one shared scoring table:
+
+```text
+fraud_features.model_batch_input
+```
+
+from the provider-level feature table. The schema is rebuilt immediately before each batch job as:
+
+```text
+provider_id + exactly the configured model features
+```
+
+This means a feature added to Random Forest or XGBoost in `pipeline_config.yaml` automatically flows into training, serving registration, and batch inference without editing model-specific scoring SQL.
+
+`provider_id` is lineage metadata, not a model feature. Vertex batch prediction uses object instances with:
+
+```text
+excluded_fields = ["provider_id"]
+```
+
+so the serving container receives only configured model features while `provider_id` is attached back to the BigQuery prediction output.
+
+```text
+pipeline_config.yaml
+        |
+        v
+model.<model_type>.features
+        |
+        +-----------------------+
+        |                       |
+        v                       v
+training                 dynamic batch input
+                                |
+                                v
+provider_id + configured features
+                                |
+                                v
+Vertex AI Batch Prediction
+provider_id excluded from model instance
+                                |
+                                v
+model-specific serving app
+RF predict_proba / XGBoost predict
+                                |
+                                v
+BigQuery current-job output
+provider_id + prediction
+                                |
+                                v
+fraud_experiments.provider_predictions
+```
+
+The scoring script validates that the registered Vertex model carries the same feature contract and serving image as `pipeline_config.yaml`, fails fast on row-level prediction errors, and never reuses an older `predictions_*` table.
+
+Run batch inference with:
+
+```bash
+python -m src.scoring.run_batch_prediction \
+  --model-id <VERTEX_MODEL_ID> \
+  --run-id <APPROVED_RUN_ID>
+```
+
+The `--run-id` argument is optional, but using the approved run explicitly gives the cleanest model-governance lineage for the demo.
+
+## Investigation Capacity and Business Value
+
+Fraud operations are capacity constrained, so the model is evaluated as a ranking system in addition to standard PR-AUC / precision / recall / F1 metrics.
+
+The investigation queue is model-independent:
+
+```text
+Latest curated provider_predictions run
+        |
+        v
+Rank providers by fraud_score
+        |
+        v
+Top 50 investigation queue
+        |
+        +-- P1: ranks 1-10
+        +-- P2: ranks 11-25
+        +-- P3: ranks 26-50
+```
+
+This works the same way whether the current scored model is Random Forest or XGBoost.
+
+Operational evaluation lives in:
+
+```text
+sql/evaluation/model_business_value.sql
+```
+
+and reports model value at investigator capacities:
+
+```text
+K = 10
+K = 20
+K = 50
+```
+
+with:
+
+- **precision@K** — fraction of selected providers that are fraud
+- **recall@K** — fraction of the known fraud population captured within investigator capacity
+- **lift@K** — precision@K divided by the underlying fraud prevalence
+- **confirmed fraud dollars captured@K** — value already confirmed through investigation feedback
+
+For this synthetic demo, recall@K and lift@K use the synthetic provider label from the claim generator. In production, the same framework would use matured SIU, audit, recovery, or adjudication outcomes and would account for label delay and investigation-selection bias.
 
 ## Scheduled Performance Monitoring
 
@@ -739,7 +878,7 @@ models/xgboost/candidate/model.bst
 models/xgboost/production/model.bst
 ```
 
-The custom Docker images in this repository are training images. They are separate from the Vertex AI serving containers referenced when registering models.
+The custom Docker images in this repository are versioned training and monitoring images. They are separate from the Vertex AI prebuilt serving containers referenced when registering models.
 
 ## Repository Structure
 
@@ -777,6 +916,7 @@ GCP-FWA-MLOps-Accelerator/
 │       └── requirements.txt
 │
 ├── sql/
+│   ├── evaluation/
 │   ├── features/
 │   ├── feedback/
 │   ├── monitoring/
@@ -1193,6 +1333,36 @@ python -m src.data.generate_synthetic_claims
 
 The generated file can then be loaded into the configured BigQuery claims table.
 
+## Container Image Versioning
+
+Custom project images use explicit semantic-style versions rather than floating tags.
+
+```text
+Random Forest training
+random-forest-training:v1.0.0
+
+XGBoost training
+xgboost-training:v1.0.0
+
+Performance monitoring
+performance-monitoring:v1.0.0
+```
+
+The version is declared as the Cloud Build substitution `_IMAGE_VERSION`, so a new container release can be built without editing the build steps.
+
+For example:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-xgboost.yaml \
+  --substitutions=_IMAGE_VERSION=v1.1.0 \
+  .
+```
+
+For model-training images, the image URI is also part of the model signature. Changing the selected training image therefore changes the candidate signature and triggers the governed retraining workflow.
+
+The KFP container component references a pinned image version at compile time, so when a training-image version changes, update the corresponding image version in `pipeline_config.yaml` and the KFP component, then recompile `model_training_pipeline.yaml`.
+
 ## Build Training Images
 
 Random Forest:
@@ -1250,6 +1420,253 @@ The launcher:
 11. registers only promotion-eligible challengers
 12. leaves eligible candidates in `PENDING_APPROVAL`
 
+## End-to-End Demo Runbook
+
+The following commands reflect the current demo workflow from candidate training through manual approval, model lookup, batch inference, investigation, and monitoring.
+
+### 1. Pull the Current Demo Branch
+
+```bash
+git checkout demo-readiness-five-fixes
+git pull origin demo-readiness-five-fixes
+```
+
+### 2. Build the Custom Serving Images
+
+Both Random Forest and XGBoost batch inputs preserve `provider_id` for lineage. Their custom serving containers remove that identifier before constructing the numeric feature matrix.
+
+Random Forest:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-random-forest-serving.yaml \
+  .
+```
+
+XGBoost:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-xgboost-serving.yaml \
+  .
+```
+
+The default image is:
+
+```text
+us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:v1.0.1
+```
+
+### 3. Compile and Run the Candidate Training Pipeline
+
+Compile the Vertex AI pipeline after any serving-image or component change:
+
+```bash
+python -m src.pipeline.model_training_pipeline
+```
+
+Run the candidate training pipeline:
+
+```bash
+python -m src.pipeline.run_model_training_pipeline
+```
+
+The pipeline performs feature refresh, candidate training, experiment tracking, promotion-gate evaluation, and candidate registration. Promotion remains a separate manual action.
+
+### 4. Manually Promote the Candidate
+
+After reviewing the candidate metrics and confirming the model is ready for production:
+
+```bash
+python -m src.models.promote_model_candidate
+```
+
+The promotion workflow:
+
+```text
+PENDING_APPROVAL
+        |
+        v
+manual approval
+        |
+        +-- copies candidate artifact to production path
+        +-- records approved feature / model signatures
+        +-- records approved model type
+        +-- records approved run_id
+        v
+APPROVED
+```
+
+### 5. List Registered Vertex Model IDs
+
+List all models in the project:
+
+```bash
+gcloud ai models list \
+  --project=fwa-mlops-accelerator-demo \
+  --region=us-central1
+```
+
+Typical output:
+
+```text
+MODEL_ID             DISPLAY_NAME
+2619996021257666560  fwa-xgboost-candidate
+NEW_MODEL_ID         fwa-xgboost-candidate-custom-serving
+```
+
+For XGBoost batch scoring with provider lineage, use the model registered with the custom serving container.
+
+Inspect a specific model:
+
+```bash
+gcloud ai models describe MODEL_ID \
+  --project=fwa-mlops-accelerator-demo \
+  --region=us-central1 \
+  --format="yaml(displayName,artifactUri,containerSpec.imageUri,containerSpec.predictRoute,containerSpec.healthRoute)"
+```
+
+The custom XGBoost model should reference:
+
+```text
+us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:v1.0.1
+```
+
+with:
+
+```text
+predictRoute: /predict
+healthRoute: /health
+```
+
+### 6. Batch-Scoring Input Is Generated Automatically
+
+There is no model-specific batch-scoring SQL to maintain. When batch inference starts, `run_batch_prediction.py` reads the active model's `features` list from `pipeline_config.yaml` and recreates the shared `fraud_features.model_batch_input` table from `fraud_features.provider_eye_features`.
+
+The table always contains `provider_id` plus exactly the features configured for the selected model. `provider_id` remains lineage metadata and is excluded from the model instance by Vertex.
+
+### 7. Run Batch Inference
+
+Run scoring with the selected Vertex model:
+
+```bash
+python -m src.scoring.run_batch_prediction \
+  --model-id MODEL_ID
+```
+
+For the cleanest lineage, explicitly pass the approved training run:
+
+```bash
+python -m src.scoring.run_batch_prediction \
+  --model-id MODEL_ID \
+  --run-id APPROVED_RUN_ID
+```
+
+The approved run can be retrieved from the training-state table:
+
+```bash
+bq query --use_legacy_sql=false '
+SELECT
+  approved_model_type,
+  approved_run_id,
+  approved_at
+FROM
+  `fwa-mlops-accelerator-demo.fraud_monitoring.model_training_state`
+WHERE
+  state_key = "provider_fraud_model"
+'
+```
+
+The batch-scoring script:
+
+```text
+BigQuery batch input
+provider_id + 7 model features
+        |
+        v
+Vertex AI Batch Prediction
+        |
+        v
+current-job predictions / errors
+        |
+        +-- fail fast on row-level errors
+        +-- never reuse an older predictions_* table
+        +-- validate prediction count
+        +-- validate provider_id lineage
+        v
+fraud_experiments.provider_predictions
+```
+
+Verify the curated output:
+
+```bash
+bq query --use_legacy_sql=false '
+SELECT
+  provider_id,
+  model_name,
+  model_version,
+  run_id,
+  fraud_score,
+  risk_rank,
+  risk_category
+FROM
+  `fwa-mlops-accelerator-demo.fraud_experiments.provider_predictions`
+ORDER BY created_at DESC, risk_rank
+LIMIT 20
+'
+```
+
+### 8. Create the Investigation Queue
+
+```bash
+bq query \
+  --use_legacy_sql=false \
+  < sql/feedback/create_investigation_queue.sql
+```
+
+The queue is model-independent and prioritizes the top-scoring providers according to investigator capacity.
+
+### 9. Simulate Investigator Feedback
+
+```bash
+python -m src.feedback.simulate_investigation_feedback
+```
+
+### 10. Evaluate Business Value
+
+```bash
+bq query \
+  --use_legacy_sql=false \
+  < sql/evaluation/model_business_value.sql
+```
+
+The business evaluation reports operational ranking metrics such as:
+
+```text
+Precision@K
+Recall@K
+Lift@K
+Confirmed fraud dollars captured
+```
+
+### 11. Run Data / Feature / Prediction Monitoring
+
+```bash
+bq query \
+  --use_legacy_sql=false \
+  < sql/monitoring/model_monitoring.sql
+```
+
+The monitoring SQL contains backward-compatible schema migrations so existing demo tables can be upgraded with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` rather than requiring them to be dropped and recreated.
+
+### 12. Run Investigator-Feedback Performance Monitoring
+
+```bash
+python -m src.monitoring.run_model_performance_monitoring
+```
+
+This compares matured investigation outcomes with the scored model run and records production precision, recall, F1, fraud yield, degradation status, and the retraining signal.
+
 ## Manual Candidate Promotion
 
 After reviewing a candidate:
@@ -1280,6 +1697,249 @@ Investigation feedback was then used to support supervised fraud modeling with R
 
 The current architecture preserves that experimentation history while focusing on a reusable, governed continuous-training workflow.
 
+## Operational Observability with Cloud Logging
+
+The pipeline uses structured Python logging for operational observability across the main training, batch-scoring, and production-monitoring paths.
+
+The reusable helper is:
+
+```text
+src/utils/observability.py
+```
+
+It sends structured operational events directly to Cloud Logging with `log_struct()` and falls back to standard Python logging when Cloud Logging is unavailable. This keeps the terminal output clean for interactive demos while avoiding the background-thread shutdown behavior of `CloudLoggingHandler`. This keeps local / Cloud Shell execution usable without making observability a hard runtime dependency.
+
+Operational events include:
+
+```text
+Training orchestration
+  - training_pipeline_submission_started
+  - training_pipeline_submitted
+  - training_pipeline_state_changed
+  - training_pipeline_completed
+  - training_pipeline_failed
+
+Batch scoring
+  - batch_scoring_started
+  - batch_model_resolved
+  - batch_input_validated
+  - batch_lineage_resolved
+  - batch_prediction_completed
+  - batch_row_errors
+  - batch_output_validated
+  - batch_scoring_completed
+
+Performance monitoring
+  - performance_monitoring_started
+  - performance_monitoring_completed
+  - performance_monitoring_write_failed
+  - monitoring_email_sent
+  - monitoring_email_skipped
+  - monitoring_email_failed
+```
+
+Structured fields include values such as:
+
+```text
+run_id
+experiment_id
+model_id
+model_version
+pipeline_job
+batch_job
+input_rows
+prediction_rows
+error_rows
+monitoring_status
+alert_reason
+```
+
+Claim-level payloads, member identifiers, and other sensitive healthcare data should not be written to application logs.
+
+### Enable Cloud Logging
+
+Enable the API:
+
+```bash
+gcloud services enable logging.googleapis.com
+```
+
+For Cloud Shell or another interactive Python environment, install the logging client if it is not already available:
+
+```bash
+pip install google-cloud-logging
+```
+
+Managed workload service accounts should have permission to write log entries, typically through `roles/logging.logWriter` or an equivalent custom role containing `logging.logEntries.create`.
+
+The managed performance-monitoring container includes `google-cloud-logging` in its requirements. Rebuild that image after pulling this change:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-performance-monitoring.yaml \
+  .
+```
+
+Cloud Logging complements, rather than replaces, model monitoring:
+
+```text
+Operational observability
+Cloud Logging
+  -> pipeline execution
+  -> serving / scoring failures
+  -> job state changes
+  -> operational alerts
+
+Model observability
+BigQuery monitoring tables
+  -> data quality
+  -> feature drift
+  -> prediction drift
+  -> production performance
+```
+
+## What's Missing from Production
+
+This repository demonstrates an end-to-end batch MLOps lifecycle, but it is intentionally not positioned as a complete enterprise production platform. A larger production implementation would add the following controls.
+
+### 1. Automated Rollback Process
+
+The current workflow supports candidate registration, manual approval, and promotion of a model artifact to production. A production system should also support an explicit rollback path.
+
+A stronger rollback design would include:
+
+- retain immutable versions of previously approved production artifacts
+- store the exact model version, feature version, dataset version, container image version, and Git commit for each production release
+- allow operators to mark a prior approved model as the active production version
+- restore both the model artifact and its associated serving / scoring configuration
+- verify rollback health with post-deployment validation before traffic or batch scoring resumes
+- preserve the rollback event in the model-governance audit trail
+
+Conceptually:
+
+```text
+Production model v3
+        |
+        | monitoring / operational issue
+        v
+Rollback decision
+        |
+        v
+Previously approved model v2
+        |
+        v
+Restore artifact + config + lineage
+        |
+        v
+Validation
+        |
+        v
+Resume production scoring
+```
+
+### 2. Automated CI/CD Test Gates
+
+The current repository contains reusable pipeline components and Cloud Build definitions, but a production implementation should automatically validate code and configuration before new artifacts or pipeline definitions are promoted.
+
+Typical CI/CD gates would include:
+
+- unit tests for rolling-window, signature, retraining, and promotion logic
+- schema and data-contract tests
+- feature-definition validation
+- model-training smoke tests
+- batch-scoring input / output contract tests
+- Docker image build validation
+- KFP pipeline compilation checks
+- security and dependency scanning
+- deployment to a non-production environment before production promotion
+
+A failed test gate should prevent the model, image, or pipeline change from advancing.
+
+```text
+Code / config change
+        |
+        v
+CI tests
+        |
+        +-- unit tests
+        +-- schema tests
+        +-- pipeline compile
+        +-- image build
+        +-- scoring contract tests
+        |
+        v
+All gates pass?
+     /       \
+   No         Yes
+   |           |
+   v           v
+ Stop      Deploy candidate
+```
+
+### 3. Large-Scale Feature Governance
+
+The current Feature Store layer demonstrates timestamped provider history, reusable feature definitions, and long-term / short-term feature refreshes. At enterprise scale, feature governance would need stronger controls.
+
+A larger implementation would typically add:
+
+- centralized ownership and stewardship for each feature
+- feature descriptions, business definitions, and approved use cases
+- versioned feature definitions
+- lineage from raw source to derived feature
+- freshness and quality SLAs
+- deprecation policies
+- access controls by team / domain
+- feature discovery and reuse across multiple models
+- automated validation for training-serving consistency
+- point-in-time correctness checks
+- audit history for changes to feature logic
+
+This prevents multiple teams from independently creating slightly different versions of the same business concept and improves reproducibility across models.
+
+### 4. IAM and Role-Based Access Control
+
+The demo focuses on the ML lifecycle rather than enterprise security administration. A production deployment should use least-privilege IAM and clearly separate responsibilities between data scientists, platform engineers, investigators, and model approvers.
+
+Example responsibilities could be separated as follows:
+
+```text
+Data Scientist
+  - read approved training data
+  - create experiments
+  - submit candidate training jobs
+  - cannot directly promote to production
+
+ML Platform / Service Account
+  - execute pipelines
+  - read / write required BigQuery tables
+  - access model artifacts
+  - register candidate models
+
+Model Approver
+  - review candidate metrics
+  - approve / reject production promotion
+
+Fraud Investigator
+  - access investigation queue
+  - write investigation outcomes
+  - no model-training permissions
+
+Production Operator
+  - manage deployment / rollback
+  - restricted access to production resources
+```
+
+Additional production controls would include:
+
+- dedicated service accounts per workload
+- least-privilege BigQuery dataset permissions
+- restricted Artifact Registry and Cloud Storage access
+- Secret Manager access only for required services
+- separation of development and production projects
+- audit logging for model registration, approval, promotion, and rollback
+
+These capabilities would strengthen the platform for enterprise deployment without changing the core design principle of the accelerator: model-specific data science can evolve while the governed MLOps workflow remains reusable.
+
 ## Current Scope
 
 This repository is a technical MLOps demonstration rather than a complete enterprise production platform.
@@ -1297,8 +1957,12 @@ The current workflow focuses on:
 - candidate registration
 - manual approval
 - artifact promotion
+- model-independent, capacity-based investigation queue
+- top-K operational evaluation and confirmed fraud-dollar capture
 - scheduled investigator-feedback performance monitoring
+- continuous fraud-score distribution drift monitoring
 - monitoring email notifications
+- structured Cloud Logging operational observability
 - monitoring-driven retraining signals
 
 A larger production implementation could add automated test gates, stronger IAM controls, CI/CD deployment automation, richer experiment comparison, approval workflows, additional model families, and online serving where appropriate.

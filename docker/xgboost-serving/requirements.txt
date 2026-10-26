@@ -2,3 +2,4 @@ fastapi
 uvicorn[standard]
 numpy
 xgboost==2.1.0
+google-cloud-storage
