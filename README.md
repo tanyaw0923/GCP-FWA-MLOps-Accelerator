@@ -495,6 +495,18 @@ eye_provider_fraud_feature_view
 
 The resulting architecture stays simple enough for an interview demo while clearly separating the runnable batch-model contract from the reusable historical / future-online Feature Store layer.
 
+## Monitoring Email Configuration
+
+Production performance monitoring can send a summary email when these environment variables are set:
+
+```bash
+export EMAIL_ADDRESS="sender@gmail.com"
+export EMAIL_PASSWORD="GOOGLE_APP_PASSWORD"
+export MONITORING_EMAIL="recipient@gmail.com"
+```
+
+For Gmail, `EMAIL_PASSWORD` must be a Google App Password, not the normal Gmail sign-in password. Email delivery uses SMTP over implicit TLS on port 465. A notification failure is logged but does not invalidate a monitoring result that was already written to BigQuery.
+
 ## Batch Inference and Provider Lineage
 
 `pipeline_config.yaml` is the single source of truth for the model feature contract.
@@ -1442,7 +1454,7 @@ gcloud builds submit \
 The default image is:
 
 ```text
-us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:v1.0.0
+us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:v1.0.1
 ```
 
 ### 3. Compile and Run the Candidate Training Pipeline
@@ -1517,7 +1529,7 @@ gcloud ai models describe MODEL_ID \
 The custom XGBoost model should reference:
 
 ```text
-us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:v1.0.0
+us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:v1.0.1
 ```
 
 with:
