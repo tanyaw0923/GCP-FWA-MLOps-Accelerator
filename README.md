@@ -38,7 +38,7 @@ The key design principle is:
 
 > Data, features, and modeling techniques can evolve independently while the same governed MLOps workflow is reused.
 
-## Architect Overview
+## Architecture Overview
 
 <img width="1998" height="1125" alt="image" src="https://github.com/user-attachments/assets/f3647476-e04e-44e6-b4d4-c84a5b64d422" />
 
@@ -1363,63 +1363,6 @@ For model-training images, the image URI is also part of the model signature. Ch
 
 The KFP container component references a pinned image version at compile time, so when a training-image version changes, update the corresponding image version in `pipeline_config.yaml` and the KFP component, then recompile `model_training_pipeline.yaml`.
 
-## Build Training Images
-
-Random Forest:
-
-```bash
-gcloud builds submit \
-  --config cloudbuild-random-forest.yaml \
-  .
-```
-
-XGBoost:
-
-```bash
-gcloud builds submit \
-  --config cloudbuild-xgboost.yaml \
-  .
-```
-
-Both builds use the repository root as the Docker build context.
-
-## Compile the Vertex AI Pipeline
-
-From the repository root:
-
-```bash
-python -m src.pipeline.model_training_pipeline
-```
-
-This generates:
-
-```text
-model_training_pipeline.yaml
-```
-
-## Run the Candidate Training Pipeline
-
-Run:
-
-```bash
-python -m src.pipeline.run_model_training_pipeline
-```
-
-The launcher:
-
-1. loads `pipeline_config.yaml`
-2. selects the active model configuration
-3. generates feature and model signatures
-4. creates experiment and run identifiers
-5. captures the Git commit
-6. resolves artifact locations and runtime parameters
-7. submits the compiled pipeline to Vertex AI
-8. waits for the pipeline result
-9. records successful training metadata and metrics
-10. runs the Model Promotion Gate against the currently approved production run
-11. registers only promotion-eligible challengers
-12. leaves eligible candidates in `PENDING_APPROVAL`
-
 ## End-to-End Demo Runbook
 
 The following commands reflect the current demo workflow from candidate training through manual approval, model lookup, batch inference, investigation, and monitoring.
@@ -1432,8 +1375,6 @@ git pull origin main
 ```
 
 ### 2. Build the Custom Serving Images
-
-Both Random Forest and XGBoost batch inputs preserve `provider_id` for lineage. Vertex batch prediction excludes `provider_id` from the model instance before the request reaches the custom serving container, while preserving the identifier in the BigQuery output for downstream lineage.
 
 Random Forest:
 
@@ -1451,12 +1392,6 @@ gcloud builds submit \
   .
 ```
 
-The default image is:
-
-```text
-us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:v1.0.1
-```
-
 ### 3. Compile and Run the Candidate Training Pipeline
 
 Compile the Vertex AI pipeline after any serving-image or component change:
@@ -1471,30 +1406,12 @@ Run the candidate training pipeline:
 python -m src.pipeline.run_model_training_pipeline
 ```
 
-The pipeline performs feature refresh, candidate training, experiment tracking, promotion-gate evaluation, and candidate registration. Promotion remains a separate manual action.
-
 ### 4. Manually Promote the Candidate
 
 After reviewing the candidate metrics and confirming the model is ready for production:
 
 ```bash
 python -m src.models.promote_model_candidate
-```
-
-The promotion workflow:
-
-```text
-PENDING_APPROVAL
-        |
-        v
-manual approval
-        |
-        +-- copies candidate artifact to production path
-        +-- records approved feature / model signatures
-        +-- records approved model type
-        +-- records approved run_id
-        v
-APPROVED
 ```
 
 ### 5. List Registered Vertex Model IDs
@@ -1507,16 +1424,6 @@ gcloud ai models list \
   --region=us-central1
 ```
 
-Typical output:
-
-```text
-MODEL_ID             DISPLAY_NAME
-2619996021257666560  fwa-xgboost-candidate
-NEW_MODEL_ID         fwa-xgboost-candidate-custom-serving
-```
-
-For XGBoost batch scoring with provider lineage, use the model registered with the custom serving container.
-
 Inspect a specific model:
 
 ```bash
@@ -1526,24 +1433,9 @@ gcloud ai models describe MODEL_ID \
   --format="yaml(displayName,artifactUri,containerSpec.imageUri,containerSpec.predictRoute,containerSpec.healthRoute)"
 ```
 
-The custom XGBoost model should reference:
-
-```text
-us-central1-docker.pkg.dev/fwa-mlops-accelerator-demo/fwa-mlops/xgboost-serving:v1.0.1
-```
-
-with:
-
-```text
-predictRoute: /predict
-healthRoute: /health
-```
-
 ### 6. Batch-Scoring Input Is Generated Automatically
 
-There is no model-specific batch-scoring SQL to maintain. When batch inference starts, `run_batch_prediction.py` reads the active model's `features` list from `pipeline_config.yaml` and recreates the shared `fraud_features.model_batch_input` table from `fraud_features.provider_eye_features`.
-
-The table always contains `provider_id` plus exactly the features configured for the selected model. `provider_id` remains lineage metadata and is excluded from the model instance by Vertex.
+No separate preparation command is required; `run_batch_prediction.py` materializes the scoring input from the configured feature contract.
 
 ### 7. Run Batch Inference
 
@@ -1577,45 +1469,6 @@ WHERE
 '
 ```
 
-The batch-scoring script:
-
-```text
-BigQuery batch input
-provider_id + 7 model features
-        |
-        v
-Vertex AI Batch Prediction
-        |
-        v
-current-job predictions / errors
-        |
-        +-- fail fast on row-level errors
-        +-- never reuse an older predictions_* table
-        +-- validate prediction count
-        +-- validate provider_id lineage
-        v
-fraud_experiments.provider_predictions
-```
-
-Verify the curated output:
-
-```bash
-bq query --use_legacy_sql=false '
-SELECT
-  provider_id,
-  model_name,
-  model_version,
-  run_id,
-  fraud_score,
-  risk_rank,
-  risk_category
-FROM
-  `fwa-mlops-accelerator-demo.fraud_experiments.provider_predictions`
-ORDER BY created_at DESC, risk_rank
-LIMIT 20
-'
-```
-
 ### 8. Create the Investigation Queue
 
 ```bash
@@ -1640,15 +1493,6 @@ bq query \
   < sql/evaluation/model_business_value.sql
 ```
 
-The business evaluation reports operational ranking metrics such as:
-
-```text
-Precision@K
-Recall@K
-Lift@K
-Confirmed fraud dollars captured
-```
-
 ### 11. Run Data / Feature / Prediction Monitoring
 
 ```bash
@@ -1657,37 +1501,11 @@ bq query \
   < sql/monitoring/model_monitoring.sql
 ```
 
-The monitoring SQL contains backward-compatible schema migrations so existing demo tables can be upgraded with `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` rather than requiring them to be dropped and recreated.
-
 ### 12. Run Investigator-Feedback Performance Monitoring
 
 ```bash
 python -m src.monitoring.run_model_performance_monitoring
 ```
-
-This compares matured investigation outcomes with the scored model run and records production precision, recall, F1, fraud yield, degradation status, and the retraining signal.
-
-## Manual Candidate Promotion
-
-After reviewing a candidate:
-
-```bash
-python -m src.models.promote_model_candidate
-```
-
-The promotion workflow:
-
-1. finds the pending candidate
-2. determines its model type
-3. selects the appropriate artifact format
-4. copies the candidate artifact to the production path
-5. updates approved feature/model signatures and model type
-6. copies the candidate `run_id` into `approved_run_id`
-7. marks the candidate as approved
-
-The approved run then becomes the baseline used by the next Model Promotion Gate comparison.
-
-Training and production promotion are intentionally separate. A newly trained candidate does not automatically replace the approved production model.
 
 ## Original Fraud Modeling Foundation
 
