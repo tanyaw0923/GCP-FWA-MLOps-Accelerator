@@ -4,6 +4,9 @@ A reusable Google Cloud MLOps framework for provider-level healthcare fraud, was
 
 This project is designed as a shared ML accelerator for a team of data scientists. Data scientists can experiment with new data, features, model configurations, and algorithms while reusing the same governed workflow for retraining decisions, feature refresh, training, evaluation, experiment tracking, candidate registration, approval, and production promotion.
 
+#### ▶▶▶Click the image below to watch the video on YouTube◀◀◀
+[![Watch the demo](https://img.youtube.com/vi/9gN_HCLjT6k/maxresdefault.jpg)](https://www.youtube.com/watch?v=9gN_HCLjT6k)
+
 ## Business Goal
 
 The goal is to avoid having every data scientist build a separate production workflow.
