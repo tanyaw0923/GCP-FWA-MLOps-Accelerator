@@ -1265,6 +1265,8 @@ avg_member_provider_distance
 
 ## Synthetic Demo Data
 
+The demo uses 100,000 synthetic eye-disease claims from primary care providers in Texas during 2026.
+
 The repository includes a synthetic claim generator:
 
 ```text
