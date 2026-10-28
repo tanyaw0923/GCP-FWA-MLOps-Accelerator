@@ -1,6 +1,6 @@
-fastapi
-uvicorn[standard]
-numpy
-joblib
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+numpy==2.4.6
+joblib==1.6.0
 scikit-learn==1.6.1
-google-cloud-storage
+google-cloud-storage==3.17.1
