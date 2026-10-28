@@ -1,7 +1,7 @@
-google-cloud-bigquery
-google-cloud-storage
-pandas
+google-cloud-bigquery==3.46.2
+google-cloud-storage==3.17.1
+pandas==3.1.0
 scikit-learn==1.6.1
-joblib
-db-dtypes
-pyyaml
+joblib==1.6.0
+db-dtypes==1.9.0
+PyYAML==6.0.3
