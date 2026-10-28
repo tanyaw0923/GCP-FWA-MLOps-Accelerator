@@ -965,7 +965,38 @@ GCP-FWA-MLOps-Accelerator/
     └── scoring/
         ├── run_batch_prediction.py
         └── postprocess_predictions.py
+│
+└── tests/
+    ├── unit/
+    │   ├── test_retraining_decision.py
+    │   ├── test_promotion_gate.py
+    │   ├── test_rolling_window.py
+    │   └── test_config_contracts.py
+    └── integration/
+        └── test_container_dependency_reproducibility.sh
 ```
+
+## Testing
+
+The repository separates lightweight unit tests from environment-dependent integration tests.
+
+- **Unit tests** validate core MLOps decision logic such as retraining triggers, model-promotion criteria, rolling train/test windows, and model-specific configuration contracts without requiring access to GCP resources.
+- **Integration tests** validate runtime assumptions that depend on external infrastructure. The container reproducibility test compares each model image's installed direct dependencies against the pinned versions declared in its `requirements.txt`.
+
+Run the unit tests with:
+
+```bash
+python -m pytest tests/unit -v
+```
+
+Run the container dependency reproducibility check with:
+
+```bash
+gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+bash tests/integration/test_container_dependency_reproducibility.sh
+```
+
+The integration test requires Docker access to the project's Artifact Registry images, while the unit-test suite is designed to run locally or in CI without GCP credentials.
 
 ## Code Orchestration — How the Files Work Together
 
