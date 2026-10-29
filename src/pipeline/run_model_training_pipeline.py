@@ -17,6 +17,17 @@ from src.utils.observability import (
 )
 
 
+# STEP 1 — Load shared pipeline settings.
+#
+# WHY:
+# Keep environment-specific settings outside Python so the same orchestrator
+# can launch different models, data months, and monitoring configurations.
+# load_config() resolves the YAML-backed configuration; subsequent sections
+# select the values to pass to the compiled Vertex AI pipeline.
+#
+# NOTE:
+# This file submits and observes the pipeline. The actual feature engineering,
+# training, evaluation, and promotion logic runs inside its KFP components.
 # Load project configuration
 config = load_config()
 
@@ -37,6 +48,15 @@ promotion_gate_config = promotion_config["gate"]
 
 
 # ------------------------------------------------------------------
+# STEP 2 — Select the model configuration.
+#
+# WHY:
+# Switching model.model_type in configuration chooses the active algorithm
+# without rewriting this orchestrator. Each model provides its own name,
+# experiment, hyperparameters, training image, and serving image.
+#
+# This also enables Use Case 3: testing a different model or parameters
+# against the same data window and features.
 # Active model
 # ------------------------------------------------------------------
 
@@ -65,6 +85,12 @@ SERVING_CONTAINER_IMAGE_URI = (
 
 
 # ------------------------------------------------------------------
+# STEP 3 — Match each algorithm to its serialized model artifact.
+#
+# Random Forest is serialized with joblib; XGBoost uses its native Booster
+# file. Downstream registration and serving components must load the
+# matching format. Reject unsupported model types instead of silently
+# producing an artifact that serving cannot read.
 # Artifact format
 # ------------------------------------------------------------------
 
@@ -85,6 +111,14 @@ else:
 
 
 # ------------------------------------------------------------------
+# STEP 4 — Validate and select the feature definition.
+#
+# Each model explicitly lists its training features. The shared feature SQL
+# and derived-feature SQL describe how provider-level inputs are produced.
+# Fail early if the selected model has no feature list.
+#
+# Use Case 2: changing SQL or selected feature columns changes the feature
+# signature, making a distinct experiment candidate possible.
 # Feature configuration
 # ------------------------------------------------------------------
 
@@ -108,7 +142,12 @@ DERIVED_FEATURE_SQL = config[
 
 
 def build_signature(payload):
-    """Create a stable SHA-256 signature for configuration changes."""
+    """Hash selected settings so equivalent configuration has one signature.
+
+    Sorting JSON keys makes the hash insensitive to dictionary insertion
+    order. This is configuration identity, not a hash of the underlying
+    training rows or a guarantee that external source data is unchanged.
+    """
 
     serialized = json.dumps(
         payload,
@@ -131,6 +170,12 @@ CURRENT_FEATURE_SIGNATURE = build_signature(
 )
 
 
+# STEP 5 — Track model-setting changes independently of feature changes.
+#
+# The pipeline can distinguish a changed algorithm/hyperparameter/serving
+# configuration from a changed feature definition. This is useful when
+# deciding whether a new candidate is warranted.
+#
 # The model signature is used by the retraining decision.
 # Changes to the algorithm, parameters, training image,
 # artifact format, or serving configuration should create
@@ -154,6 +199,11 @@ CURRENT_MODEL_SIGNATURE = build_signature(
 
 
 # ------------------------------------------------------------------
+# STEP 6 — Read data windows and BigQuery table destinations.
+#
+# Use Case 1: moving current_data_month forward lets the pipeline train
+# on newly available monthly claims while reusing model and feature logic.
+# training_months and testing_months control the rolling temporal split.
 # Data configuration
 # ------------------------------------------------------------------
 
@@ -191,6 +241,13 @@ EXPERIMENT_METRICS_TABLE = data_config[
 
 
 # ------------------------------------------------------------------
+# STEP 7 — Calculate human-readable experiment date boundaries.
+#
+# The latest testing_months end with current_data_month. Training ends
+# immediately before testing starts, so the reported windows do not overlap.
+# These dates describe experiment metadata; feature generation calculates
+# its operational rolling window separately within pipeline components.
+#
 # Training-window metadata
 #
 # The pipeline calculates the real rolling window again for
@@ -238,6 +295,12 @@ EXPERIMENT_TRAINING_END = (
 
 
 # ------------------------------------------------------------------
+# STEP 8 — Stamp the run with lineage identifiers.
+#
+# experiment_id is stable for an experiment name; run_id additionally embeds
+# model type, data month, and a UTC timestamp to distinguish executions.
+# Feature/model signatures, dataset month, and Git commit help explain which
+# code and settings produced a candidate during audits or comparisons.
 # Experiment metadata
 # ------------------------------------------------------------------
 
@@ -279,6 +342,8 @@ DATASET_VERSION = (
 )
 
 
+# Git may be unavailable in some deployment environments; keeping "unknown"
+# allows submission while making the missing code provenance explicit.
 try:
     GIT_COMMIT = (
         subprocess.check_output(
@@ -297,6 +362,12 @@ except Exception:
 
 
 # ------------------------------------------------------------------
+# STEP 9 — Provide downstream observability and promotion settings.
+#
+# KFP components write data-quality/drift/performance/training-state results
+# to these tables. Promotion thresholds are supplied to the gate that
+# compares candidate metrics; declaring them here does not itself promote
+# or deploy a model.
 # Monitoring tables
 # ------------------------------------------------------------------
 
@@ -356,6 +427,12 @@ MIN_PRECISION_CHANGE = float(
 
 
 # ------------------------------------------------------------------
+# STEP 10 — Separate candidate artifacts from production artifacts.
+#
+# Training writes to a configured candidate GCS location. The production
+# path is tracked separately so an experiment cannot overwrite production
+# merely by running this launcher. Promotion requires the downstream gate
+# and any configured manual-approval process.
 # Candidate and production artifact locations
 # ------------------------------------------------------------------
 
@@ -400,6 +477,11 @@ MODEL_DISPLAY_NAME = (
 
 
 # ------------------------------------------------------------------
+# STEP 11 — Serialize structured inputs for the pipeline boundary.
+#
+# Feature SQL, feature lists, and estimator settings are nested structures.
+# JSON strings preserve them when passing through string-valued KFP/Vertex
+# runtime parameters; pipeline components must deserialize them.
 # Serialize configuration passed to KFP
 # ------------------------------------------------------------------
 
@@ -427,6 +509,10 @@ MODEL_PARAMETERS_JSON = (
 
 
 # ------------------------------------------------------------------
+# STEP 12 — Identify the compiled pipeline and its artifact root.
+#
+# The YAML template represents the compiled KFP graph. Vertex AI writes
+# task outputs and metadata under PIPELINE_ROOT in Cloud Storage.
 # Pipeline configuration
 # ------------------------------------------------------------------
 
@@ -446,6 +532,12 @@ PIPELINE_ROOT = (
 
 
 # ------------------------------------------------------------------
+# STEP 13 — Build typed runtime arguments for every pipeline component.
+#
+# Vertex's low-level API expects protobuf Value objects, not raw Python
+# values. Strings carry IDs, table names, SQL/config JSON, image URIs, and
+# lineage; number_value carries integer windows and numeric thresholds.
+# This explicit mapping makes launches reproducible and inspectable.
 # Vertex runtime parameters
 # ------------------------------------------------------------------
 
@@ -649,6 +741,11 @@ runtime_parameter_values = {
 
 
 # ------------------------------------------------------------------
+# STEP 14 — Parse the compiled KFP YAML into a protobuf pipeline spec.
+#
+# Some compiler outputs wrap the graph in 'pipelineSpec'; others contain
+# the spec directly. Parsing to Struct produces the object expected by
+# the Vertex PipelineJob API. This does not execute the graph locally.
 # Load the compiled KFP spec
 # ------------------------------------------------------------------
 
@@ -676,6 +773,12 @@ json_format.ParseDict(
 
 
 # ------------------------------------------------------------------
+# STEP 15 — Construct the Vertex AI job request.
+#
+# RuntimeConfig supplies parameters and GCS output location. The job ID
+# includes model, data month, and timestamp for traceability; display name
+# is shorter for readability. The regional client directs requests to
+# the intended Vertex AI location.
 # Build the Vertex PipelineJob
 # ------------------------------------------------------------------
 
@@ -749,6 +852,11 @@ parent = (
 
 
 # ------------------------------------------------------------------
+# STEP 16 — Print a preflight summary for debugging and audit review.
+#
+# Log active features, version signatures, windows, parameters, candidate
+# paths, monitoring sinks, and gate thresholds before making an API call.
+# This is informational; it is not a validation of source data quality.
 # Print configuration before submission
 # ------------------------------------------------------------------
 
@@ -898,6 +1006,11 @@ print(
 
 
 # ------------------------------------------------------------------
+# STEP 17 — Submit the compiled pipeline to Vertex AI.
+#
+# create_pipeline_job starts the remote candidate workflow and returns a
+# resource name. Structured logging records the run and Vertex resource
+# so operators can correlate CLI output with Cloud Logging.
 # Submit
 # ------------------------------------------------------------------
 
@@ -938,6 +1051,11 @@ log_event(
 
 
 # ------------------------------------------------------------------
+# STEP 18 — Poll the remote job until a terminal state is observed.
+#
+# Query Vertex every 30 seconds and log state transitions only when they
+# change, avoiding noisy duplicate events. Success, failure, cancellation,
+# and pause all end this polling loop; only success passes the final check.
 # Wait for completion
 # ------------------------------------------------------------------
 
@@ -1005,6 +1123,12 @@ while True:
 
 
 # ------------------------------------------------------------------
+# STEP 19 — Report execution outcome and preserve failure visibility.
+#
+# Success means the Vertex pipeline completed, not necessarily that its
+# candidate passed the promotion gate or reached production. Metrics are
+# recorded independently of promotion eligibility. A non-success state
+# logs diagnostic information and raises an error for callers/CI.
 # Final result
 # ------------------------------------------------------------------
 
