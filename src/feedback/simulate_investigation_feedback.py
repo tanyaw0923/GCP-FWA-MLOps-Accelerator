@@ -1,3 +1,4 @@
+import argparse
 import uuid
 from datetime import datetime, timezone
 
@@ -37,6 +38,52 @@ INVESTIGATION_CAPACITY = 50
 
 RANDOM_SEED = 42
 
+CLASSIFICATION_THRESHOLD = 0.50
+
+
+# ============================================================
+# COMMAND-LINE OPTIONS
+#
+# By default the simulator preserves synthetic ground truth.
+# --degradation-rate intentionally flips a share of true
+# positives among model-predicted positives to confirmed normal.
+# This demo-only scenario creates additional false positives and
+# therefore lowers monitored production precision.
+# ============================================================
+
+parser = argparse.ArgumentParser(
+    description=(
+        "Simulate investigator feedback for the approved "
+        "production fraud-model run."
+    )
+)
+
+parser.add_argument(
+    "--degradation-rate",
+    type=float,
+    default=0.0,
+    help=(
+        "Demo-only share of true-positive, predicted-positive "
+        "providers to flip to CONFIRMED_NORMAL. "
+        "Use 0.0 for normal simulation; for example, 0.30 "
+        "simulates 30%% precision degradation pressure."
+    ),
+)
+
+parser.add_argument(
+    "--seed",
+    type=int,
+    default=RANDOM_SEED,
+    help="Random seed used for reproducible simulation.",
+)
+
+args = parser.parse_args()
+
+if not 0.0 <= args.degradation_rate <= 1.0:
+    raise ValueError(
+        "--degradation-rate must be between 0.0 and 1.0."
+    )
+
 
 # ============================================================
 # INITIALIZE
@@ -47,7 +94,7 @@ client = bigquery.Client(
 )
 
 rng = np.random.default_rng(
-    RANDOM_SEED
+    args.seed
 )
 
 created_at = datetime.now(
@@ -408,13 +455,24 @@ if missing_truth > 0:
 # ============================================================
 # 5. SIMULATE INVESTIGATION DECISION
 #
-# Demo:
+# Normal demo:
 #
 # synthetic_true_fraud = 1
 #     -> CONFIRMED_FRAUD
 #
 # synthetic_true_fraud = 0
 #     -> CONFIRMED_NORMAL
+#
+# Optional degradation demo:
+#
+# For a configured share of providers that the model predicts
+# positive (fraud_score >= 0.50) and that are true fraud, flip
+# the simulated investigation outcome to CONFIRMED_NORMAL.
+#
+# That converts some true positives into false positives from
+# the monitoring perspective and intentionally lowers precision.
+# This is demo-only behavior; production labels would come from
+# real investigator / SIU / audit outcomes.
 # ============================================================
 
 review_df[
@@ -426,6 +484,45 @@ review_df[
     .astype(bool)
 )
 
+predicted_positive_mask = (
+    review_df["fraud_score"]
+    >= CLASSIFICATION_THRESHOLD
+)
+
+degradation_candidates = review_df[
+    predicted_positive_mask
+    & review_df["confirmed_fraud"]
+].index.to_numpy()
+
+degraded_provider_count = 0
+
+if (
+    args.degradation_rate > 0
+    and len(degradation_candidates) > 0
+):
+    degraded_provider_count = int(
+        np.ceil(
+            len(degradation_candidates)
+            * args.degradation_rate
+        )
+    )
+
+    degraded_provider_count = min(
+        degraded_provider_count,
+        len(degradation_candidates),
+    )
+
+    degraded_indices = rng.choice(
+        degradation_candidates,
+        size=degraded_provider_count,
+        replace=False,
+    )
+
+    review_df.loc[
+        degraded_indices,
+        "confirmed_fraud",
+    ] = False
+
 review_df[
     "investigation_result"
 ] = np.where(
@@ -434,6 +531,21 @@ review_df[
     ],
     "CONFIRMED_FRAUD",
     "CONFIRMED_NORMAL",
+)
+
+print(
+    f"Degradation rate: "
+    f"{args.degradation_rate:.0%}"
+)
+
+print(
+    f"Eligible true positives: "
+    f"{len(degradation_candidates)}"
+)
+
+print(
+    f"Intentionally degraded outcomes: "
+    f"{degraded_provider_count}"
 )
 
 
@@ -662,6 +774,16 @@ print(
 print(
     f"Fraud yield: "
     f"{fraud_yield:.2%}"
+)
+
+print(
+    f"Intentional degradation rate: "
+    f"{args.degradation_rate:.0%}"
+)
+
+print(
+    f"Degraded outcomes: "
+    f"{degraded_provider_count}"
 )
 
 print(
