@@ -195,6 +195,19 @@ derived_feature_sql:
 # ============================================================
 
 monitoring:
+  # Add a validation rule for every active model feature; omitted rules
+  # fail SQL generation rather than silently disabling data quality checks.
+  # Bounds are inclusive. Use min: 0 for nonnegative monetary/distance values.
+  feature_validation_rules:
+    high_acuity_pct: {min: 0, max: 1}
+    pct_99214: {min: 0, max: 1}
+    pct_99215: {min: 0, max: 1}
+    referral_rate: {min: 0, max: 1}
+    eye_procedure_pct: {min: 0, max: 1}
+    avg_paid_per_claim: {min: 0}
+    high_acuity_oe_ratio: {min: 0}
+    avg_member_provider_distance: {min: 0}
+
   feature_shift_threshold: 0.10
   prediction_shift_threshold: 0.10
   baseline_positive_rate: 0.10
