@@ -341,7 +341,7 @@ FROM
 CREATE TABLE IF NOT EXISTS
   `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
 (
-  check_date DATE,
+  check_date TIMESTAMP,
   model_name STRING,
   status STRING
 );
@@ -350,7 +350,7 @@ CREATE TABLE IF NOT EXISTS
 -- metadata update to avoid BigQuery table-update rate limits.
 ALTER TABLE
   `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
-ADD COLUMN IF NOT EXISTS check_date DATE,
+ADD COLUMN IF NOT EXISTS check_date TIMESTAMP,
 ADD COLUMN IF NOT EXISTS monitoring_timestamp TIMESTAMP,
 ADD COLUMN IF NOT EXISTS model_name STRING,
 ADD COLUMN IF NOT EXISTS model_version STRING,
@@ -629,7 +629,7 @@ final AS (
 )
 
 SELECT
-  CURRENT_DATE()
+  CURRENT_TIMESTAMP()
     AS check_date,
 
   CURRENT_TIMESTAMP()
