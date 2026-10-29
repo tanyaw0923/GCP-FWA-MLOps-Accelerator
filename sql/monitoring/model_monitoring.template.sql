@@ -111,21 +111,24 @@ SELECT
 
   total_rows,
   unique_providers,
-  duplicate_rows,
-  null_feature_values,
-  invalid_feature_values,
+  COALESCE(duplicate_rows, 0)
+    AS duplicate_rows,
+  COALESCE(null_feature_values, 0)
+    AS null_feature_values,
+  COALESCE(invalid_feature_values, 0)
+    AS invalid_feature_values,
 
   CASE
     WHEN total_rows = 0
       THEN 'ALERT'
 
-    WHEN duplicate_rows > 0
+    WHEN COALESCE(duplicate_rows, 0) > 0
       THEN 'ALERT'
 
-    WHEN null_feature_values > 0
+    WHEN COALESCE(null_feature_values, 0) > 0
       THEN 'ALERT'
 
-    WHEN invalid_feature_values > 0
+    WHEN COALESCE(invalid_feature_values, 0) > 0
       THEN 'ALERT'
 
     ELSE 'PASS'
