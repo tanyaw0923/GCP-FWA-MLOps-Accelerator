@@ -1,3 +1,7 @@
+-- AUTO-GENERATED from pipeline_config.yaml; do not edit directly.
+-- Active model: random_forest
+-- Regenerate: python -m src.monitoring.generate_monitoring_sql
+
 -- ============================================================
 -- GENERIC MODEL MONITORING
 -- FWA MLOps Accelerator
@@ -112,63 +116,24 @@ dq AS (
         )
       AS duplicate_rows,
 
-    (
-      COUNTIF(
-        high_acuity_pct IS NULL
-      )
-      + COUNTIF(
-          pct_99214 IS NULL
-        )
-      + COUNTIF(
-          pct_99215 IS NULL
-        )
-      + COUNTIF(
-          referral_rate IS NULL
-        )
-      + COUNTIF(
-          eye_procedure_pct IS NULL
-        )
-      + COUNTIF(
-          avg_paid_per_claim IS NULL
-        )
-      + COUNTIF(
-          high_acuity_oe_ratio IS NULL
-        )
+    (COUNTIF(`high_acuity_pct` IS NULL)
+      + COUNTIF(`pct_99214` IS NULL)
+      + COUNTIF(`pct_99215` IS NULL)
+      + COUNTIF(`referral_rate` IS NULL)
+      + COUNTIF(`eye_procedure_pct` IS NULL)
+      + COUNTIF(`avg_paid_per_claim` IS NULL)
+      + COUNTIF(`high_acuity_oe_ratio` IS NULL)
+      + COUNTIF(`avg_member_provider_distance` IS NULL)
     ) AS null_feature_values,
 
-    (
-      COUNTIF(
-        high_acuity_pct < 0
-        OR high_acuity_pct > 1
-      )
-
-      + COUNTIF(
-          pct_99214 < 0
-          OR pct_99214 > 1
-        )
-
-      + COUNTIF(
-          pct_99215 < 0
-          OR pct_99215 > 1
-        )
-
-      + COUNTIF(
-          referral_rate < 0
-          OR referral_rate > 1
-        )
-
-      + COUNTIF(
-          eye_procedure_pct < 0
-          OR eye_procedure_pct > 1
-        )
-
-      + COUNTIF(
-          avg_paid_per_claim < 0
-        )
-
-      + COUNTIF(
-          high_acuity_oe_ratio < 0
-        )
+    (COUNTIF(`high_acuity_pct` < 0 OR `high_acuity_pct` > 1)
+      + COUNTIF(`pct_99214` < 0 OR `pct_99214` > 1)
+      + COUNTIF(`pct_99215` < 0 OR `pct_99215` > 1)
+      + COUNTIF(`referral_rate` < 0 OR `referral_rate` > 1)
+      + COUNTIF(`eye_procedure_pct` < 0 OR `eye_procedure_pct` > 1)
+      + COUNTIF(`avg_paid_per_claim` < 0)
+      + COUNTIF(`high_acuity_oe_ratio` < 0)
+      + COUNTIF(`avg_member_provider_distance` < 0)
     ) AS invalid_feature_values
 
   FROM
@@ -305,13 +270,14 @@ WITH feature_values AS (
   UNPIVOT (
     feature_value
     FOR feature_name IN (
-      high_acuity_pct,
-      pct_99214,
-      pct_99215,
-      referral_rate,
-      eye_procedure_pct,
-      avg_paid_per_claim,
-      high_acuity_oe_ratio
+      `high_acuity_pct`,
+      `pct_99214`,
+      `pct_99215`,
+      `referral_rate`,
+      `eye_procedure_pct`,
+      `avg_paid_per_claim`,
+      `high_acuity_oe_ratio`,
+      `avg_member_provider_distance`
     )
   )
 
