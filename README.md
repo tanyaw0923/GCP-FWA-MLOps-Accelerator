@@ -1485,11 +1485,11 @@ bq query --use_legacy_sql=false '
 SELECT
   approved_model_type,
   approved_run_id,
-  approved_at
+  last_training_timestamp AS approved_at
 FROM
   `fwa-mlops-accelerator-demo.fraud_monitoring.model_training_state`
 WHERE
-  state_key = "provider_fraud_model"
+  model_name = "provider_fraud_model"
 '
 ```
 
