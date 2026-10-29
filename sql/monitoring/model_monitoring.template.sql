@@ -350,7 +350,9 @@ CREATE TABLE IF NOT EXISTS
 -- metadata update to avoid BigQuery table-update rate limits.
 ALTER TABLE
   `fwa-mlops-accelerator-demo.fraud_monitoring.model_prediction_drift`
+ADD COLUMN IF NOT EXISTS check_date DATE,
 ADD COLUMN IF NOT EXISTS monitoring_timestamp TIMESTAMP,
+ADD COLUMN IF NOT EXISTS model_name STRING,
 ADD COLUMN IF NOT EXISTS model_version STRING,
 ADD COLUMN IF NOT EXISTS baseline_run_id STRING,
 ADD COLUMN IF NOT EXISTS current_run_id STRING,
@@ -366,6 +368,7 @@ ADD COLUMN IF NOT EXISTS current_p90 FLOAT64,
 ADD COLUMN IF NOT EXISTS baseline_p95 FLOAT64,
 ADD COLUMN IF NOT EXISTS current_p95 FLOAT64,
 ADD COLUMN IF NOT EXISTS population_stability_index FLOAT64,
+ADD COLUMN IF NOT EXISTS status STRING,
 ADD COLUMN IF NOT EXISTS alert_reason STRING;
 
 
