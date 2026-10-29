@@ -1505,9 +1505,28 @@ The queue is model-independent and prioritizes the top-scoring providers accordi
 
 ### 10. Simulate Investigator Feedback
 
+Run the normal simulation using synthetic ground truth:
+
 ```bash
 python -m src.feedback.simulate_investigation_feedback
 ```
+
+To intentionally demonstrate production-performance degradation, use a degradation rate. This flips a reproducible share of true-positive, model-predicted-positive providers to `CONFIRMED_NORMAL`, creating additional false positives and lowering monitored precision:
+
+```bash
+python -m src.feedback.simulate_investigation_feedback \
+  --degradation-rate 0.30
+```
+
+Use `--seed` to make the simulated degradation reproducible. The default seed is `42`.
+
+```bash
+python -m src.feedback.simulate_investigation_feedback \
+  --degradation-rate 0.30 \
+  --seed 42
+```
+
+This degradation mode is for demo/testing only; real production monitoring should use actual investigator, SIU, or audit outcomes.
 
 ### 11. Evaluate Business Value
 
