@@ -1521,6 +1521,8 @@ bq query \
 
 ```bash
 bq query \
+  --quiet \
+  --format=none \
   --use_legacy_sql=false \
   < sql/monitoring/model_monitoring.sql
 ```
