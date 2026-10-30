@@ -885,7 +885,7 @@ models/xgboost/candidate/model.bst
 models/xgboost/production/model.bst
 ```
 
-The custom Docker images in this repository are versioned training and monitoring images. They are separate from the Vertex AI prebuilt serving containers referenced when registering models.
+The repository uses versioned custom Docker images for Random Forest and XGBoost training and serving, plus a dedicated performance-monitoring image. The model-specific serving containers enforce the configured feature contract at prediction time.
 
 ## Repository Structure
 
@@ -894,7 +894,9 @@ GCP-FWA-MLOps-Accelerator/
 ├── .gitignore
 ├── README.md
 ├── cloudbuild-random-forest.yaml
+├── cloudbuild-random-forest-serving.yaml
 ├── cloudbuild-xgboost.yaml
+├── cloudbuild-xgboost-serving.yaml
 ├── cloudbuild-performance-monitoring.yaml
 ├── model_training_pipeline.yaml
 │
@@ -912,11 +914,19 @@ GCP-FWA-MLOps-Accelerator/
 │   └── model_training_state.csv
 │
 ├── docker/
-│   ├── random_forest/
+│   ├── random_forest/                 # Random Forest training image
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
-│   ├── xgboost/
+│   ├── random-forest-serving/         # Random Forest serving image
 │   │   ├── Dockerfile
+│   │   ├── app.py
+│   │   └── requirements.txt
+│   ├── xgboost/                       # XGBoost training image
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   ├── xgboost-serving/               # XGBoost serving image
+│   │   ├── Dockerfile
+│   │   ├── app.py
 │   │   └── requirements.txt
 │   └── performance-monitoring/
 │       ├── Dockerfile
@@ -927,51 +937,60 @@ GCP-FWA-MLOps-Accelerator/
 │   ├── features/
 │   ├── feedback/
 │   ├── monitoring/
+│   │   ├── model_monitoring.template.sql
+│   │   ├── model_monitoring.sql
+│   │   └── model_performance_degradation.sql
 │   ├── scoring/
 │   └── validation/
 │
-└── src/
-    ├── config/
-    │   ├── load_config.py
-    │   └── pipeline_config.yaml
-    │
-    ├── data/
-    │   └── generate_synthetic_claims.py
-    │
-    ├── feedback/
-    │   └── simulate_investigation_feedback.py
-    │
-    ├── feature_store/
-    │   ├── refresh_provider_feature_history.py
-    │   └── refresh_short_term_provider_features.py
-    │
-    ├── models/
-    │   ├── isolation_forest.py
-    │   ├── train_random_forest.py
-    │   ├── run_random_forest_training.py
-    │   ├── train_xgboost.py
-    │   ├── run_xgboost_training.py
-    │   └── promote_model_candidate.py
-    │
-    ├── monitoring/
-    │   ├── run_random_forest_monitoring.py
-    │   └── run_model_performance_monitoring.py
-    │
-    ├── pipeline/
-    │   ├── model_training_pipeline.py
-    │   ├── run_model_training_pipeline.py
-    │   └── components/
-    │
-    └── scoring/
-        ├── run_batch_prediction.py
-        └── postprocess_predictions.py
+├── src/
+│   ├── config/
+│   │   ├── load_config.py
+│   │   └── pipeline_config.yaml
+│   ├── data/
+│   │   └── generate_synthetic_claims.py
+│   ├── feedback/
+│   │   └── simulate_investigation_feedback.py
+│   ├── feature_store/
+│   │   ├── refresh_provider_feature_history.py
+│   │   └── refresh_short_term_provider_features.py
+│   ├── models/
+│   │   ├── isolation_forest.py
+│   │   ├── train_random_forest.py
+│   │   ├── run_random_forest_training.py
+│   │   ├── train_xgboost.py
+│   │   ├── run_xgboost_training.py
+│   │   └── promote_model_candidate.py
+│   ├── monitoring/
+│   │   ├── generate_monitoring_sql.py
+│   │   ├── run_model_performance_monitoring.py
+│   │   └── run_random_forest_monitoring.py
+│   ├── pipeline/
+│   │   ├── model_training_pipeline.py
+│   │   ├── run_model_training_pipeline.py
+│   │   └── components/
+│   │       ├── calculate_rolling_window_component.py
+│   │       ├── check_retraining_decision_component.py
+│   │       ├── model_promotion_gate_component.py
+│   │       ├── refresh_provider_features_component.py
+│   │       ├── register_model_component.py
+│   │       ├── train_random_forest_component.py
+│   │       └── train_xgboost_component.py
+│   ├── scoring/
+│   │   ├── run_batch_prediction.py
+│   │   └── postprocess_predictions.py
+│   ├── utils/
+│   │   └── observability.py
+│   └── validate_repo.sh
 │
 └── tests/
+    ├── README.md
     ├── unit/
-    │   ├── test_retraining_decision.py
+    │   ├── test_config_contracts.py
+    │   ├── test_monitoring_sql_generation.py
     │   ├── test_promotion_gate.py
-    │   ├── test_rolling_window.py
-    │   └── test_config_contracts.py
+    │   ├── test_retraining_decision.py
+    │   └── test_rolling_window.py
     └── integration/
         └── test_container_dependency_reproducibility.sh
 ```
@@ -980,7 +999,7 @@ GCP-FWA-MLOps-Accelerator/
 
 The repository separates lightweight unit tests from environment-dependent integration tests.
 
-- **Unit tests** validate core MLOps decision logic such as retraining triggers, model-promotion criteria, rolling train/test windows, and model-specific configuration contracts without requiring access to GCP resources.
+- **Unit tests** validate retraining triggers, promotion-gate behavior, rolling train/test windows, model-specific configuration contracts, and configuration-driven monitoring SQL generation without requiring access to GCP resources.
 - **Integration tests** validate runtime assumptions that depend on external infrastructure. The container reproducibility test compares each model image's installed direct dependencies against the pinned versions declared in its `requirements.txt`.
 
 Run the unit tests with:
@@ -1265,7 +1284,7 @@ The currently configured dataset version is controlled by:
 
 ```yaml
 data:
-  current_data_month: "2026-10-01"
+  current_data_month: "2026-09-01"
 ```
 
 The active model is controlled by:
@@ -1325,8 +1344,14 @@ Custom project images use explicit semantic-style versions rather than floating 
 Random Forest training
 random-forest-training:v1.0.0
 
+Random Forest serving
+random-forest-serving:v1.0.1
+
 XGBoost training
 xgboost-training:v1.0.0
+
+XGBoost serving
+xgboost-serving:v1.0.1
 
 Performance monitoring
 performance-monitoring:v1.0.0
@@ -1702,18 +1727,16 @@ Resume production scoring
 
 ### 2. Automated CI/CD Test Gates
 
-The current repository contains reusable pipeline components and Cloud Build definitions, but a production implementation should automatically validate code and configuration before new artifacts or pipeline definitions are promoted.
+The repository now includes a dedicated `tests/` hierarchy with unit coverage for rolling-window logic, retraining decisions, promotion-gate behavior, configuration contracts, monitoring SQL generation, and an Artifact Registry container-dependency reproducibility check. The remaining production gap is automated CI orchestration: these checks are not yet enforced by a GitHub Actions or equivalent pull-request workflow.
 
-Typical CI/CD gates would include:
+A production CI/CD gate should automatically run and enforce:
 
-- unit tests for rolling-window, signature, retraining, and promotion logic
-- schema and data-contract tests
-- feature-definition validation
-- model-training smoke tests
-- batch-scoring input / output contract tests
-- Docker image build validation
+- the existing unit-test suite
+- configuration and monitoring-SQL contract validation
 - KFP pipeline compilation checks
-- security and dependency scanning
+- model-training and batch-scoring smoke tests
+- Docker image build validation
+- dependency and security scanning
 - deployment to a non-production environment before production promotion
 
 A failed test gate should prevent the model, image, or pipeline change from advancing.
