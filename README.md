@@ -135,56 +135,8 @@ The launcher creates a model signature from the model type, model name, and hype
 
 ## Continuous Training Flow
 
-```text
-                  Retraining Decision
-                          |
-                          v
-                  Rolling Data Window
-                          |
-                          v
-                Provider Feature Refresh
-                          |
-                +---------+---------+
-                |                   |
-                v                   v
-         Random Forest          XGBoost
-                |                   |
-                v                   v
-              Train               Train
-                |                   |
-                v                   v
-             Evaluate            Evaluate
-                |                   |
-                +---------+---------+
-                          |
-                          v
-                 Experiment Tracking
-                          |
-                          v
-                 Model Promotion Gate
-                          |
-                    Promotion eligible?
-                     /            \
-                   No              Yes
-                   |                |
-                   v                v
-          Keep production     Register Candidate
-          model unchanged            |
-                                     v
-                              Vertex Model Registry
-                                     |
-                                     v
-                              PENDING_APPROVAL
-                                     |
-                                     v
-                              Manual Approval
-                                     |
-                                     v
-                        Promote Candidate Artifact
-                                     |
-                                     v
-                              Production Model
-```
+<img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/55074adc-edf4-4ca6-a4e8-d7c9d2b639a8" />
+
 
 Every training run is still recorded in the BigQuery experiment tables before the promotion decision is made. A challenger that does not satisfy the promotion criteria remains available for analysis, but it is not registered as a candidate.
 
