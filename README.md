@@ -1316,6 +1316,131 @@ high_acuity_oe_ratio
 avg_member_provider_distance
 ```
 
+## Apply This Infrastructure to Other Experiments
+
+This repository is designed so a new experiment can reuse the same retraining, experiment-tracking, promotion, batch-scoring, monitoring, and governance infrastructure. The amount of code that must change depends on whether the experiment keeps an existing model family or introduces a new one.
+
+For a new experiment that still uses **Random Forest or XGBoost**, most changes should be configuration and feature-definition changes rather than pipeline rewrites.
+
+| File | What to modify | When it is required |
+| --- | --- | --- |
+| `src/config/pipeline_config.yaml` | Update `project_id`, region/bucket if needed, active `model_type`, experiment name, hyperparameters, model feature list, source/output table names, rolling-window settings, feature SQL, derived-feature SQL, validation rules, monitoring thresholds, Feature Store IDs, and candidate/production artifact paths. | Always. This is the primary experiment configuration. |
+| `src/data/generate_synthetic_claims.py` | Replace the demo claim-generation logic, labels, feature-driving columns, dates, specialties, geography, and fraud patterns. | Only for a new synthetic demo dataset. Real production data would normally replace this script entirely. |
+| `src/pipeline/components/refresh_provider_features_component.py` | Adjust the provider/entity aggregation logic, source columns, label construction, entity metadata, or split logic if the new use case cannot be expressed through `feature_sql` and `derived_feature_sql` alone. | Only when the experiment changes the entity grain or requires different feature-engineering logic. |
+| `src/models/train_random_forest.py` or `src/models/train_xgboost.py` | Change label handling, evaluation metrics, class threshold, artifact format, or algorithm-specific training behavior. Hyperparameters and feature lists should remain config-driven where possible. | Only when the training behavior changes. |
+| `src/monitoring/generate_monitoring_sql.py` | Usually no change. Add generator logic only if the experiment needs a new validation-rule type or a different dynamically generated monitoring calculation. | Usually reusable as-is. |
+| `sql/monitoring/model_monitoring.template.sql` | Change data-quality, feature-drift, or prediction-drift logic/threshold semantics when the new experiment requires different monitoring behavior. After editing, regenerate `model_monitoring.sql`. | Only when monitoring logic changes. |
+| `src/monitoring/run_model_performance_monitoring.py` | Update the production outcome join, prediction threshold, metric definitions, minimum completed cases, or business outcome logic if the new experiment uses different labels or feedback semantics. | Required when production performance is measured differently. |
+| `src/feedback/simulate_investigation_feedback.py` | Replace the synthetic ground-truth lookup and investigator-decision simulation. The current degradation option is demo-only. | Only for demo/synthetic feedback. |
+| `src/scoring/run_batch_prediction.py` | Usually no feature-list edit is needed because the batch-input schema is built from `model.<model_type>.features`. Modify only if the experiment changes the entity key, scoring source, output contract, or Vertex batch-prediction behavior. | Usually reusable as-is. |
+| `docker/random-forest-serving/app.py` or `docker/xgboost-serving/app.py` | Usually no feature-name edit is needed because `FEATURE_COLUMNS_JSON` supplies the serving contract. Modify only if request/response format, artifact loading, preprocessing, or prediction logic changes. | Usually reusable as-is. |
+| `cloudbuild-*.yaml` | Change Artifact Registry project/repository names and image versions when moving the infrastructure to another GCP project or publishing new container versions. | Required for a new environment or rebuilt images. |
+| `src/pipeline/model_training_pipeline.py` | No change for another RF/XGBoost experiment using the same lifecycle. Modify pipeline branches only when adding a new algorithm, new governance step, or different orchestration topology. | Usually reusable as-is. |
+| `src/pipeline/run_model_training_pipeline.py` | Usually no experiment-specific change is needed because it reads `pipeline_config.yaml`. Modify only when new runtime parameters, new model types, or new pipeline inputs must be passed to Vertex AI. | Usually reusable as-is. |
+| `tests/unit/` and `tests/integration/` | Update/add tests for new config contracts, monitoring generation, retraining rules, promotion criteria, container dependencies, and any new model-specific behavior. | Required for any meaningful infrastructure change. |
+
+### Minimum changes for a new experiment using an existing model family
+
+For example, if a second fraud experiment still uses Random Forest but targets a different provider pattern, the intended change path is:
+
+```text
+1. pipeline_config.yaml
+   - experiment_name
+   - active features
+   - feature SQL / derived feature SQL
+   - validation rules
+   - table names if the experiment uses separate datasets
+   - hyperparameters / artifact paths if needed
+
+2. Source data
+   - load the new claims / events into the configured source table
+
+3. Regenerate monitoring SQL
+   python -m src.monitoring.generate_monitoring_sql
+
+4. Recompile the KFP pipeline only if pipeline/component code changed
+   python -m src.pipeline.model_training_pipeline
+
+5. Run tests
+   python -m pytest tests/unit -v
+
+6. Launch the experiment
+   python -m src.pipeline.run_model_training_pipeline
+```
+
+The design goal is that a normal feature/model experiment should **not** require edits to the orchestration code, serving code, or monitoring generator.
+
+### Adding a completely new model type
+
+Adding a model family beyond `random_forest` and `xgboost` requires more work because model training and serving are algorithm-specific. In addition to adding a new `model.<model_type>` block in `pipeline_config.yaml`, add or update:
+
+```text
+src/models/train_<new_model>.py
+src/pipeline/components/train_<new_model>_component.py
+src/pipeline/model_training_pipeline.py
+docker/<new-model>/
+docker/<new-model>-serving/
+cloudbuild-<new-model>.yaml
+cloudbuild-<new-model>-serving.yaml
+tests/
+```
+
+The new branch in `model_training_pipeline.py` should still reuse the shared components for:
+
+```text
+retraining decision
+rolling train/test window
+feature refresh
+experiment tracking
+promotion gate
+Vertex Model Registry
+candidate state
+manual approval
+monitoring
+```
+
+After changing pipeline topology or component definitions, recompile:
+
+```bash
+python -m src.pipeline.model_training_pipeline
+```
+
+and commit the updated `model_training_pipeline.yaml`.
+
+### Feature changes
+
+When adding a new model feature, update the experiment in this order:
+
+```text
+pipeline_config.yaml
+  -> feature_sql or derived_feature_sql
+  -> model.<model_type>.features
+  -> monitoring.feature_validation_rules
+```
+
+Then regenerate monitoring SQL:
+
+```bash
+python -m src.monitoring.generate_monitoring_sql
+```
+
+The generator expands the data-quality null/invalid checks and feature-drift `UNPIVOT` list from the active model feature contract. Batch scoring and the custom serving container also consume that same configured feature list, reducing duplicated hard-coded feature definitions.
+
+### Moving the accelerator to another GCP project
+
+At minimum, update:
+
+```text
+src/config/pipeline_config.yaml
+cloudbuild-random-forest.yaml
+cloudbuild-random-forest-serving.yaml
+cloudbuild-xgboost.yaml
+cloudbuild-xgboost-serving.yaml
+cloudbuild-performance-monitoring.yaml
+```
+
+Replace project IDs, bucket names, BigQuery table paths, Artifact Registry image URIs, and Feature Store resource IDs. Then rebuild the required images, regenerate monitoring SQL, recompile the pipeline if needed, and rerun the unit/integration checks before launching the experiment.
+
 ## Synthetic Demo Data
 
 The demo uses 100,000 synthetic eye-disease claims from primary care providers in Texas during 2026.
