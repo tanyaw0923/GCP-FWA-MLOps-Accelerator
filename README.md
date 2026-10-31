@@ -1,5 +1,11 @@
 # GCP FWA MLOps Accelerator
 
+[![Unit Tests](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/unit-tests.yml)
+[![KFP Pipeline Compile](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/kfp-pipeline-compile.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/kfp-pipeline-compile.yml)
+[![CodeQL](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/codeql.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/codeql.yml)
+[![Docker Build](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/docker-build.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/docker-build.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/blob/main/LICENSE)
+
 A reusable Google Cloud MLOps framework for provider-level healthcare fraud, waste, and abuse (FWA) modeling.
 
 This project is designed as a shared ML accelerator for a team of data scientists. Data scientists can experiment with new data, features, model configurations, and algorithms while reusing the same governed workflow for retraining decisions, feature refresh, training, evaluation, experiment tracking, candidate registration, approval, and production promotion.
