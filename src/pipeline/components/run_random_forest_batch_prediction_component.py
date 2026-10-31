@@ -95,7 +95,7 @@ def run_random_forest_batch_prediction_component(
         aiplatform_v1.types.BatchDedicatedResources(
             machine_spec=(
                 aiplatform_v1.types.MachineSpec(
-                    machine_type="n1-standard-2"
+                    machine_type="n1-standard-4"
                 )
             ),
             starting_replica_count=1,
