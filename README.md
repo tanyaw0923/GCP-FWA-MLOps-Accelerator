@@ -61,16 +61,6 @@ The repository demonstrates three retraining use cases.
 
 <img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/dc5b3eb5-b340-47d3-b4d5-bc6ea1e8d178" />
 
-
-<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/032ce02e-cb6e-4df9-ae1a-5e8028ed688e" />
-
----
-
-<img width="1644" height="957" alt="image" src="https://github.com/user-attachments/assets/768177d2-792f-4d41-a461-282520bc47f3" />
-
-#### Example Email Attached Below:
-[FWA Model Performance Monitoring - ALERT email.pdf](https://github.com/user-attachments/files/33799524/FWA.Model.Performance.Monitoring.-.ALERT.email.pdf)
-
 ---
 
 ### Use Case 1 — New Data
@@ -185,6 +175,8 @@ This allows, for example, an approved Random Forest model and an XGBoost candida
 
 The Model Promotion Gate separates **training success** from **promotion eligibility**.
 
+<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/032ce02e-cb6e-4df9-ae1a-5e8028ed688e" />
+
 Every challenger is trained and evaluated first, and its run metadata and evaluation metrics are written to BigQuery. The gate then compares the new run with the currently approved production run using the configured promotion criteria.
 
 Current default guardrails:
@@ -198,35 +190,7 @@ Precision change  >= -0.05
 
 The precision rule intentionally allows a controlled tradeoff: for an imbalanced fraud-detection problem, improved recall can justify a small precision decrease, but the gate prevents precision from degrading without limit.
 
-The decision flow is:
-
-```text
-Train challenger
-       |
-       v
-Evaluate challenger
-       |
-       v
-Write experiment_runs / experiment_metrics
-       |
-       v
-Compare with approved_run_id
-       |
-       v
-Model Promotion Gate
-      / \
-     /   \
-  FAIL   PASS
-   |       |
-   v       v
-Keep    Register
-current candidate
-model      |
-           v
-      PENDING_APPROVAL
-```
-
-A failed challenger is still preserved in the experiment tables for analysis and reproducibility. It simply does not advance into Model Registry or the manual-approval workflow.
+A failed challenger is **still preserved** in the experiment tables for analysis and reproducibility. It simply does not advance into Model Registry or the manual-approval workflow.
 
 The training-state table tracks:
 
@@ -579,64 +543,12 @@ For this synthetic demo, recall@K and lift@K use the synthetic provider label fr
 
 Production performance monitoring is intentionally separated from the Vertex AI training pipeline.
 
-The monitoring workflow runs twice per month:
+<img width="1644" height="957" alt="image" src="https://github.com/user-attachments/assets/768177d2-792f-4d41-a461-282520bc47f3" />
 
-#### Example Email Output Attached Below:
+#### Example Email Attached Below:
 [FWA Model Performance Monitoring - ALERT email.pdf](https://github.com/user-attachments/files/33799524/FWA.Model.Performance.Monitoring.-.ALERT.email.pdf)
 
-```text
-Cloud Scheduler
-1st and 15th at 7:00 AM
-America/Edmonton
-        |
-        v
-Cloud Run Job
-fwa-performance-monitoring
-        |
-        v
-run_model_performance_monitoring.py
-        |
-        +--> provider_predictions
-        |
-        +--> investigation_results
-        |
-        +--> experiment_metrics
-        |
-        v
-Calculate production precision / recall / F1
-        |
-        v
-Compare with training baseline
-        |
-        v
-fraud_monitoring.model_performance_degradation
-        |
-        +--> PASS / ALERT / INSUFFICIENT_DATA
-        |
-        +--> investigator feedback summary
-        |
-        v
-Email monitoring report
-```
-
-The Cloud Scheduler job is:
-
-```text
-fwa-performance-monitoring-schedule
-```
-
-with cron:
-
-```text
-0 7 1,15 * *
-```
-
-and timezone:
-
-```text
-America/Edmonton
-```
-
+---
 The Cloud Run Job provides the execution environment for the custom Python monitoring code. It reads scored providers and completed investigation outcomes from BigQuery, calculates a confusion matrix and production precision / recall / F1, compares those metrics with the training baseline for the same run, writes the result to:
 
 ```text
