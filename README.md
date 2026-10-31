@@ -1316,7 +1316,7 @@ high_acuity_oe_ratio
 avg_member_provider_distance
 ```
 
-## Apply This Infrastructure to Other Experiments
+## Reuse This MLOps Infrastructure for New Experiments
 
 ### Minimum changes for a new experiment using an existing model family
 
