@@ -1318,21 +1318,6 @@ avg_member_provider_distance
 
 ## Apply This Infrastructure to Other Experiments
 
-This repository is designed so a new experiment can reuse the same retraining, experiment-tracking, promotion, batch-scoring, monitoring, and governance infrastructure. The amount of code that must change depends on whether the experiment keeps an existing model family or introduces a new one.
-
-For a new experiment that still uses **Random Forest or XGBoost**, most changes should be configuration and feature-definition changes rather than pipeline rewrites.
-
-| File | What to modify | When it is required |
-| --- | --- | --- |
-| `src/config/pipeline_config.yaml` | Update `project_id`, region/bucket if needed, active `model_type`, experiment name, hyperparameters, model feature list, source/output table names, rolling-window settings, feature SQL, derived-feature SQL, validation rules, monitoring thresholds, Feature Store IDs, and candidate/production artifact paths. | Always. This is the primary experiment configuration. |
-| `src/data/generate_synthetic_claims.py` | Replace the demo claim-generation logic, labels, feature-driving columns, dates, specialties, geography, and fraud patterns. | Only for a new synthetic demo dataset. Real production data would normally replace this script entirely. |
-| `src/pipeline/components/refresh_provider_features_component.py` | Adjust the provider/entity aggregation logic, source columns, label construction, entity metadata, or split logic if the new use case cannot be expressed through `feature_sql` and `derived_feature_sql` alone. | Only when the experiment changes the entity grain or requires different feature-engineering logic. |
-| `src/models/train_random_forest.py` or `src/models/train_xgboost.py` | Change label handling, evaluation metrics, class threshold, artifact format, or algorithm-specific training behavior. Hyperparameters and feature lists should remain config-driven where possible. | Only when the training behavior changes. |
-| `sql/monitoring/model_monitoring.template.sql` | Change data-quality, feature-drift, or prediction-drift logic/threshold semantics when the new experiment requires different monitoring behavior. After editing, regenerate `model_monitoring.sql`. | Only when monitoring logic changes. |
-| `src/monitoring/run_model_performance_monitoring.py` | Update the production outcome join, prediction threshold, metric definitions, minimum completed cases, or business outcome logic if the new experiment uses different labels or feedback semantics. | Required when production performance is measured differently. |
-| `cloudbuild-*.yaml` | Change Artifact Registry project/repository names and image versions when moving the infrastructure to another GCP project or publishing new container versions. | Required for a new environment or rebuilt images. |
-| `tests/unit/` and `tests/integration/` | Update/add tests for new config contracts, monitoring generation, retraining rules, promotion criteria, container dependencies, and any new model-specific behavior. | Required for any meaningful infrastructure change. |
-
 ### Minimum changes for a new experiment using an existing model family
 
 For example, if a second fraud experiment still uses Random Forest but targets a different provider pattern, the intended change path is:
