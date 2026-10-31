@@ -1,0 +1,41 @@
+name: Docker Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: random-forest-training
+            dockerfile: docker/random_forest/Dockerfile
+          - name: random-forest-serving
+            dockerfile: docker/random-forest-serving/Dockerfile
+          - name: xgboost-training
+            dockerfile: docker/xgboost/Dockerfile
+          - name: xgboost-serving
+            dockerfile: docker/xgboost-serving/Dockerfile
+          - name: performance-monitoring
+            dockerfile: docker/performance-monitoring/Dockerfile
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.name }}
+        run: |
+          docker build \
+            -f "${{ matrix.dockerfile }}" \
+            -t "fwa-ci/${{ matrix.name }}:${{ github.sha }}" \
+            .
