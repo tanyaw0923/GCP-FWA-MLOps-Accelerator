@@ -49,10 +49,10 @@ parser.add_argument(
 parser.add_argument(
     "--machine-type",
     required=False,
-    default="n1-standard-8",
+    default="n1-standard-4",
     help=(
         "Vertex batch prediction machine type. "
-        "Default: n1-standard-8"
+        "Default: n1-standard-4"
     ),
 )
 
