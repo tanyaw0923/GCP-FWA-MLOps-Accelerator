@@ -20,7 +20,7 @@ This project is designed as a shared ML accelerator for a team of data scientist
 - **Fraud operations:** [investigation capacity](#investigation-capacity-and-business-value), [performance monitoring](#scheduled-performance-monitoring), and [observability](#operational-observability-with-cloud-logging)
 - **Extend the framework:** [configuration](#configuration-driven-experimentation), [reuse](#reuse-this-mlops-infrastructure-for-new-experiments), and [container versioning](#container-image-versioning)
 - **Get started:** [repository structure](#repository-structure), [code walkthrough](#code-orchestration--how-the-files-work-together), [tests](#testing), and [demo runbook](#end-to-end-demo-runbook)
-- **Production considerations:** [current scope](#current-scope) and [hardening roadmap](#production-hardening-roadmap)
+- **Production considerations:** [hardening roadmap](#production-hardening-roadmap)
 
 ## Business Goal
 
@@ -669,24 +669,11 @@ Production performance monitoring is intentionally separated from the Vertex AI 
 [FWA Model Performance Monitoring - ALERT email.pdf](https://github.com/user-attachments/files/33799524/FWA.Model.Performance.Monitoring.-.ALERT.email.pdf)
 
 ---
-The Cloud Run Job provides the execution environment for the custom Python monitoring code. It reads scored providers and completed investigation outcomes from BigQuery, calculates a confusion matrix and production precision / recall / F1, compares those metrics with the training baseline for the same run, writes the result to:
+The Cloud Run Job provides the execution environment for the custom Python monitoring code. It reads scored providers and completed investigation outcomes from BigQuery, calculates a confusion matrix and production precision / recall / F1, compares those metrics with the training baseline for the same run, and writes the result to:
 
 ```text
 fraud_monitoring.model_performance_degradation
 ```
-
-and emails a summary containing:
-
-- providers reviewed
-- confirmed fraud / confirmed normal
-- fraud yield
-- confirmed fraud amount
-- TP / FP / TN / FN
-- current precision / recall / F1
-- training baseline metrics
-- absolute percentage-point changes
-- relative performance changes
-- monitoring status and alert reason
 
 The current degradation thresholds are relative to the training baseline:
 
@@ -1665,33 +1652,6 @@ bq query \
 ```bash
 python -m src.monitoring.run_model_performance_monitoring
 ```
-
-## Current Scope
-
-This repository is a technical MLOps demonstration rather than a complete enterprise production platform.
-
-The current workflow focuses on:
-
-- batch-oriented fraud modeling
-- two-speed provider feature refreshes: monthly long-term profile plus daily 7-day behavior
-- Vertex AI Feature Store registration and future online-serving path
-- configurable feature generation
-- retraining decisions
-- model training and evaluation
-- experiment tracking
-- automated Model Promotion Gate
-- candidate registration
-- manual approval
-- artifact promotion
-- model-independent, capacity-based investigation queue
-- top-K operational evaluation and confirmed fraud-dollar capture
-- scheduled investigator-feedback performance monitoring
-- continuous fraud-score distribution drift monitoring
-- monitoring email notifications
-- structured Cloud Logging operational observability
-- monitoring-driven retraining signals
-
-A larger production implementation could add more comprehensive integration gates, stronger IAM controls, CI/CD deployment automation, richer experiment comparison, approval workflows, additional model families, and online serving where appropriate.
 
 ## Production Hardening Roadmap
 
