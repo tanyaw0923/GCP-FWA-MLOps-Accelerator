@@ -78,8 +78,6 @@ See [Experimentation guide](docs/experiment-guide.md) for configuration changes,
 
 ## Demo and Quick Start
 
-[![Watch the full demo](https://img.youtube.com/vi/9gN_HCLjT6k/maxresdefault.jpg)](https://www.youtube.com/watch?v=9gN_HCLjT6k)
-
 The full execution guide covers container builds, pipeline compilation, training, manual model promotion, batch scoring, investigation feedback, and monitoring.
 
 ```bash
