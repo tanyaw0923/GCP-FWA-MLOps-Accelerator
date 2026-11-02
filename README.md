@@ -15,37 +15,36 @@ This project is designed as a shared ML accelerator for a team of data scientist
 
 ## Business Goal
 
-The goal is to avoid having every data scientist build a separate production workflow.
+**Accelerate fraud-model experimentation without rebuilding the MLOps infrastructure for every project.**
 
-The shared MLOps framework manages:
+In a typical data science team, moving an idea into a repeatable production workflow requires more than training a model. Data scientists must also prepare features, track experiments, orchestrate pipelines, validate performance, manage approvals, and monitor results. Reimplementing these steps for each model slows delivery and creates inconsistent processes.
 
-- rolling train/test windows
-- provider-level feature generation
-- retraining trigger logic
-- reusable Vertex AI orchestration
-- experiment tracking
-- standardized model evaluation
-- candidate model registration
-- manual approval before production promotion
-- model state tracking
-- monitoring inputs
-- scheduled production performance monitoring
-- investigator-feedback performance evaluation
-- email monitoring summaries
-- containerized and reproducible model training
+This accelerator separates **shared ML platform responsibilities** from **model-specific experimentation**, so multiple data scientists can reuse the same governed workflow while exploring different fraud-detection approaches.
 
-Data scientists customize:
+### What the accelerator provides
 
-- feature definitions
-- algorithm selection
-- hyperparameters
-- preprocessing
-- model-specific training logic
-- new modeling ideas and experiments
+| Capability | Shared framework responsibility |
+| --- | --- |
+| **Data & features** | Rolling training/test windows and provider-level feature generation |
+| **Training & orchestration** | Reusable Vertex AI pipelines and containerized, reproducible training |
+| **Experimentation & evaluation** | Experiment tracking and standardized model evaluation |
+| **Governance & deployment** | Candidate registration, manual approval before production promotion, and approved-model state tracking |
+| **Monitoring & retraining** | Data-quality and drift signals, investigator-feedback performance monitoring, email notifications, and retraining decisions |
 
-The key design principle is:
+### What data scientists can customize
 
-> Data, features, and modeling techniques can evolve independently while the same governed MLOps workflow is reused.
+- **Data and features:** input datasets, feature definitions, and preprocessing
+- **Models:** algorithm selection, model-specific logic, and hyperparameters
+- **Experiments:** new hypotheses, modeling approaches, and evaluation iterations
+
+### Expected value
+
+- **Faster experimentation:** focus effort on fraud patterns and model quality rather than rebuilding pipelines
+- **Consistency:** apply common evaluation, promotion, and monitoring practices across model types
+- **Reproducibility:** track model configurations, experiment runs, and production state
+- **Operational control:** keep production promotion approval-based and retraining signals explicit
+
+> **Design principle:** Standardize the ML lifecycle, not the data science. Teams can change data, features, and algorithms while reusing the same governed MLOps workflow.
 
 ## Architecture Overview
 
