@@ -13,6 +13,15 @@ This project is designed as a shared ML accelerator for a team of data scientist
 #### ▶▶▶Click the image below to watch the video on YouTube◀◀◀
 [![Watch the demo](https://img.youtube.com/vi/9gN_HCLjT6k/maxresdefault.jpg)](https://www.youtube.com/watch?v=9gN_HCLjT6k)
 
+## Contents
+
+- [Business goal](#business-goal) and [architecture overview](#architecture-overview)
+- **ML lifecycle:** [continuous training](#continuous-training-flow), [retraining decisions](#retraining-decision), [feature store](#vertex-ai-feature-store-and-two-speed-features), [experiment tracking](#experiment-tracking), [model promotion](#model-promotion-gate), and [batch inference](#batch-inference-and-provider-lineage)
+- **Fraud operations:** [investigation capacity](#investigation-capacity-and-business-value), [performance monitoring](#scheduled-performance-monitoring), and [observability](#operational-observability-with-cloud-logging)
+- **Extend the framework:** [configuration](#configuration-driven-experimentation), [reuse](#reuse-this-mlops-infrastructure-for-new-experiments), and [container versioning](#container-image-versioning)
+- **Get started:** [repository structure](#repository-structure), [code walkthrough](#code-orchestration--how-the-files-work-together), [tests](#testing), and [demo runbook](#end-to-end-demo-runbook)
+- **Production considerations:** [hardening roadmap](#production-hardening-roadmap)
+
 ## Business Goal
 
 **Accelerate fraud-model experimentation without rebuilding the MLOps infrastructure for every project.**
@@ -122,6 +131,49 @@ XGBoost
 
 The launcher creates a model signature from the model type, model name, and hyperparameters. If the model signature differs from the approved production signature, the same pipeline trains a new candidate without rebuilding the rest of the MLOps workflow.
 
+## Google Cloud Services
+
+The implementation uses:
+
+- **BigQuery** — claims data, provider features, experiment tracking, monitoring outputs, and training state
+- **Vertex AI Pipelines** — reusable training orchestration
+- **Vertex AI Model Registry** — candidate model registration
+- **Cloud Storage** — candidate and production model artifacts
+- **Artifact Registry** — custom Random Forest and XGBoost training images
+- **Cloud Build** — reproducible training and monitoring image builds
+- **Cloud Run Jobs** — serverless execution environment for scheduled feature refreshes and performance monitoring
+- **Cloud Scheduler** — invokes the monthly long-term feature refresh, daily short-term feature refresh, and scheduled performance monitoring
+- **Secret Manager** — stores the Gmail App Password used by the monitoring job
+- **Kubeflow Pipelines SDK** — pipeline and component definitions
+
+## Synthetic Demo Data
+
+The demo uses 100,000 synthetic eye-disease claims from primary care providers in Texas during 2026.
+
+The repository includes a synthetic claim generator:
+
+```text
+src/data/generate_synthetic_claims.py
+```
+
+The synthetic data intentionally includes overlap between normal and suspicious provider behavior so model performance is meaningful rather than trivially perfect.
+
+Generate the local CSV with:
+
+```bash
+python -m src.data.generate_synthetic_claims
+```
+
+The generated file can then be loaded into the configured BigQuery claims table.
+
+## Original Fraud Modeling Foundation
+
+The project began with an Isolation Forest workflow for identifying anomalous provider behavior without requiring fraud labels.
+
+Investigation feedback was then used to support supervised fraud modeling with Random Forest and XGBoost.
+
+The current architecture preserves that experimentation history while focusing on a reusable, governed continuous-training workflow.
+
 ## Continuous Training Flow
 
 <img width="1672" height="941" alt="image" src="https://github.com/user-attachments/assets/55074adc-edf4-4ca6-a4e8-d7c9d2b639a8" />
@@ -169,37 +221,6 @@ provider_fraud_model
 ```
 
 This allows, for example, an approved Random Forest model and an XGBoost candidate to coexist in the same governed workflow.
-
-## Model Promotion Gate
-
-The Model Promotion Gate separates **training success** from **promotion eligibility**.
-
-<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/032ce02e-cb6e-4df9-ae1a-5e8028ed688e" />
-
-Every challenger is trained and evaluated first, and its run metadata and evaluation metrics are written to BigQuery. The gate then compares the new run with the currently approved production run using the configured promotion criteria.
-
-Current default guardrails:
-
-```text
-PR-AUC change     >=  0.00
-Recall change     >=  0.00
-F1 change         >=  0.00
-Precision change  >= -0.05
-```
-
-The precision rule intentionally allows a controlled tradeoff: for an imbalanced fraud-detection problem, improved recall can justify a small precision decrease, but the gate prevents precision from degrading without limit.
-
-A failed challenger is **still preserved** in the experiment tables for analysis and reproducibility. It simply does not advance into Model Registry or the manual-approval workflow.
-
-The training-state table tracks:
-
-```text
-candidate_run_id
-approved_run_id
-```
-
-When a candidate is manually promoted, its `candidate_run_id` becomes the new `approved_run_id`. Future retraining attempts are compared against that approved run.
-
 
 ## Vertex AI Feature Store and Two-Speed Features
 
@@ -419,6 +440,106 @@ eye_provider_fraud_feature_view
 
 The resulting architecture stays simple enough for an interview demo while clearly separating the runnable batch-model contract from the reusable historical / future-online Feature Store layer.
 
+## Experiment Tracking
+
+Each successful training execution records reproducibility metadata and model metrics in BigQuery, regardless of whether the trained model later passes the Model Promotion Gate.
+
+The launcher creates:
+
+```text
+experiment_id
+    stable ID derived from experiment_name
+
+run_id
+    unique ID for one pipeline execution
+
+feature_version
+    current feature signature
+
+dataset_version
+    current_data_month
+
+git_commit
+    current Git commit SHA
+```
+
+The two primary tables are:
+
+```text
+fraud_experiments.experiment_runs
+fraud_experiments.experiment_metrics
+```
+
+A successful run records one experiment-run row plus metric rows such as:
+
+```text
+pr_auc
+roc_auc
+precision
+recall
+f1_score
+```
+
+Related runs intentionally share the same `experiment_id` when they belong to the same experiment family. For example, multiple XGBoost retraining attempts use the same XGBoost experiment identifier, while each execution receives a unique `run_id`.
+
+```text
+provider_eye_fraud_xgboost
+        |
+        +-- experiment_id: same experiment family
+        |
+        +-- run_id: good XGBoost retraining run
+        |
+        +-- run_id: weaker XGBoost challenger run
+```
+
+This makes it easy to compare multiple model attempts side by side in BigQuery while preserving a unique identifier for every training execution.
+
+## Model Promotion Gate
+
+The Model Promotion Gate separates **training success** from **promotion eligibility**.
+
+<img width="1774" height="887" alt="image" src="https://github.com/user-attachments/assets/032ce02e-cb6e-4df9-ae1a-5e8028ed688e" />
+
+Every challenger is trained and evaluated first, and its run metadata and evaluation metrics are written to BigQuery. The gate then compares the new run with the currently approved production run using the configured promotion criteria.
+
+Current default guardrails:
+
+```text
+PR-AUC change     >=  0.00
+Recall change     >=  0.00
+F1 change         >=  0.00
+Precision change  >= -0.05
+```
+
+The precision rule intentionally allows a controlled tradeoff: for an imbalanced fraud-detection problem, improved recall can justify a small precision decrease, but the gate prevents precision from degrading without limit.
+
+A failed challenger is **still preserved** in the experiment tables for analysis and reproducibility. It simply does not advance into Model Registry or the manual-approval workflow.
+
+The training-state table tracks:
+
+```text
+candidate_run_id
+approved_run_id
+```
+
+When a candidate is manually promoted, its `candidate_run_id` becomes the new `approved_run_id`. Future retraining attempts are compared against that approved run.
+
+## Model Artifacts
+
+Random Forest and XGBoost use different artifact formats:
+
+```text
+Random Forest
+models/random_forest/candidate/model.joblib
+models/random_forest/production/model.joblib
+
+XGBoost
+models/xgboost/candidate/model.bst
+models/xgboost/production/model.bst
+```
+
+The repository uses versioned custom Docker images for Random Forest and XGBoost training and serving, plus a dedicated performance-monitoring image. The model-specific serving containers enforce the configured feature contract at prediction time.
+
 ## Batch Inference and Provider Lineage
 
 `pipeline_config.yaml` is the single source of truth for the model feature contract.
@@ -548,24 +669,11 @@ Production performance monitoring is intentionally separated from the Vertex AI 
 [FWA Model Performance Monitoring - ALERT email.pdf](https://github.com/user-attachments/files/33799524/FWA.Model.Performance.Monitoring.-.ALERT.email.pdf)
 
 ---
-The Cloud Run Job provides the execution environment for the custom Python monitoring code. It reads scored providers and completed investigation outcomes from BigQuery, calculates a confusion matrix and production precision / recall / F1, compares those metrics with the training baseline for the same run, writes the result to:
+The Cloud Run Job provides the execution environment for the custom Python monitoring code. It reads scored providers and completed investigation outcomes from BigQuery, calculates a confusion matrix and production precision / recall / F1, compares those metrics with the training baseline for the same run, and writes the result to:
 
 ```text
 fraud_monitoring.model_performance_degradation
 ```
-
-and emails a summary containing:
-
-- providers reviewed
-- confirmed fraud / confirmed normal
-- fraud yield
-- confirmed fraud amount
-- TP / FP / TN / FN
-- current precision / recall / F1
-- training baseline metrics
-- absolute percentage-point changes
-- relative performance changes
-- monitoring status and alert reason
 
 The current degradation thresholds are relative to the training baseline:
 
@@ -612,60 +720,290 @@ export MONITORING_EMAIL="recipient@gmail.com"
 
 For Gmail, `EMAIL_PASSWORD` must be a Google App Password, not the normal Gmail sign-in password. Email delivery uses SMTP over implicit TLS on port 465. A notification failure is logged but does not invalidate a monitoring result that was already written to BigQuery.
 
+## Operational Observability with Cloud Logging
 
-## Experiment Tracking
+The pipeline uses structured Python logging for operational observability across the main training, batch-scoring, and production-monitoring paths.
 
-Each successful training execution records reproducibility metadata and model metrics in BigQuery, regardless of whether the trained model later passes the Model Promotion Gate.
-
-The launcher creates:
+The reusable helper is:
 
 ```text
-experiment_id
-    stable ID derived from experiment_name
+src/utils/observability.py
+```
 
+It sends structured operational events directly to Cloud Logging with `log_struct()` and falls back to standard Python logging when Cloud Logging is unavailable. This keeps the terminal output clean for interactive demos while avoiding the background-thread shutdown behavior of `CloudLoggingHandler`. This keeps local / Cloud Shell execution usable without making observability a hard runtime dependency.
+
+Operational events include:
+
+```text
+Training orchestration
+  - training_pipeline_submission_started
+  - training_pipeline_submitted
+  - training_pipeline_state_changed
+  - training_pipeline_completed
+  - training_pipeline_failed
+
+Batch scoring
+  - batch_scoring_started
+  - batch_model_resolved
+  - batch_input_validated
+  - batch_lineage_resolved
+  - batch_prediction_completed
+  - batch_row_errors
+  - batch_output_validated
+  - batch_scoring_completed
+
+Performance monitoring
+  - performance_monitoring_started
+  - performance_monitoring_completed
+  - performance_monitoring_write_failed
+  - monitoring_email_sent
+  - monitoring_email_skipped
+  - monitoring_email_failed
+```
+
+Structured fields include values such as:
+
+```text
 run_id
-    unique ID for one pipeline execution
-
-feature_version
-    current feature signature
-
-dataset_version
-    current_data_month
-
-git_commit
-    current Git commit SHA
+experiment_id
+model_id
+model_version
+pipeline_job
+batch_job
+input_rows
+prediction_rows
+error_rows
+monitoring_status
+alert_reason
 ```
 
-The two primary tables are:
+Claim-level payloads, member identifiers, and other sensitive healthcare data should not be written to application logs.
+
+### Enable Cloud Logging
+
+Enable the API:
+
+```bash
+gcloud services enable logging.googleapis.com
+```
+
+For Cloud Shell or another interactive Python environment, install the logging client if it is not already available:
+
+```bash
+pip install google-cloud-logging
+```
+
+Managed workload service accounts should have permission to write log entries, typically through `roles/logging.logWriter` or an equivalent custom role containing `logging.logEntries.create`.
+
+The managed performance-monitoring container includes `google-cloud-logging` in its requirements. Rebuild that image after pulling this change:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-performance-monitoring.yaml \
+  .
+```
+
+Cloud Logging complements, rather than replaces, model monitoring:
 
 ```text
-fraud_experiments.experiment_runs
-fraud_experiments.experiment_metrics
+Operational observability
+Cloud Logging
+  -> pipeline execution
+  -> serving / scoring failures
+  -> job state changes
+  -> operational alerts
+
+Model observability
+BigQuery monitoring tables
+  -> data quality
+  -> feature drift
+  -> prediction drift
+  -> production performance
 ```
 
-A successful run records one experiment-run row plus metric rows such as:
+## Configuration-Driven Experimentation
+
+The primary configuration lives in:
 
 ```text
-pr_auc
-roc_auc
-precision
-recall
-f1_score
+src/config/pipeline_config.yaml
 ```
 
-Related runs intentionally share the same `experiment_id` when they belong to the same experiment family. For example, multiple XGBoost retraining attempts use the same XGBoost experiment identifier, while each execution receives a unique `run_id`.
+The currently configured dataset version is controlled by:
+
+```yaml
+data:
+  current_data_month: "2026-09-01"
+```
+
+The active model is controlled by:
+
+```yaml
+model:
+  model_type: random_forest
+```
+
+For Use Case 3, changing only:
+
+```yaml
+model:
+  model_type: xgboost
+```
+
+causes the launcher to select the corresponding model name, hyperparameters, artifact locations, serving container, and model signature while reusing the rest of the pipeline.
+
+The shared provider feature set currently includes:
 
 ```text
-provider_eye_fraud_xgboost
-        |
-        +-- experiment_id: same experiment family
-        |
-        +-- run_id: good XGBoost retraining run
-        |
-        +-- run_id: weaker XGBoost challenger run
+high_acuity_pct
+pct_99214
+pct_99215
+referral_rate
+eye_procedure_pct
+avg_paid_per_claim
+high_acuity_oe_ratio
+avg_member_provider_distance
 ```
 
-This makes it easy to compare multiple model attempts side by side in BigQuery while preserving a unique identifier for every training execution.
+## Reuse This MLOps Infrastructure for New Experiments
+
+### Minimum changes for a new experiment using an existing model family
+
+For example, if a second fraud experiment still uses Random Forest but targets a different provider pattern, the intended change path is:
+
+```text
+1. pipeline_config.yaml
+   - experiment_name
+   - active features
+   - feature SQL / derived feature SQL
+   - validation rules
+   - table names if the experiment uses separate datasets
+   - hyperparameters / artifact paths if needed
+
+2. Source data
+   - load the new claims / events into the configured source table
+
+3. Regenerate monitoring SQL
+   python -m src.monitoring.generate_monitoring_sql
+
+4. Recompile the KFP pipeline only if pipeline/component code changed
+   python -m src.pipeline.model_training_pipeline
+
+5. Run tests
+   python -m pytest tests/unit -v
+
+6. Launch the experiment
+   python -m src.pipeline.run_model_training_pipeline
+```
+
+The design goal is that a normal feature/model experiment should **not** require edits to the orchestration code, serving code, or monitoring generator.
+
+### Adding a completely new model type
+
+Adding a model family beyond `random_forest` and `xgboost` requires more work because model training and serving are algorithm-specific. In addition to adding a new `model.<model_type>` block in `pipeline_config.yaml`, add or update:
+
+```text
+src/models/train_<new_model>.py
+src/pipeline/components/train_<new_model>_component.py
+src/pipeline/model_training_pipeline.py
+docker/<new-model>/
+docker/<new-model>-serving/
+cloudbuild-<new-model>.yaml
+cloudbuild-<new-model>-serving.yaml
+tests/
+```
+
+The new branch in `model_training_pipeline.py` should still reuse the shared components for:
+
+```text
+retraining decision
+rolling train/test window
+feature refresh
+experiment tracking
+promotion gate
+Vertex Model Registry
+candidate state
+manual approval
+monitoring
+```
+
+After changing pipeline topology or component definitions, recompile:
+
+```bash
+python -m src.pipeline.model_training_pipeline
+```
+
+and commit the updated `model_training_pipeline.yaml`.
+
+### Feature changes
+
+When adding a new model feature, update the experiment in this order:
+
+```text
+pipeline_config.yaml
+  -> feature_sql or derived_feature_sql
+  -> model.<model_type>.features
+  -> monitoring.feature_validation_rules
+```
+
+Then regenerate monitoring SQL:
+
+```bash
+python -m src.monitoring.generate_monitoring_sql
+```
+
+The generator expands the data-quality null/invalid checks and feature-drift `UNPIVOT` list from the active model feature contract. Batch scoring and the custom serving container also consume that same configured feature list, reducing duplicated hard-coded feature definitions.
+
+### Moving the accelerator to another GCP project
+
+At minimum, update:
+
+```text
+src/config/pipeline_config.yaml
+cloudbuild-random-forest.yaml
+cloudbuild-random-forest-serving.yaml
+cloudbuild-xgboost.yaml
+cloudbuild-xgboost-serving.yaml
+cloudbuild-performance-monitoring.yaml
+```
+
+Replace project IDs, bucket names, BigQuery table paths, Artifact Registry image URIs, and Feature Store resource IDs. Then rebuild the required images, regenerate monitoring SQL, recompile the pipeline if needed, and rerun the unit/integration checks before launching the experiment.
+
+## Container Image Versioning
+
+Custom project images use explicit semantic-style versions rather than floating tags.
+
+```text
+Random Forest training
+random-forest-training:v1.0.0
+
+Random Forest serving
+random-forest-serving:v1.0.1
+
+XGBoost training
+xgboost-training:v1.0.0
+
+XGBoost serving
+xgboost-serving:v1.0.1
+
+Performance monitoring
+performance-monitoring:v1.0.0
+```
+
+The version is declared as the Cloud Build substitution `_IMAGE_VERSION`, so a new container release can be built without editing the build steps.
+
+For example:
+
+```bash
+gcloud builds submit \
+  --config cloudbuild-xgboost.yaml \
+  --substitutions=_IMAGE_VERSION=v1.1.0 \
+  .
+```
+
+For model-training images, the image URI is also part of the model signature. Changing the selected training image therefore changes the candidate signature and triggers the governed retraining workflow.
+
+The KFP container component references a pinned image version at compile time, so when a training-image version changes, update the corresponding image version in `pipeline_config.yaml` and the KFP component, then recompile `model_training_pipeline.yaml`.
 
 ## Demo Data Exports
 
@@ -724,37 +1062,6 @@ These files are demo snapshots of the corresponding BigQuery tables:
 | `model_training_state.csv` | `fraud_monitoring.model_training_state` | Approved and candidate model state, signatures, and approval status |
 
 The CSV files are for demonstration and repository review only. BigQuery remains the runtime source of truth for pipeline execution.
-
-## Google Cloud Services
-
-The implementation uses:
-
-- **BigQuery** — claims data, provider features, experiment tracking, monitoring outputs, and training state
-- **Vertex AI Pipelines** — reusable training orchestration
-- **Vertex AI Model Registry** — candidate model registration
-- **Cloud Storage** — candidate and production model artifacts
-- **Artifact Registry** — custom Random Forest and XGBoost training images
-- **Cloud Build** — reproducible training and monitoring image builds
-- **Cloud Run Jobs** — serverless execution environment for scheduled feature refreshes and performance monitoring
-- **Cloud Scheduler** — invokes the monthly long-term feature refresh, daily short-term feature refresh, and scheduled performance monitoring
-- **Secret Manager** — stores the Gmail App Password used by the monitoring job
-- **Kubeflow Pipelines SDK** — pipeline and component definitions
-
-## Model Artifacts
-
-Random Forest and XGBoost use different artifact formats:
-
-```text
-Random Forest
-models/random_forest/candidate/model.joblib
-models/random_forest/production/model.joblib
-
-XGBoost
-models/xgboost/candidate/model.bst
-models/xgboost/production/model.bst
-```
-
-The repository uses versioned custom Docker images for Random Forest and XGBoost training and serving, plus a dedicated performance-monitoring image. The model-specific serving containers enforce the configured feature contract at prediction time.
 
 ## Repository Structure
 
@@ -863,30 +1170,6 @@ GCP-FWA-MLOps-Accelerator/
     └── integration/
         └── test_container_dependency_reproducibility.sh
 ```
-
-## Testing
-
-The repository separates lightweight unit tests from environment-dependent integration tests.
-
-- **Unit tests** validate retraining triggers, promotion-gate behavior, rolling train/test windows, model-specific configuration contracts, and configuration-driven monitoring SQL generation without requiring access to GCP resources.
-- **Integration tests** validate runtime assumptions that depend on external infrastructure. The container reproducibility test compares each model image's installed direct dependencies against the pinned versions declared in its `requirements.txt`.
-
-Run the unit tests with:
-
-```bash
-python -m pytest tests/unit -v
-```
-
-Run the container dependency reproducibility check with:
-
-```bash
-gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
-bash tests/integration/test_container_dependency_reproducibility.sh
-```
-
-The integration test requires Docker access to the project's Artifact Registry images, while the unit-test suite is designed to run locally or in CI without GCP credentials.
-
-
 
 ## Code Orchestration — How the Files Work Together
 
@@ -1143,209 +1426,27 @@ train_xgboost.py
 
 This separation lets a data scientist introduce a new model idea without rebuilding the rest of the governed MLOps workflow.
 
-## Configuration-Driven Experimentation
+## Testing
 
-The primary configuration lives in:
+The repository separates lightweight unit tests from environment-dependent integration tests.
 
-```text
-src/config/pipeline_config.yaml
-```
+- **Unit tests** validate retraining triggers, promotion-gate behavior, rolling train/test windows, model-specific configuration contracts, and configuration-driven monitoring SQL generation without requiring access to GCP resources.
+- **Integration tests** validate runtime assumptions that depend on external infrastructure. The container reproducibility test compares each model image's installed direct dependencies against the pinned versions declared in its `requirements.txt`.
 
-The currently configured dataset version is controlled by:
-
-```yaml
-data:
-  current_data_month: "2026-09-01"
-```
-
-The active model is controlled by:
-
-```yaml
-model:
-  model_type: random_forest
-```
-
-For Use Case 3, changing only:
-
-```yaml
-model:
-  model_type: xgboost
-```
-
-causes the launcher to select the corresponding model name, hyperparameters, artifact locations, serving container, and model signature while reusing the rest of the pipeline.
-
-The shared provider feature set currently includes:
-
-```text
-high_acuity_pct
-pct_99214
-pct_99215
-referral_rate
-eye_procedure_pct
-avg_paid_per_claim
-high_acuity_oe_ratio
-avg_member_provider_distance
-```
-
-## Reuse This MLOps Infrastructure for New Experiments
-
-### Minimum changes for a new experiment using an existing model family
-
-For example, if a second fraud experiment still uses Random Forest but targets a different provider pattern, the intended change path is:
-
-```text
-1. pipeline_config.yaml
-   - experiment_name
-   - active features
-   - feature SQL / derived feature SQL
-   - validation rules
-   - table names if the experiment uses separate datasets
-   - hyperparameters / artifact paths if needed
-
-2. Source data
-   - load the new claims / events into the configured source table
-
-3. Regenerate monitoring SQL
-   python -m src.monitoring.generate_monitoring_sql
-
-4. Recompile the KFP pipeline only if pipeline/component code changed
-   python -m src.pipeline.model_training_pipeline
-
-5. Run tests
-   python -m pytest tests/unit -v
-
-6. Launch the experiment
-   python -m src.pipeline.run_model_training_pipeline
-```
-
-The design goal is that a normal feature/model experiment should **not** require edits to the orchestration code, serving code, or monitoring generator.
-
-### Adding a completely new model type
-
-Adding a model family beyond `random_forest` and `xgboost` requires more work because model training and serving are algorithm-specific. In addition to adding a new `model.<model_type>` block in `pipeline_config.yaml`, add or update:
-
-```text
-src/models/train_<new_model>.py
-src/pipeline/components/train_<new_model>_component.py
-src/pipeline/model_training_pipeline.py
-docker/<new-model>/
-docker/<new-model>-serving/
-cloudbuild-<new-model>.yaml
-cloudbuild-<new-model>-serving.yaml
-tests/
-```
-
-The new branch in `model_training_pipeline.py` should still reuse the shared components for:
-
-```text
-retraining decision
-rolling train/test window
-feature refresh
-experiment tracking
-promotion gate
-Vertex Model Registry
-candidate state
-manual approval
-monitoring
-```
-
-After changing pipeline topology or component definitions, recompile:
+Run the unit tests with:
 
 ```bash
-python -m src.pipeline.model_training_pipeline
+python -m pytest tests/unit -v
 ```
 
-and commit the updated `model_training_pipeline.yaml`.
-
-### Feature changes
-
-When adding a new model feature, update the experiment in this order:
-
-```text
-pipeline_config.yaml
-  -> feature_sql or derived_feature_sql
-  -> model.<model_type>.features
-  -> monitoring.feature_validation_rules
-```
-
-Then regenerate monitoring SQL:
+Run the container dependency reproducibility check with:
 
 ```bash
-python -m src.monitoring.generate_monitoring_sql
+gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+bash tests/integration/test_container_dependency_reproducibility.sh
 ```
 
-The generator expands the data-quality null/invalid checks and feature-drift `UNPIVOT` list from the active model feature contract. Batch scoring and the custom serving container also consume that same configured feature list, reducing duplicated hard-coded feature definitions.
-
-### Moving the accelerator to another GCP project
-
-At minimum, update:
-
-```text
-src/config/pipeline_config.yaml
-cloudbuild-random-forest.yaml
-cloudbuild-random-forest-serving.yaml
-cloudbuild-xgboost.yaml
-cloudbuild-xgboost-serving.yaml
-cloudbuild-performance-monitoring.yaml
-```
-
-Replace project IDs, bucket names, BigQuery table paths, Artifact Registry image URIs, and Feature Store resource IDs. Then rebuild the required images, regenerate monitoring SQL, recompile the pipeline if needed, and rerun the unit/integration checks before launching the experiment.
-
-## Synthetic Demo Data
-
-The demo uses 100,000 synthetic eye-disease claims from primary care providers in Texas during 2026.
-
-The repository includes a synthetic claim generator:
-
-```text
-src/data/generate_synthetic_claims.py
-```
-
-The synthetic data intentionally includes overlap between normal and suspicious provider behavior so model performance is meaningful rather than trivially perfect.
-
-Generate the local CSV with:
-
-```bash
-python -m src.data.generate_synthetic_claims
-```
-
-The generated file can then be loaded into the configured BigQuery claims table.
-
-## Container Image Versioning
-
-Custom project images use explicit semantic-style versions rather than floating tags.
-
-```text
-Random Forest training
-random-forest-training:v1.0.0
-
-Random Forest serving
-random-forest-serving:v1.0.1
-
-XGBoost training
-xgboost-training:v1.0.0
-
-XGBoost serving
-xgboost-serving:v1.0.1
-
-Performance monitoring
-performance-monitoring:v1.0.0
-```
-
-The version is declared as the Cloud Build substitution `_IMAGE_VERSION`, so a new container release can be built without editing the build steps.
-
-For example:
-
-```bash
-gcloud builds submit \
-  --config cloudbuild-xgboost.yaml \
-  --substitutions=_IMAGE_VERSION=v1.1.0 \
-  .
-```
-
-For model-training images, the image URI is also part of the model signature. Changing the selected training image therefore changes the candidate signature and triggers the governed retraining workflow.
-
-The KFP container component references a pinned image version at compile time, so when a training-image version changes, update the corresponding image version in `pipeline_config.yaml` and the KFP component, then recompile `model_training_pipeline.yaml`.
+The integration test requires Docker access to the project's Artifact Registry images, while the unit-test suite is designed to run locally or in CI without GCP credentials.
 
 ## End-to-End Demo Runbook
 
@@ -1552,116 +1653,7 @@ bq query \
 python -m src.monitoring.run_model_performance_monitoring
 ```
 
-## Original Fraud Modeling Foundation
-
-The project began with an Isolation Forest workflow for identifying anomalous provider behavior without requiring fraud labels.
-
-Investigation feedback was then used to support supervised fraud modeling with Random Forest and XGBoost.
-
-The current architecture preserves that experimentation history while focusing on a reusable, governed continuous-training workflow.
-
-## Operational Observability with Cloud Logging
-
-The pipeline uses structured Python logging for operational observability across the main training, batch-scoring, and production-monitoring paths.
-
-The reusable helper is:
-
-```text
-src/utils/observability.py
-```
-
-It sends structured operational events directly to Cloud Logging with `log_struct()` and falls back to standard Python logging when Cloud Logging is unavailable. This keeps the terminal output clean for interactive demos while avoiding the background-thread shutdown behavior of `CloudLoggingHandler`. This keeps local / Cloud Shell execution usable without making observability a hard runtime dependency.
-
-Operational events include:
-
-```text
-Training orchestration
-  - training_pipeline_submission_started
-  - training_pipeline_submitted
-  - training_pipeline_state_changed
-  - training_pipeline_completed
-  - training_pipeline_failed
-
-Batch scoring
-  - batch_scoring_started
-  - batch_model_resolved
-  - batch_input_validated
-  - batch_lineage_resolved
-  - batch_prediction_completed
-  - batch_row_errors
-  - batch_output_validated
-  - batch_scoring_completed
-
-Performance monitoring
-  - performance_monitoring_started
-  - performance_monitoring_completed
-  - performance_monitoring_write_failed
-  - monitoring_email_sent
-  - monitoring_email_skipped
-  - monitoring_email_failed
-```
-
-Structured fields include values such as:
-
-```text
-run_id
-experiment_id
-model_id
-model_version
-pipeline_job
-batch_job
-input_rows
-prediction_rows
-error_rows
-monitoring_status
-alert_reason
-```
-
-Claim-level payloads, member identifiers, and other sensitive healthcare data should not be written to application logs.
-
-### Enable Cloud Logging
-
-Enable the API:
-
-```bash
-gcloud services enable logging.googleapis.com
-```
-
-For Cloud Shell or another interactive Python environment, install the logging client if it is not already available:
-
-```bash
-pip install google-cloud-logging
-```
-
-Managed workload service accounts should have permission to write log entries, typically through `roles/logging.logWriter` or an equivalent custom role containing `logging.logEntries.create`.
-
-The managed performance-monitoring container includes `google-cloud-logging` in its requirements. Rebuild that image after pulling this change:
-
-```bash
-gcloud builds submit \
-  --config cloudbuild-performance-monitoring.yaml \
-  .
-```
-
-Cloud Logging complements, rather than replaces, model monitoring:
-
-```text
-Operational observability
-Cloud Logging
-  -> pipeline execution
-  -> serving / scoring failures
-  -> job state changes
-  -> operational alerts
-
-Model observability
-BigQuery monitoring tables
-  -> data quality
-  -> feature drift
-  -> prediction drift
-  -> production performance
-```
-
-## What's Missing from Production
+## Production Hardening Roadmap
 
 This repository demonstrates an end-to-end batch MLOps lifecycle, but it is intentionally not positioned as a complete enterprise production platform. A larger production implementation would add the following controls.
 
@@ -1700,7 +1692,7 @@ Validation
 Resume production scoring
 ```
 
-### 2. Automated CI/CD Test Gates
+### 2. CI Coverage and Deployment Gaps
 
 **GitHub Actions CI is implemented.** The repository runs four workflows on pull requests targeting `main` and on pushes to `main`; each also supports manual execution:
 
@@ -1800,33 +1792,6 @@ Additional production controls would include:
 - audit logging for model registration, approval, promotion, and rollback
 
 These capabilities would strengthen the platform for enterprise deployment without changing the core design principle of the accelerator: model-specific data science can evolve while the governed MLOps workflow remains reusable.
-
-## Current Scope
-
-This repository is a technical MLOps demonstration rather than a complete enterprise production platform.
-
-The current workflow focuses on:
-
-- batch-oriented fraud modeling
-- two-speed provider feature refreshes: monthly long-term profile plus daily 7-day behavior
-- Vertex AI Feature Store registration and future online-serving path
-- configurable feature generation
-- retraining decisions
-- model training and evaluation
-- experiment tracking
-- automated Model Promotion Gate
-- candidate registration
-- manual approval
-- artifact promotion
-- model-independent, capacity-based investigation queue
-- top-K operational evaluation and confirmed fraud-dollar capture
-- scheduled investigator-feedback performance monitoring
-- continuous fraud-score distribution drift monitoring
-- monitoring email notifications
-- structured Cloud Logging operational observability
-- monitoring-driven retraining signals
-
-A larger production implementation could add more comprehensive integration gates, stronger IAM controls, CI/CD deployment automation, richer experiment comparison, approval workflows, additional model families, and online serving where appropriate.
 
 ## Common Code Issue
 
