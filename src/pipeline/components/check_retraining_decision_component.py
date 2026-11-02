@@ -300,8 +300,8 @@ def check_retraining_decision_component(
         f"{data_quality_status}"
     )
     print(
-        f"Feature drift alerts: "
-        f"{feature_alert_count}"
+        f"Feature drift: {feature_drift_status} "
+        f"({feature_alert_count} alerts)"
     )
     print(
         f"Prediction drift: "
