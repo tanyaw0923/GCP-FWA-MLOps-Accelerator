@@ -29,6 +29,7 @@ class FakeBigQueryClient:
         approved_feature_signature="feature-v1",
         approved_model_signature="model-v1",
         approved_model_type="xgboost",
+        missing_monitors=(),
     ):
         self.data_quality_status = data_quality_status
         self.feature_alert_count = feature_alert_count
@@ -38,6 +39,7 @@ class FakeBigQueryClient:
         self.approved_feature_signature = approved_feature_signature
         self.approved_model_signature = approved_model_signature
         self.approved_model_type = approved_model_type
+        self.missing_monitors = set(missing_monitors)
 
     def query(self, query, job_config=None):
         if "FROM `project.monitoring.data_quality`" in query:
@@ -51,6 +53,7 @@ class FakeBigQueryClient:
             rows = [
                 SimpleNamespace(
                     alert_count=self.feature_alert_count,
+                    feature_count=1,
                 )
             ]
 
@@ -97,6 +100,11 @@ class FakeBigQueryClient:
         else:
             raise AssertionError(f"Unexpected query: {query}")
 
+        if any(name in query for name in self.missing_monitors):
+            if "feature_drift" in query:
+                rows = [SimpleNamespace(alert_count=0, feature_count=0)]
+            else:
+                rows = []
         return FakeQueryJob(rows)
 
 
@@ -189,3 +197,22 @@ def test_missing_approved_state_bootstraps_retraining(monkeypatch):
     )
 
     assert run_decision(monkeypatch, client) is True
+
+
+@pytest.mark.parametrize(
+    "missing_monitor",
+    ["data_quality", "feature_drift", "prediction_drift", "performance"],
+)
+def test_missing_monitor_is_insufficient_not_retraining(
+    monkeypatch, capsys, missing_monitor
+):
+    client = FakeBigQueryClient(missing_monitors=(missing_monitor,))
+    assert run_decision(monkeypatch, client) is False
+    assert "INSUFFICIENT_DATA" in capsys.readouterr().out
+
+
+def test_missing_monitor_does_not_mask_other_retraining_trigger(monkeypatch):
+    client = FakeBigQueryClient(missing_monitors=("performance",))
+    assert run_decision(
+        monkeypatch, client, current_feature_signature="feature-v2"
+    ) is True

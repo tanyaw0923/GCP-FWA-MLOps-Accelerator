@@ -26,7 +26,7 @@ def check_retraining_decision_component(
 
     bq = bigquery.Client(project=project_id)
 
-    def normalize_status(value, default="PASS"):
+    def normalize_status(value, default="INSUFFICIENT_DATA"):
         if value is None:
             return default
 
@@ -56,7 +56,8 @@ def check_retraining_decision_component(
         bq.query(
             f"""
             SELECT
-              COUNTIF(monitoring_status = 'ALERT') AS alert_count
+              COUNTIF(monitoring_status = 'ALERT') AS alert_count,
+              COUNT(*) AS feature_count
             FROM `{feature_drift_table}`
             WHERE monitoring_timestamp = (
               SELECT MAX(monitoring_timestamp)
@@ -70,6 +71,13 @@ def check_retraining_decision_component(
         int(feature_drift_rows[0].alert_count or 0)
         if feature_drift_rows
         else 0
+    )
+
+    feature_drift_status = (
+        "INSUFFICIENT_DATA"
+        if not feature_drift_rows
+        or not getattr(feature_drift_rows[0], "feature_count", 0)
+        else ("ALERT" if feature_alert_count > 0 else "PASS")
     )
 
     # Latest prediction drift result
@@ -137,7 +145,7 @@ def check_retraining_decision_component(
         )
 
     else:
-        performance_status = "PASS"
+        performance_status = "INSUFFICIENT_DATA"
         performance_model_name = None
         performance_model_version = None
         performance_run_id = None
@@ -292,8 +300,8 @@ def check_retraining_decision_component(
         f"{data_quality_status}"
     )
     print(
-        f"Feature drift alerts: "
-        f"{feature_alert_count}"
+        f"Feature drift: {feature_drift_status} "
+        f"({feature_alert_count} alerts)"
     )
     print(
         f"Prediction drift: "
