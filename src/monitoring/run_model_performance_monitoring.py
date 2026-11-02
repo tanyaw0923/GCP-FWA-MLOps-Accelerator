@@ -55,6 +55,12 @@ TRAINING_STATE_TABLE = (
 
 STATE_KEY = "provider_fraud_model"
 
+TEST_MODE = os.getenv("FWA_MONITOR_TEST_MODE", "").lower() == "true"
+if TEST_MODE:
+    PERFORMANCE_TABLE = f"{PROJECT_ID}.fraud_monitoring_test.model_performance_degradation"
+    print(f"TEST MODE: 15 completed matched cases; output={PERFORMANCE_TABLE}")
+
+
 
 client = bigquery.Client(
     project=PROJECT_ID
@@ -262,12 +268,13 @@ client.query(
 # Monitoring must follow production state, not whichever model happens
 # to have the newest investigator feedback. This makes the monitor
 # algorithm-agnostic: Random Forest or XGBoost can be production.
-client.query(
-    f"""
-    ALTER TABLE `{TRAINING_STATE_TABLE}`
-    ADD COLUMN IF NOT EXISTS approved_model_resource STRING
-    """
-).result()
+if not TEST_MODE:
+    client.query(
+        f"""
+        ALTER TABLE `{TRAINING_STATE_TABLE}`
+        ADD COLUMN IF NOT EXISTS approved_model_resource STRING
+        """
+    ).result()
 
 production_state_query = f"""
 SELECT
@@ -465,6 +472,7 @@ job_config = bigquery.QueryJobConfig(
 
 
 # Join predictions to completed investigator outcomes.
+test_sample_clause = ("QUALIFY ROW_NUMBER() OVER (ORDER BY provider_id, fraud_score) <= 15" if TEST_MODE else "")
 performance_query = f"""
 WITH evaluated AS (
 
@@ -540,7 +548,10 @@ SELECT
         AND actual_fraud = 1
     ) AS false_negative
 
-FROM evaluated
+FROM (
+    SELECT * FROM evaluated
+    {test_sample_clause}
+)
 """
 
 performance_rows = list(
@@ -581,8 +592,25 @@ fn = int(
 )
 
 
-# Build the investigator summary for the email.
-investigation_summary_query = f"""
+# In test mode, summarize precisely the same 15 matched records.
+investigation_summary_prefix = ""
+if TEST_MODE:
+    investigation_summary_prefix = f"""
+    WITH matched AS (
+      SELECT f.* FROM `{FEEDBACK_TABLE}` f
+      JOIN `{PREDICTIONS_TABLE}` p
+        ON p.provider_id = f.provider_id
+       AND p.run_id = f.run_id
+       AND p.model_version = f.model_version
+      WHERE f.model_name = @model_name
+        AND p.model_name = @model_name
+        AND f.model_version = @model_version
+        AND f.run_id = @run_id
+        AND f.investigation_result IN ('CONFIRMED_FRAUD', 'CONFIRMED_NORMAL')
+      QUALIFY ROW_NUMBER() OVER (ORDER BY p.provider_id, p.fraud_score) <= 15
+    )
+    """
+investigation_summary_query = investigation_summary_prefix + f"""
 SELECT
     COUNT(*) AS providers_reviewed,
 
@@ -607,7 +635,7 @@ SELECT
         END
     ) AS confirmed_fraud_amount
 
-FROM `{FEEDBACK_TABLE}`
+FROM {("matched" if TEST_MODE else "`" + FEEDBACK_TABLE + "`")}
 
 WHERE
     model_name = @model_name
@@ -1146,13 +1174,15 @@ else:
 
 
 subject = (
-    "FWA Model Performance Monitoring - "
-    f"{monitoring_status}"
+    ("[TEST] " if TEST_MODE else "")
+    + "FWA Model Performance Monitoring - "
+    + monitoring_status
 )
 
 
 email_body = f"""
 FWA MODEL PERFORMANCE MONITORING
+{"TEST MODE - capped sample; not production" if TEST_MODE else ""}
 
 Evaluation time:
 {evaluation_timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")}
