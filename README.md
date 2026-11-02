@@ -1739,39 +1739,39 @@ Resume production scoring
 
 ### 2. Automated CI/CD Test Gates
 
-The repository now includes a dedicated `tests/` hierarchy with unit coverage for rolling-window logic, retraining decisions, promotion-gate behavior, configuration contracts, monitoring SQL generation, and an Artifact Registry container-dependency reproducibility check. GitHub Actions now runs unit tests, KFP pipeline compilation, Docker build, and CodeQL on pull requests; live GCP/SMTP integration remains a separate manual validation step.
+**GitHub Actions CI is implemented.** The repository runs four workflows on pull requests targeting `main` and on pushes to `main`; each also supports manual execution:
 
-A production CI/CD gate should automatically run and enforce:
+| Workflow | Current automated check |
+| --- | --- |
+| [Unit Tests](.github/workflows/unit-tests.yml) | Runs `python -m pytest tests/unit -v`, including retraining decisions, promotion rules, configuration contracts, monitoring checks, and rolling windows |
+| [KFP Pipeline Compile](.github/workflows/kfp-pipeline-compile.yml) | Compiles the pipeline and verifies that the generated YAML exists |
+| [Docker Build](.github/workflows/docker-build.yml) | Builds the Random Forest, XGBoost, and performance-monitoring Docker images without publishing or deploying them |
+| [CodeQL](.github/workflows/codeql.yml) | Performs Python security analysis; also runs on a weekly schedule |
 
-- the existing unit-test suite
-- configuration and monitoring-SQL contract validation
-- KFP pipeline compilation checks
-- model-training and batch-scoring smoke tests
-- Docker image build validation
-- dependency and security scanning
-- deployment to a non-production environment before production promotion
+See the [GitHub Actions dashboard](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions) for current results. The `tests/` directory includes unit coverage and a separate container-dependency integration check; read [tests/README.md](tests/README.md) for execution instructions.
 
-A failed test gate should prevent the model, image, or pipeline change from advancing.
+**Remaining production-hardening gaps:** These workflows establish automated CI checks, but they do not constitute a complete deployment pipeline. Live GCP/BigQuery and SMTP integration tests, model-training and batch-scoring smoke tests, authenticated Artifact Registry dependency checks, and deployment validation in a non-production environment are not yet part of these workflows. Repository branch-protection settings must also require the relevant checks before merging if strict enforcement is desired; workflow triggers alone do not guarantee merge blocking.
+
+A more complete production promotion path would be:
 
 ```text
-Code / config change
-        |
-        v
-CI tests
-        |
-        +-- unit tests
-        +-- schema tests
-        +-- pipeline compile
-        +-- image build
-        +-- scoring contract tests
-        |
-        v
-All gates pass?
-     /       \
-   No         Yes
-   |           |
-   v           v
- Stop      Deploy candidate
+Pull request
+     |
+     v
+GitHub Actions CI
+  unit tests / KFP compile / Docker build / CodeQL
+     |
+     v
+Required checks pass (when branch protection is configured)
+     |
+     v
+Merge to main
+     |
+     v
+Non-production integration and deployment validation (future)
+     |
+     v
+Governed model release and manual production approval
 ```
 
 ### 3. Large-Scale Feature Governance
