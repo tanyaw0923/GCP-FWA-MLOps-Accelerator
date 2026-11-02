@@ -1,0 +1,31 @@
+name: Dependency Security
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '23 7 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        requirements:
+          - docker/random_forest/requirements.txt
+          - docker/random-forest-serving/requirements.txt
+          - docker/xgboost/requirements.txt
+          - docker/xgboost-serving/requirements.txt
+          - docker/performance-monitoring/requirements.txt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install pip-audit
+      - name: Audit dependencies
+        run: python -m pip_audit -r "${{ matrix.requirements }}" --no-deps
