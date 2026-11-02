@@ -73,7 +73,14 @@ def check_retraining_decision_component(
         else 0
     )
 
-    feature_drift_status = (\n        "INSUFFICIENT_DATA"\n        if not feature_drift_rows\n        or not getattr(feature_drift_rows[0], "feature_count", 0)\n        else ("ALERT" if feature_alert_count > 0 else "PASS")\n    )\n\n    # Latest prediction drift result
+    feature_drift_status = (
+        "INSUFFICIENT_DATA"
+        if not feature_drift_rows
+        or not getattr(feature_drift_rows[0], "feature_count", 0)
+        else ("ALERT" if feature_alert_count > 0 else "PASS")
+    )
+
+    # Latest prediction drift result
     prediction_drift_rows = list(
         bq.query(
             f"""
