@@ -80,17 +80,6 @@ See [Experimentation guide](docs/experiment-guide.md) for configuration changes,
 
 The full execution guide covers container builds, pipeline compilation, training, manual model promotion, batch scoring, investigation feedback, and monitoring.
 
-```bash
-git clone https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator.git
-cd GCP-FWA-MLOps-Accelerator
-
-# Install local test dependencies
-python -m pip install -r requirements-dev.txt
-
-# Validate the project before running cloud workflows
-python -m pytest tests/unit -v
-python -m src.pipeline.model_training_pipeline
-```
 
 The full end-to-end demo uses configured GCP resources and permissions. Follow the [13-step demo runbook](docs/demo-runbook.md) for cloud execution; compilation alone does not launch a Vertex AI job.
 
