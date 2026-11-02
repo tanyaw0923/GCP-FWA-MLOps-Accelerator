@@ -887,6 +887,39 @@ bash tests/integration/test_container_dependency_reproducibility.sh
 
 The integration test requires Docker access to the project's Artifact Registry images, while the unit-test suite is designed to run locally or in CI without GCP credentials.
 
+### Monitoring insufficient-data regression tests
+
+The retraining-decision unit tests now verify that **missing data-quality, feature-drift, prediction-drift or performance-monitoring observations are not mislabeled as `PASS`**. They are reported as `INSUFFICIENT_DATA` where appropriate. Missing evidence alone is **not** a monitoring-driven retraining trigger; genuine `ALERT` statuses and independent new-data or configuration changes remain eligible triggers.
+
+The performance monitor also supports an isolated, opt-in integration test using **15 matched completed investigations** (below the minimum of 20). It keeps production performance history unchanged and writes to a dedicated BigQuery test dataset.
+
+```bash
+# Create the test dataset once, in the SAME location as fraud_monitoring.
+bq show --format=prettyjson fwa-mlops-accelerator-demo:fraud_monitoring
+bq mk --dataset --location=US fwa-mlops-accelerator-demo:fraud_monitoring_test
+
+# From the repository root:
+FWA_MONITOR_TEST_MODE=true python -m src.monitoring.run_model_performance_monitoring
+```
+
+Replace `US` with your dataset's actual location; skip dataset creation when it already exists. For a matching approved run with at least 15 completed investigations, the test result should have `evaluated_cases=15`, `monitoring_status=INSUFFICIENT_DATA`, and null precision/recall/F1. With SMTP configured, a real `[TEST]` email is sent.
+
+To check the saved test result:
+
+```sql
+SELECT evaluation_timestamp, evaluated_cases, monitoring_status, alert_reason
+FROM `fwa-mlops-accelerator-demo.fraud_monitoring_test.model_performance_degradation`
+ORDER BY evaluation_timestamp DESC LIMIT 1;
+```
+
+For a BigQuery-only regression that creates temporary synthetic records instead of running the Python monitor:
+
+```bash
+bq query --use_legacy_sql=false < sql/testing/test_insufficient_investigations.sql
+```
+
+These tests have different scopes: the SQL regression does not persist results; the Python test persists **only to the test monitoring dataset** and can send test email. Neither should be confused with a new production monitoring result. See [tests/README.md](tests/README.md) for coverage, prerequisites, caveats, and CI commands.
+
 ## Code Orchestration — How the Files Work Together
 
 For a first-time reader, follow the execution path from configuration to pipeline orchestration, model training, experiment tracking, registration, and approval.
@@ -1701,7 +1734,7 @@ Resume production scoring
 
 ### 2. Automated CI/CD Test Gates
 
-The repository now includes a dedicated `tests/` hierarchy with unit coverage for rolling-window logic, retraining decisions, promotion-gate behavior, configuration contracts, monitoring SQL generation, and an Artifact Registry container-dependency reproducibility check. The remaining production gap is automated CI orchestration: these checks are not yet enforced by a GitHub Actions or equivalent pull-request workflow.
+The repository now includes a dedicated `tests/` hierarchy with unit coverage for rolling-window logic, retraining decisions, promotion-gate behavior, configuration contracts, monitoring SQL generation, and an Artifact Registry container-dependency reproducibility check. GitHub Actions now runs unit tests, KFP pipeline compilation, Docker build, and CodeQL on pull requests; live GCP/SMTP integration remains a separate manual validation step.
 
 A production CI/CD gate should automatically run and enforce:
 
@@ -1825,7 +1858,7 @@ The current workflow focuses on:
 - structured Cloud Logging operational observability
 - monitoring-driven retraining signals
 
-A larger production implementation could add automated test gates, stronger IAM controls, CI/CD deployment automation, richer experiment comparison, approval workflows, additional model families, and online serving where appropriate.
+A larger production implementation could add more comprehensive integration gates, stronger IAM controls, CI/CD deployment automation, richer experiment comparison, approval workflows, additional model families, and online serving where appropriate.
 
 ## Common Code Issue
 
