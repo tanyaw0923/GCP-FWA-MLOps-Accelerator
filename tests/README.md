@@ -1,43 +1,72 @@
-# Tests
+# Testing
 
-This directory contains automated tests for the FWA MLOps Accelerator.
+The FWA MLOps Accelerator separates local unit tests, BigQuery SQL checks, and environment-dependent integration tests. Run commands from the repository root.
 
-- `integration/` — integration and reproducibility checks that may require Docker, Artifact Registry access, or other external services.
-- `unit/` — pure unit tests for decision logic and configuration contracts. This folder will be added as unit-test coverage is expanded.
+## Unit tests (no GCP credentials required)
 
-Integration tests are intentionally kept separate from unit tests so lightweight CI checks can run without requiring GCP credentials.
-
-<img width="1356" height="602" alt="image" src="https://github.com/user-attachments/assets/debaf745-07f8-4846-bfce-926bc73daa5f" />
-
-## List of Items being tested
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest tests/unit -v
 ```
-Retraining decision
-├── no trigger
-├── new data
-├── feature-signature change
-├── model-signature change
-├── data-quality alert
-├── feature drift
-├── prediction drift
-├── performance degradation
-└── bootstrap state
 
-Promotion gate
-├── passes all criteria
-├── fails one criterion
-├── exact threshold
-├── bootstrap promotion
-└── missing metrics
+Coverage includes:
 
-Rolling windows
-├── normal window
-├── year boundary
-└── leap year
+- `test_retraining_decision.py`: new-data, feature-signature, model-signature, data-quality, drift and performance alerts, bootstrap behavior, and missing monitoring results. Missing results should be reported as `INSUFFICIENT_DATA`, not silently treated as `PASS`. `INSUFFICIENT_DATA` alone does not trigger retraining.
+- `test_promotion_gate.py`: candidate eligibility, thresholds, missing metrics and bootstrap promotion.
+- `test_rolling_window.py`: ordinary periods, year boundaries and leap years.
+- `test_config_contracts.py`: Random Forest and XGBoost configuration contracts and invalid configurations.
+- `test_monitoring_sql_generation.py`: generated monitoring SQL and configured feature handling.
+- `test_performance_monitoring_test_mode.py`: static safeguards for the opt-in 15-case monitoring test, isolated output table, capped sample and test email prefix. These are **not** a substitute for a live GCP integration test.
 
-Configuration
-├── RF contract
-├── XGBoost contract
-├── no legacy feature fallback
-├── empty features rejected
-└── missing model config rejected
+## BigQuery SQL regression check
+
+`sql/testing/test_insufficient_investigations.sql` builds temporary synthetic claims and investigation data and checks that 15 completed investigations, below the 20-case threshold, produce `INSUFFICIENT_DATA`. It uses **temporary** tables and does not update production monitoring status.
+
+Run from Cloud Shell (with BigQuery access):
+
+```bash
+bq query --use_legacy_sql=false < sql/testing/test_insufficient_investigations.sql
 ```
+
+## Isolated performance monitoring integration test (GCP)
+
+The actual script can evaluate a capped sample of 15 matched completed investigations from the currently approved model. It reads existing prediction, feedback, and approved-model state, but writes its result to a **separate test dataset**.
+
+1. Inspect the location of `fraud_monitoring` and create `fraud_monitoring_test` in the **same location** (skip creation if it exists):
+
+   ```bash
+   bq show --format=prettyjson fwa-mlops-accelerator-demo:fraud_monitoring
+   bq mk --dataset --location=US fwa-mlops-accelerator-demo:fraud_monitoring_test
+   ```
+
+   Replace `US` with the actual source dataset location.
+
+2. Run from the repository root:
+
+   ```bash
+   FWA_MONITOR_TEST_MODE=true python -m src.monitoring.run_model_performance_monitoring
+   ```
+
+3. Verify the newest isolated record:
+
+   ```sql
+   SELECT evaluation_timestamp, evaluated_cases, monitoring_status,
+          alert_reason, precision, recall, f1_score
+   FROM `fwa-mlops-accelerator-demo.fraud_monitoring_test.model_performance_degradation`
+   ORDER BY evaluation_timestamp DESC LIMIT 1;
+   ```
+
+For at least 15 matching completed investigations, expect `evaluated_cases = 15`, `monitoring_status = 'INSUFFICIENT_DATA'`, and null precision/recall/F1. The standard minimum is 20. If email is configured, the script sends a **real** notification with a `[TEST]` subject. If sending fails, inspect the monitoring logs. The 15-case cap is an opt-in **test only**: without `FWA_MONITOR_TEST_MODE=true`, the script uses the normal production monitoring table. Do not point tests at production output or manually overwrite production monitoring records.
+
+## Container dependency integration test
+
+```bash
+gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+bash tests/integration/test_container_dependency_reproducibility.sh
+```
+
+This requires Docker and permission to pull the project's Artifact Registry images.
+
+## CI gates
+
+GitHub Actions separately checks unit tests, KFP compilation, Docker build, and CodeQL. Passing CI validates these respective checks; it does **not** prove that live BigQuery, SMTP, or scheduled Cloud Run monitoring has succeeded.
