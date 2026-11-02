@@ -17,8 +17,8 @@ MONITORING_SOURCES = (
 )
 
 DESTRUCTIVE_STATEMENTS = re.compile(
-    r"\b(?:CREATE\s+OR\\s+REPLACE\\s+TABLE|"
-    r"TRUNCATE\\s+TABLE|DROP\\s+TABLE|DELETE\\s+FROM)\b",
+    r"\b(?:CREATE\s+OR\s+REPLACE\s+TABLE|"
+    r"TRUNCATE\s+TABLE|DROP\s+TABLE|DELETE\s+FROM)\b",
     flags=re.IGNORECASE,
 )
 
