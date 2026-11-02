@@ -886,38 +886,7 @@ bash tests/integration/test_container_dependency_reproducibility.sh
 
 The integration test requires Docker access to the project's Artifact Registry images, while the unit-test suite is designed to run locally or in CI without GCP credentials.
 
-### Monitoring insufficient-data regression tests
 
-The retraining-decision unit tests now verify that **missing data-quality, feature-drift, prediction-drift or performance-monitoring observations are not mislabeled as `PASS`**. They are reported as `INSUFFICIENT_DATA` where appropriate. Missing evidence alone is **not** a monitoring-driven retraining trigger; genuine `ALERT` statuses and independent new-data or configuration changes remain eligible triggers.
-
-The performance monitor also supports an isolated, opt-in integration test using **15 matched completed investigations** (below the minimum of 20). It keeps production performance history unchanged and writes to a dedicated BigQuery test dataset.
-
-```bash
-# Create the test dataset once, in the SAME location as fraud_monitoring.
-bq show --format=prettyjson fwa-mlops-accelerator-demo:fraud_monitoring
-bq mk --dataset --location=US fwa-mlops-accelerator-demo:fraud_monitoring_test
-
-# From the repository root:
-FWA_MONITOR_TEST_MODE=true python -m src.monitoring.run_model_performance_monitoring
-```
-
-Replace `US` with your dataset's actual location; skip dataset creation when it already exists. For a matching approved run with at least 15 completed investigations, the test result should have `evaluated_cases=15`, `monitoring_status=INSUFFICIENT_DATA`, and null precision/recall/F1. With SMTP configured, a real `[TEST]` email is sent.
-
-To check the saved test result:
-
-```sql
-SELECT evaluation_timestamp, evaluated_cases, monitoring_status, alert_reason
-FROM `fwa-mlops-accelerator-demo.fraud_monitoring_test.model_performance_degradation`
-ORDER BY evaluation_timestamp DESC LIMIT 1;
-```
-
-For a BigQuery-only regression that creates temporary synthetic records instead of running the Python monitor:
-
-```bash
-bq query --use_legacy_sql=false < sql/testing/test_insufficient_investigations.sql
-```
-
-These tests have different scopes: the SQL regression does not persist results; the Python test persists **only to the test monitoring dataset** and can send test email. Neither should be confused with a new production monitoring result. See [tests/README.md](tests/README.md) for coverage, prerequisites, caveats, and CI commands.
 
 ## Code Orchestration — How the Files Work Together
 
