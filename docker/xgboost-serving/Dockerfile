@@ -8,6 +8,10 @@ RUN pip install \
     --no-cache-dir \
     -r requirements.txt
 
+# Upgrade setuptools (including vendored jaraco.context and wheel metadata).
+RUN python -m pip install --no-cache-dir --upgrade \
+    'setuptools>=82.0.0' 'wheel>=0.46.2'
+
 COPY docker/xgboost-serving/app.py ./app.py
 
 RUN mkdir -p /model

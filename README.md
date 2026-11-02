@@ -4,6 +4,10 @@
 [![KFP Pipeline Compile](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/kfp-pipeline-compile.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/kfp-pipeline-compile.yml)
 [![CodeQL](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/codeql.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/codeql.yml)
 [![Docker Build](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/docker-build.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/docker-build.yml)
+[![T](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/e/badge.svg?branch=main)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/e)
+[![D](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/e/badge.svg?branch=main)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/e)
+[![C](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/o/badge.svg?branch=main)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/o)
+[![S](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/e/badge.svg?branch=main)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/e)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/blob/main/LICENSE)
 
 A reusable Google Cloud MLOps framework for provider-level healthcare fraud, waste, and abuse (FWA) modeling.
@@ -85,7 +89,7 @@ The full end-to-end demo uses configured GCP resources and permissions. Follow t
 
 ## Testing and CI
 
-[Unit Tests](.github/workflows/unit-tests.yml), [KFP Pipeline Compile](.github/workflows/kfp-pipeline-compile.yml), [Docker Build](.github/workflows/docker-build.yml), and [CodeQL](.github/workflows/codeql.yml) run through GitHub Actions for pull requests targeting `main` and pushes to `main`. CodeQL also runs on a schedule.
+[Unit Tests](.github/workflows/unit-tests.yml), [KFP Pipeline Compile](.github/workflows/kfp-pipeline-compile.yml), [Docker Build](.github/workflows/docker-build.yml), [CodeQL](.github/workflows/codeql.yml), [Test Coverage](.github/workflows/test-coverage.yml), [Dependency Security](.github/workflows/dependency-security.yml), [Container Security](.github/workflows/container-security.yml), and [Secret Scanning](.github/workflows/secret-scanning.yml) run through GitHub Actions for pull requests targeting `main` and pushes to `main`. CodeQL also runs on a schedule.
 
 ```bash
 python -m pytest tests/unit -v
