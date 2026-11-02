@@ -31,7 +31,7 @@ jobs:
       - name: Build image
         run: docker build -f "${{ matrix.dockerfile }}" -t "fwa-scan/${{ matrix.name }}:ci" .
       - name: Scan image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "fwa-scan/${{ matrix.name }}:ci"
           format: table
