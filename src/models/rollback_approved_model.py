@@ -108,17 +108,26 @@ def load_target(bq, table, state_key, event_id, bigquery):
 
 
 def list_approvals(bq, ledger_table, state_key, bigquery):
+    from google.api_core.exceptions import NotFound
+
     job_config = bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("state_key", "STRING", state_key),
     ])
-    rows = bq.query(
-        f"""SELECT event_id, event_time, to_run_id, to_model_type,
-                to_model_resource
-            FROM \`{ledger_table}\`
-            WHERE state_key = @state_key AND event_type = 'PROMOTION'
-            ORDER BY event_time DESC LIMIT 50""",
-        job_config=job_config,
-    ).result()
+    try:
+        rows = list(bq.query(
+            f"""SELECT event_id, event_time, to_run_id, to_model_type,
+                    to_model_resource
+                FROM `{ledger_table}`
+                WHERE state_key = @state_key AND event_type = 'PROMOTION'
+                ORDER BY event_time DESC LIMIT 50""",
+            job_config=job_config,
+        ).result())
+    except NotFound:
+        print("No approval ledger yet. It is created on the next promotion.")
+        return
+
+    if not rows:
+        print("No historical PROMOTION events recorded for this state key.")
     for row in rows:
         print(dict(row.items()))
 
