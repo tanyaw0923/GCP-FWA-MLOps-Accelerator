@@ -6,8 +6,9 @@ from src.config.load_config import load_config
 from src.models.approval_ledger import (
     ensure_ledger_sql, ledger_table_from_state, promotion_sql, rollback_sql,
     validate_approval_target, validate_resource, validate_scoring_approval,
+    ensure_previous_columns_sql, select_previous_model, resolve_scoring_model,
 )
-from src.models.rollback_approved_model import check_configuration, compute_config_signatures
+from src.models.rollback_approved_model import check_configuration, compute_config_signatures, load_previous
 
 STATE_TABLE = "fwa-mlops-accelerator-demo.fraud_monitoring.model_training_state"
 LEDGER = ledger_table_from_state(STATE_TABLE)
@@ -85,6 +86,10 @@ def test_rollback_rechecks_history_and_active_version():
     sql = rollback_sql(STATE_TABLE, LEDGER)
     assert "event_type = 'PROMOTION'" in sql
     assert "event_id = @target_event_id" in sql
+    assert "@target_direction = 'from'" in sql
+    assert "from_model_resource = @target_resource" in sql
+    assert "from_feature_signature = @target_feature_signature" in sql
+    assert "approved_model_signature = @current_model_signature" in sql
     assert "approved_model_resource = @current_resource" in sql
     assert "approved_run_id = @current_run_id" in sql
     assert "candidate_status, '') != 'PENDING_APPROVAL'" in sql
@@ -203,3 +208,146 @@ def test_new_governance_modules_compile_without_syntax_warnings(tmp_path):
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_existing_approval_table_migration_is_additive():
+    sqls = ensure_previous_columns_sql(LEDGER)
+    assert len(sqls) == 4
+    assert all("ADD COLUMN IF NOT EXISTS" in x for x in sqls)
+    assert all("DROP" not in x.upper() for x in sqls)
+
+
+def test_promotion_captures_full_prior_approved_version():
+    sql = promotion_sql(STATE_TABLE, LEDGER)
+    for field in (
+        "approved_model_resource", "approved_run_id", "approved_model_type",
+        "approved_feature_signature", "approved_model_signature",
+        "last_training_data_month",
+    ):
+        assert field in sql
+    assert "from_model_type" in sql and "from_model_signature" in sql
+
+
+def test_rollback_audit_captures_current_and_target_versions():
+    sql = rollback_sql(STATE_TABLE, LEDGER)
+    for param in (
+        "@current_model_type", "@current_feature_signature",
+        "@current_model_signature", "@current_data_month",
+        "@target_model_type", "@target_feature_signature", "@target_model_signature",
+    ):
+        assert param in sql
+
+
+def test_a_b_a_rollback_and_scoring_model_resolution(cfg):
+    """Revert B directly to A using B's promotion snapshot, even if A
+    was approved before the history table existed.
+    """
+    a = {
+        "model_resource": "projects/123456789/locations/us-central1/models/111",
+        "run_id": "A-run", "model_type": "random_forest",
+        "feature_signature": "features-A", "model_signature": "model-A",
+        "data_month": "2026-08-01",
+    }
+    b = {
+        "model_resource": "projects/123456789/locations/us-central1/models/222",
+        "run_id": "B-run", "model_type": "random_forest",
+        "feature_signature": "features-B", "model_signature": "model-B",
+        "data_month": "2026-09-01", "candidate_status": "APPROVED",
+    }
+    b_promotion = {
+        "event_id": "B-promotion-event", "event_type": "PROMOTION",
+        "from_model_resource": a["model_resource"],
+        "from_run_id": a["run_id"],
+        "from_model_type": a["model_type"],
+        "from_feature_signature": a["feature_signature"],
+        "from_model_signature": a["model_signature"],
+        "from_data_month": a["data_month"],
+        "to_model_resource": b["model_resource"], "to_run_id": b["run_id"],
+    }
+    target = select_previous_model(b_promotion, b["model_resource"], b["run_id"])
+    assert target["model_resource"] == a["model_resource"]
+    assert target["run_id"] == a["run_id"]
+    validate_approval_target(target, b, cfg["project_id"], cfg["region"])
+    resource, run = resolve_scoring_model(None, target["model_resource"], target["run_id"])
+    assert (resource, run) == (a["model_resource"], a["run_id"])
+    # Next batch job must not be able to select B explicitly.
+    with pytest.raises(ValueError, match="not the active"):
+        resolve_scoring_model("222", resource, run)
+
+
+def test_previous_release_without_complete_metadata_fails_closed():
+    row = {
+        "event_id": "B", "to_model_resource": ACTIVE["model_resource"],
+        "to_run_id": ACTIVE["run_id"],
+        "from_model_resource": "projects/123456789/locations/us-central1/models/111",
+        "from_run_id": "A-run", "from_model_type": None,
+        "from_feature_signature": "sig", "from_model_signature": "sig",
+    }
+    with pytest.raises(ValueError, match="lacks a complete approval snapshot"):
+        select_previous_model(row, ACTIVE["model_resource"], ACTIVE["run_id"])
+
+
+@pytest.mark.parametrize("difference", ["to_model_resource", "to_run_id"])
+def test_previous_release_must_lead_to_current_approved_model(difference):
+    row = {
+        "event_id": "B", "to_model_resource": ACTIVE["model_resource"],
+        "to_run_id": ACTIVE["run_id"],
+    }
+    row[difference] = "different"
+    with pytest.raises(ValueError, match="does not match"):
+        select_previous_model(row, ACTIVE["model_resource"], ACTIVE["run_id"])
+
+
+def test_scoring_rejects_mismatched_explicit_model_after_rollback():
+    with pytest.raises(ValueError, match="not the active approved"):
+        resolve_scoring_model(
+            "222",
+            "projects/123456789/locations/us-central1/models/111",
+            "A-run",
+        )
+
+
+def test_scoring_requires_approved_run_id():
+    with pytest.raises(ValueError, match="No complete approved"):
+        resolve_scoring_model(
+            None, "projects/123456789/locations/us-central1/models/111", None,
+        )
+
+
+def test_load_previous_uses_latest_transition_with_exact_active_identity():
+    class Row(dict):
+        def items(self):
+            return super().items()
+
+    event = {
+        "event_id": "B-promotion", "to_model_resource": ACTIVE["model_resource"],
+        "to_run_id": ACTIVE["run_id"],
+        "from_model_resource": "projects/123456789/locations/us-central1/models/111",
+        "from_run_id": "A-run", "from_model_type": "random_forest",
+        "from_feature_signature": "f", "from_model_signature": "m",
+        "from_data_month": "2026-08-01",
+    }
+
+    class FakeQuery:
+        def result(self):
+            return [Row(event)]
+
+    class FakeBQ:
+        def query(self, sql, job_config):
+            assert "ORDER BY event_time DESC" in sql
+            assert "to_model_resource = @resource" in sql
+            assert "to_run_id = @run_id" in sql
+            return FakeQuery()
+
+    class FakeBigQuery:
+        class ScalarQueryParameter:
+            def __init__(self, *args):
+                self.args = args
+
+        class QueryJobConfig:
+            def __init__(self, query_parameters):
+                self.query_parameters = query_parameters
+
+    selected = load_previous(FakeBQ(), LEDGER, "provider_fraud_model", ACTIVE, FakeBigQuery)
+    assert selected["run_id"] == "A-run"
+    assert selected["model_resource"] == event["from_model_resource"]
