@@ -22,7 +22,7 @@ Coverage includes:
 
 ## Governed rollback tests
 
-`test_governed_rollback.py` covers historical approval eligibility, model configuration signatures, BigQuery transaction SQL safeguards and the batch-scoring approval gate. Tests run offline and do **not** execute a live rollback. See [governed rollback runbook](../docs/governed-rollback.md) for the required dry-run, GCP preflight and manual post-change verification.
+`test_governed_rollback.py` covers proposed rollback SQL, safeguards, signatures, and mocked CLI behavior. **The rollback code is staged but not integrated into the production promotion, training, or scoring entry points.** Tests do not execute live GCP operations. See [staging notes](../docs/governed-rollback.md).
 
 ## BigQuery SQL regression check
 
