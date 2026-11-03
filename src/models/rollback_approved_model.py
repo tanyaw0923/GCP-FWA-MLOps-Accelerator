@@ -67,7 +67,7 @@ def load_active(bq, table, state_key, bigquery):
     ])
     rows = list(bq.query(
         f"""SELECT approved_model_resource, approved_run_id, candidate_status
-            FROM \`{table}\` WHERE model_name = @state_key""",
+            FROM `{table}` WHERE model_name = @state_key""",
         job_config=job_config,
     ).result())
     if len(rows) != 1:
@@ -93,7 +93,7 @@ def load_target(bq, table, state_key, event_id, bigquery):
                 to_feature_signature AS feature_signature,
                 to_model_signature AS model_signature,
                 to_data_month AS data_month
-            FROM \`{table}\`
+            FROM `{table}`
             WHERE state_key = @state_key AND event_id = @event_id
               AND event_type = 'PROMOTION'""",
         job_config=job_config,
