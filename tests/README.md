@@ -15,6 +15,7 @@ Coverage includes:
 - `test_promotion_gate.py`: candidate eligibility, thresholds, missing metrics and bootstrap promotion.
 - `test_rolling_window.py`: ordinary periods, year boundaries and leap years.
 - `test_config_contracts.py`: Random Forest and XGBoost configuration contracts and invalid configurations.
+- `test_feature_contract_behavior.py`: executes the same validation used in training orchestration and batch scoring; checks model-specific feature selection, actual YAML changes, duplicates/unsafe columns, registered model feature order, source schema, and batch input ordering.
 - `test_monitoring_sql_generation.py`: generated monitoring SQL and configured feature handling.
 - `test_monitoring_schema_contract.py`: prevents reintroduction of the retired Random Forest monitor and verifies the active prediction-drift writer/reader column contract (`check_date`, `status`).
 - `test_performance_monitoring_test_mode.py`: static safeguards for the opt-in 15-case monitoring test, isolated output table, capped sample and test email prefix. These are **not** a substitute for a live GCP integration test.
