@@ -24,14 +24,16 @@ The smoke test does **not** run the full Kubeflow/Vertex training pipeline, prom
 
 ## One-time setup in Cloud Shell
 
-Create/select a separate test project with billing enabled; enable the relevant APIs, and use credentials authorized for BigQuery, Cloud Storage, Vertex AI, Cloud Build/Artifact Registry. Check the Vertex AI service-agent access to the model artifacts and serving image in your dedicated project.
+Use your dedicated test project **`fwa-mlops-smoke-2026`** with billing enabled. Enable the relevant APIs, and use credentials authorized for BigQuery, Cloud Storage, Vertex AI, Cloud Build/Artifact Registry. Check the Vertex AI service-agent access to the model artifacts and serving image in this project.
 
 ```bash
-export SMOKE_PROJECT="YOUR-DEDICATED-TEST-PROJECT"
+export SMOKE_PROJECT="fwa-mlops-smoke-2026"
 export REGION="us-central1"
 export AR_REPO="fwa-smoke"
 
 gcloud config set project "$SMOKE_PROJECT"
+gcloud projects describe "$SMOKE_PROJECT" --format="value(projectId)"
+gcloud billing projects describe "$SMOKE_PROJECT"
 gcloud services enable \
   aiplatform.googleapis.com \
   bigquery.googleapis.com \
@@ -40,10 +42,12 @@ gcloud services enable \
   cloudbuild.googleapis.com \
   --project="$SMOKE_PROJECT"
 
-gcloud artifacts repositories create "$AR_REPO" \
-  --repository-format=docker \
-  --location="$REGION" \
-  --project="$SMOKE_PROJECT"
+gcloud artifacts repositories describe "$AR_REPO" \
+  --location="$REGION" --project="$SMOKE_PROJECT" \
+  || gcloud artifacts repositories create "$AR_REPO" \
+       --repository-format=docker \
+       --location="$REGION" \
+       --project="$SMOKE_PROJECT"
 
 gcloud auth configure-docker "$REGION-docker.pkg.dev"
 ```
