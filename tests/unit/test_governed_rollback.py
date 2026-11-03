@@ -169,3 +169,37 @@ def test_scoring_rejects_unapproved_models(requested, target):
 def test_scoring_fails_closed_without_approved_model():
     with pytest.raises(ValueError, match="No approved model"):
         validate_scoring_approval("111", None)
+
+
+def test_new_governance_modules_compile_without_syntax_warnings(tmp_path):
+    """Catch invalid Python escapes (including BigQuery backtick escapes)."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    paths = [
+        "src/models/approval_ledger.py",
+        "src/models/rollback_approved_model.py",
+        "src/models/promote_model_candidate.py",
+        "src/scoring/run_batch_prediction.py",
+    ]
+    env = os.environ.copy()
+    env["PYTHONPYCACHEPREFIX"] = str(tmp_path / "pycache")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-W",
+            "error::SyntaxWarning",
+            "-m",
+            "py_compile",
+            *paths,
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
