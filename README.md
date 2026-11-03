@@ -10,7 +10,7 @@
 [![Secret Scanning](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/secret-scanning.yml/badge.svg?branch=main)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/secret-scanning.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/blob/main/LICENSE)
 
-A reusable Google Cloud MLOps framework for provider-level healthcare fraud, waste, and abuse (FWA) modeling.
+A reusable Google Cloud MLOps framework for provider-level healthcare fraud, waste, and abuse (FWA) modeling.\n\n> Governed rollback source code and offline tests are included as **unintegrated, deferred work**. Existing promotion, training, and scoring behavior remains unchanged. See [rollback staging notes](docs/governed-rollback.md).
 
 This project is designed as a shared ML accelerator for a team of data scientists. Data scientists can experiment with new data, features, model configurations, and algorithms while reusing the same governed workflow for retraining decisions, feature refresh, training, evaluation, experiment tracking, candidate registration, approval, and production promotion.
 
