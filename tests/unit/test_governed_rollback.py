@@ -425,6 +425,12 @@ def test_rollback_operator_cli_dry_run_cancel_and_confirm(
         assert parameters["current_run_id"] == "B-run"
         assert parameters["target_direction"] == "from"
         assert "INC-1001" in parameters["reason"]
+        import re
+        sql_names = set(re.findall(r"(?<!@)@([A-Za-z_][A-Za-z0-9_]*)", sql))
+        assert sql_names == set(parameters), (
+            f"Missing parameter names: {sql_names - set(parameters)}; "
+            f"unused names: {set(parameters) - sql_names}"
+        )
 
 
 def test_rollback_requires_exact_target_confirmation(monkeypatch, cfg):
