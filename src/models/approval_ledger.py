@@ -233,7 +233,9 @@ def rollback_sql(state_table, ledger_table):
 
     INSERT INTO `{ledger_table}` (
       event_id, state_key, event_time, event_type, actor, reason,
-      from_model_resource, from_run_id, to_model_resource, to_run_id,
+      from_model_resource, from_run_id, from_model_type,
+      from_feature_signature, from_model_signature, from_data_month,
+      to_model_resource, to_run_id,
       to_model_type, to_feature_signature, to_model_signature, to_data_month
     ) VALUES (
       @event_id, @state_key, CURRENT_TIMESTAMP(), 'ROLLBACK', @actor, @reason,
