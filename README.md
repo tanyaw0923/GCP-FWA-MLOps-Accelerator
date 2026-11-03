@@ -4,10 +4,7 @@
 [![KFP Pipeline Compile](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/kfp-pipeline-compile.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/kfp-pipeline-compile.yml)
 [![CodeQL](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/codeql.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/codeql.yml)
 [![Docker Build](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/docker-build.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/docker-build.yml)
-[![Test Coverage](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/test-coverage.yml/badge.svg?branch=main)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/test-coverage.yml)
 [![Dependency Security](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/dependency-security.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/dependency-security.yml)
-[![Container Security](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/container-security.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/container-security.yml)
-[![Secret Scanning](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/secret-scanning.yml/badge.svg?branch=main)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/secret-scanning.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/blob/main/LICENSE)
 
 A reusable Google Cloud MLOps framework for provider-level healthcare fraud, waste, and abuse (FWA) modeling.
