@@ -9,6 +9,7 @@ from google.cloud import aiplatform_v1
 from google.cloud import bigquery
 
 from src.config.load_config import load_config
+from src.models.approval_ledger import validate_scoring_approval
 from src.config.feature_contract import (
     resolve_model_features,
     validate_registered_features,
@@ -151,6 +152,45 @@ log_event(
         "machine_type": MACHINE_TYPE,
     },
 )
+
+
+# ============================================================
+# 3A. ENFORCE GOVERNED APPROVAL BEFORE ANY SCORING JOB
+#
+# A manually supplied --model-id must match the active approved
+# Vertex model in BigQuery. This prevents bypassing model rollback
+# and manual candidate approval by selecting an arbitrary model.
+# ============================================================
+
+state_table = config["monitoring"]["training_state_table"]
+approval_rows = list(
+    bq.query(
+        f"""
+        SELECT approved_model_resource
+        FROM `{state_table}`
+        WHERE model_name = @state_key
+        """,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter(
+                    "state_key", "STRING", "provider_fraud_model"
+                )
+            ]
+        ),
+    ).result()
+)
+
+if len(approval_rows) != 1:
+    raise RuntimeError("Expected exactly one approved model state row")
+
+try:
+    validate_scoring_approval(
+        MODEL_ID, approval_rows[0].approved_model_resource
+    )
+except ValueError as exc:
+    raise RuntimeError(
+        f"Batch inference approval gate blocked model: {exc}"
+    ) from exc
 
 
 # ============================================================
