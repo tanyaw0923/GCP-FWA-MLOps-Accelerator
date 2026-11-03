@@ -9,6 +9,12 @@ from google.cloud import aiplatform_v1
 from google.cloud import bigquery
 
 from src.config.load_config import load_config
+from src.config.feature_contract import (
+    resolve_model_features,
+    validate_registered_features,
+    validate_source_columns,
+    validate_input_columns,
+)
 from src.utils.observability import (
     configure_observability,
     log_event,
@@ -318,17 +324,6 @@ if not registered_feature_json:
         "Re-register it through the updated training pipeline."
     )
 
-try:
-    registered_features = json.loads(
-        registered_feature_json
-    )
-except json.JSONDecodeError as exc:
-    raise RuntimeError(
-        "VERTEX MODEL PREFLIGHT FAILED: registered "
-        "FEATURE_COLUMNS_JSON is not valid JSON."
-    ) from exc
-
-
 log_event(
     logger,
     "batch_model_resolved",
@@ -356,56 +351,15 @@ log_event(
 # are added or removed.
 # ============================================================
 
-active_model_config = (
-    MODEL_CONFIG[
-        MODEL_TYPE
-    ]
-)
-
-if "features" not in active_model_config:
+MODEL_FEATURES = resolve_model_features(config, MODEL_TYPE)
+try:
+    validate_registered_features(MODEL_FEATURES, registered_feature_json)
+except ValueError as exc:
     raise RuntimeError(
-        "Each model must define its own features list in "
-        "pipeline_config.yaml under model.<model_type>.features. "
-        f"Missing features for model_type={MODEL_TYPE}."
-    )
-
-MODEL_FEATURES = (
-    active_model_config["features"]
-)
-
-if not MODEL_FEATURES:
-    raise RuntimeError(
-        "No model feature contract was configured for "
-        f"model_type={MODEL_TYPE}."
-    )
-
-feature_name_pattern = (
-    r"^[A-Za-z_][A-Za-z0-9_]*$"
-)
-
-invalid_feature_names = [
-    feature
-    for feature in MODEL_FEATURES
-    if not re.fullmatch(
-        feature_name_pattern,
-        feature,
-    )
-]
-
-if invalid_feature_names:
-    raise RuntimeError(
-        "Invalid configured feature name(s): "
-        f"{invalid_feature_names}"
-    )
-
-if registered_features != MODEL_FEATURES:
-    raise RuntimeError(
-        "VERTEX MODEL PREFLIGHT FAILED: registered feature "
-        "contract does not match pipeline_config.yaml. "
-        f"Registered={registered_features}; "
-        f"Expected={MODEL_FEATURES}. "
+        f"VERTEX MODEL PREFLIGHT FAILED: {exc}. "
         "Re-register the model before batch prediction."
-    )
+    ) from exc
+
 
 print(
     "Vertex model preflight: PASS"
@@ -462,22 +416,14 @@ source_columns = {
     for field in source_table.schema
 }
 
-required_source_columns = (
-    {"provider_id", "dataset_split"}
-    | set(MODEL_FEATURES)
-)
-
-missing_source_columns = sorted(
-    required_source_columns
-    - source_columns
-)
-
-if missing_source_columns:
+try:
+    validate_source_columns(source_columns, MODEL_FEATURES)
+except ValueError as exc:
     raise RuntimeError(
-        "Provider feature table is missing configured "
-        f"batch-scoring columns: {missing_source_columns}. "
+        f"Provider feature table validation failed: {exc}. "
         "Refresh provider features before scoring."
-    )
+    ) from exc
+
 
 feature_select_sql = ",\n".join(
     (
@@ -530,18 +476,10 @@ input_columns = [
     for field in input_table.schema
 ]
 
-expected_input_columns = (
-    ["provider_id"]
-    + MODEL_FEATURES
-)
-
-if input_columns != expected_input_columns:
-    raise RuntimeError(
-        "Dynamic batch-input schema does not match the "
-        "configured feature contract. "
-        f"Actual={input_columns}; "
-        f"Expected={expected_input_columns}"
-    )
+try:
+    validate_input_columns(input_columns, MODEL_FEATURES)
+except ValueError as exc:
+    raise RuntimeError(f"Dynamic batch-input schema invalid: {exc}") from exc
 
 print(
     f"Batch input rows: "

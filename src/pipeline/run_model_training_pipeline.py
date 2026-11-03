@@ -11,6 +11,7 @@ from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct, Value
 
 from src.config.load_config import load_config
+from src.config.feature_contract import resolve_model_features
 from src.utils.observability import (
     configure_observability,
     log_event,
@@ -129,12 +130,7 @@ if "features" not in active_model:
         f"Missing features for model_type={MODEL_TYPE}."
     )
 
-FEATURE_COLUMNS = active_model["features"]
-
-if not FEATURE_COLUMNS:
-    raise ValueError(
-        f"Feature list is empty for model_type={MODEL_TYPE}."
-    )
+FEATURE_COLUMNS = resolve_model_features(config, MODEL_TYPE)
 FEATURE_SQL = config["feature_sql"]
 DERIVED_FEATURE_SQL = config[
     "derived_feature_sql"
