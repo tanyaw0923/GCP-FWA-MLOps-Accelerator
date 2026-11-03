@@ -1,14 +1,4 @@
 import argparse
-import getpass
-import re
-import uuid
-
-from src.models.approval_ledger import (
-    ensure_ledger_sql,
-    ensure_previous_columns_sql,
-    ledger_table_from_state,
-    promotion_sql,
-)
 from datetime import datetime, timezone
 
 from google.cloud import bigquery
@@ -216,12 +206,6 @@ def copy_candidate_to_production(
             f"gs://{bucket_name}/{candidate_blob_name}"
         )
 
-    if bucket.blob(production_blob_name).exists():
-        raise RuntimeError(
-            "Versioned production artifact already exists; "
-            "refusing to overwrite a prior approved model."
-        )
-
     print(
         "\nCopying candidate artifact..."
     )
@@ -236,15 +220,10 @@ def copy_candidate_to_production(
         f"gs://{bucket_name}/{production_blob_name}"
     )
 
-    # Versioned destination must be create-only, even under concurrent
-    # promotion attempts. Freeze the candidate generation being promoted.
-    candidate_blob.reload()
     bucket.copy_blob(
         candidate_blob,
         bucket,
         production_blob_name,
-        if_generation_match=0,
-        if_source_generation_match=candidate_blob.generation,
     )
 
     production_blob = bucket.blob(
@@ -277,18 +256,9 @@ def approve_candidate(
     training_state_table,
     state_key,
     candidate_data_month,
-    candidate_run_id,
-    candidate_resource,
-    actor,
-    reason,
 ):
-    """Atomically record approval history and activate the candidate."""
-    from google.cloud import bigquery
-
-    ledger_table = ledger_table_from_state(training_state_table)
-    bq_client.query(ensure_ledger_sql(ledger_table)).result()
-    for ddl in ensure_previous_columns_sql(ledger_table):
-        bq_client.query(ddl).result()
+    # Preserve the exact Vertex model resource that was approved.
+    # Older training-state tables may not have this column yet.
     bq_client.query(
         f"""
         ALTER TABLE `{training_state_table}`
@@ -296,25 +266,71 @@ def approve_candidate(
         """
     ).result()
 
+    query = f"""
+    UPDATE `{training_state_table}`
+
+    SET
+      last_training_data_month =
+        candidate_data_month,
+
+      last_training_timestamp =
+        CURRENT_TIMESTAMP(),
+
+      approved_feature_signature =
+        candidate_feature_signature,
+
+      approved_model_signature =
+        candidate_model_signature,
+
+      approved_model_type =
+        candidate_model_type,
+
+      approved_model_resource =
+        candidate_model_resource,
+
+      approved_run_id =
+        candidate_run_id,
+
+      candidate_status =
+        'APPROVED'
+
+    WHERE
+      model_name = @state_key
+
+      AND candidate_status =
+        'PENDING_APPROVAL'
+
+      AND candidate_data_month =
+        @candidate_data_month
+    """
+
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
-            bigquery.ScalarQueryParameter("state_key", "STRING", state_key),
             bigquery.ScalarQueryParameter(
-                "candidate_data_month", "DATE", candidate_data_month
+                "state_key",
+                "STRING",
+                state_key,
             ),
-            bigquery.ScalarQueryParameter("candidate_run_id", "STRING", candidate_run_id),
-            bigquery.ScalarQueryParameter("candidate_resource", "STRING", candidate_resource),
-            bigquery.ScalarQueryParameter("event_id", "STRING", str(uuid.uuid4())),
-            bigquery.ScalarQueryParameter("actor", "STRING", actor),
-            bigquery.ScalarQueryParameter("reason", "STRING", reason),
+            bigquery.ScalarQueryParameter(
+                "candidate_data_month",
+                "DATE",
+                candidate_data_month,
+            ),
         ]
     )
-    bq_client.query(
-        promotion_sql(training_state_table, ledger_table),
+
+    job = bq_client.query(
+        query,
         job_config=job_config,
-    ).result()
+    )
 
+    job.result()
 
+    if job.num_dml_affected_rows != 1:
+        raise RuntimeError(
+            "Training state was not updated. "
+            "Expected exactly one pending candidate."
+        )
 
 
 # ============================================================
@@ -336,17 +352,6 @@ def main():
             "Stable training-state key for the "
             "fraud ML product."
         ),
-    )
-
-    parser.add_argument(
-        "--reason",
-        default="Manual candidate approval",
-        help="Reason recorded in the permanent approval ledger.",
-    )
-    parser.add_argument(
-        "--actor",
-        default=getpass.getuser(),
-        help="Operator recorded in the approval ledger. IAM controls actual access.",
     )
 
     parser.add_argument(
@@ -454,17 +459,6 @@ def main():
         artifact_config[
             "model_filename"
         ]
-    )
-
-    # Candidate Registry model points at this run-specific GCS prefix.
-    # Both the registry artifact and production snapshot must be retained.
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+", candidate.candidate_run_id):
-        raise ValueError("Unsafe candidate run ID for GCS artifact path")
-    candidate_artifact_path = (
-        f"{candidate_artifact_path.rstrip('/')}/{candidate.candidate_run_id}"
-    )
-    production_artifact_path = (
-        f"{production_artifact_path.rstrip('/')}/{candidate.candidate_run_id}"
     )
 
     candidate_uri = (
@@ -636,10 +630,6 @@ def main():
         candidate_data_month=(
             candidate.candidate_data_month
         ),
-        candidate_run_id=candidate.candidate_run_id,
-        candidate_resource=candidate.candidate_model_resource,
-        actor=args.actor,
-        reason=args.reason,
     )
 
     promoted_at = (
