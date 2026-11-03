@@ -17,11 +17,11 @@ SPEC.loader.exec_module(smoke)
 
 def args(**updates):
     defaults = dict(
-        project="fwa-isolated-test-123",
+        project="fwa-mlops-smoke-2026",
         region="us-central1",
         serving_image=(
             "us-central1-docker.pkg.dev/"
-            "fwa-isolated-test-123/smoke/rf-serving:smoke"
+            "fwa-mlops-smoke-2026/smoke/rf-serving:smoke"
         ),
         acknowledge_cost=True,
         timeout_minutes=40,
