@@ -6,9 +6,9 @@
 
 This repository demonstrates an end-to-end batch MLOps lifecycle, but it is intentionally not positioned as a complete enterprise production platform. A larger production implementation would add the following controls.
 
-### 1. Automated Rollback Process
+### 1. Governed Rollback and Remaining Production Gaps
 
-The current workflow supports candidate registration, manual approval, and promotion of a model artifact to production. A production system should also support an explicit rollback path.
+The repository now includes a **manual governed rollback** command and an append-only-by-application approval ledger. New promotions and model-pointer rollbacks update the model state and audit history atomically using BigQuery transactions. See [governed rollback runbook](governed-rollback.md). Automated triggers, endpoint switching, deployment restoration, post-change validation, and external IAM-enforced multi-person authorization are still production gaps.
 
 A stronger rollback design would include:
 
