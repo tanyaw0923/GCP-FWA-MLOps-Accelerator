@@ -351,3 +351,118 @@ def test_load_previous_uses_latest_transition_with_exact_active_identity():
     selected = load_previous(FakeBQ(), LEDGER, "provider_fraud_model", ACTIVE, FakeBigQuery)
     assert selected["run_id"] == "A-run"
     assert selected["model_resource"] == event["from_model_resource"]
+
+
+@pytest.mark.parametrize("execute,confirmation,should_commit", [
+    (False, "", False),
+    (True, "no", False),
+    (True, "ROLLBACK", True),
+])
+def test_rollback_operator_cli_dry_run_cancel_and_confirm(
+    monkeypatch, cfg, execute, confirmation, should_commit,
+):
+    """Exercise the real CLI decision flow with a fake BigQuery job."""
+    import sys
+    from google.cloud import bigquery
+    from src.models import rollback_approved_model as cli
+
+    old_resource = "projects/123456789/locations/us-central1/models/111"
+    active = {
+        "model_resource": "projects/123456789/locations/us-central1/models/222",
+        "run_id": "B-run", "candidate_status": "APPROVED",
+        "model_type": "random_forest", "feature_signature": "sig-B",
+        "model_signature": "model-B", "data_month": "2026-09-01",
+    }
+    previous = {
+        "event_id": "promotion-B", "model_resource": old_resource,
+        "run_id": "A-run", "model_type": "random_forest",
+        "feature_signature": "sig-A", "model_signature": "model-A",
+        "data_month": "2026-08-01",
+    }
+
+    statements = []
+
+    class FakeQueryJob:
+        def result(self):
+            return []
+
+    class FakeBQ:
+        def query(self, sql, job_config=None):
+            statements.append((sql, job_config))
+            return FakeQueryJob()
+
+    monkeypatch.setattr(bigquery, "Client", lambda project: FakeBQ())
+    monkeypatch.setattr(cli, "load_config", lambda path=None: cfg)
+    monkeypatch.setattr(cli, "load_active", lambda *args: active)
+    monkeypatch.setattr(cli, "load_previous", lambda *args: previous)
+    monkeypatch.setattr(
+        cli, "preflight_vertex_model",
+        lambda *args: {
+            "artifact_uri": "gs://isolated/model-A",
+            "serving_image": "registry/old-serving@sha256:abc",
+            "features": cfg["model"]["random_forest"]["features"],
+        },
+    )
+    monkeypatch.setattr("builtins.input", lambda question: confirmation)
+    argv = [
+        "rollback_approved_model.py", "--previous",
+        "--reason", "Model B degraded", "--change-ticket", "INC-1001",
+        "--confirm-resource", old_resource,
+    ]
+    if execute:
+        argv.append("--execute")
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+    assert bool(statements) is should_commit
+    if should_commit:
+        sql, job_config = statements[0]
+        assert "BEGIN TRANSACTION" in sql
+        assert "COMMIT TRANSACTION" in sql
+        parameters = {p.name: p.value for p in job_config.query_parameters}
+        assert parameters["target_resource"] == old_resource
+        assert parameters["target_run_id"] == "A-run"
+        assert parameters["current_resource"] == active["model_resource"]
+        assert parameters["current_run_id"] == "B-run"
+        assert parameters["target_direction"] == "from"
+        assert "INC-1001" in parameters["reason"]
+
+
+def test_rollback_requires_exact_target_confirmation(monkeypatch, cfg):
+    import sys
+    from google.cloud import bigquery
+    from src.models import rollback_approved_model as cli
+
+    class FakeBQ:
+        pass
+
+    monkeypatch.setattr(bigquery, "Client", lambda project: FakeBQ())
+    monkeypatch.setattr(cli, "load_config", lambda path=None: cfg)
+    monkeypatch.setattr(
+        cli, "load_active", lambda *args: {
+            "model_resource": "projects/123456789/locations/us-central1/models/222",
+            "run_id": "B-run", "candidate_status": "APPROVED",
+        }
+    )
+    monkeypatch.setattr(
+        cli, "load_previous", lambda *args: {
+            "event_id": "promotion-B",
+            "model_resource": "projects/123456789/locations/us-central1/models/111",
+            "run_id": "A-run", "model_type": "random_forest",
+            "feature_signature": "f", "model_signature": "m",
+            "data_month": "2026-08-01",
+        }
+    )
+    monkeypatch.setattr(
+        cli, "preflight_vertex_model",
+        lambda *args: {
+            "artifact_uri": "gs://test/modelA",
+            "serving_image": "test-image", "features": ["high_acuity_pct"],
+        },
+    )
+    monkeypatch.setattr(sys, "argv", [
+        "rollback_approved_model.py", "--previous", "--execute",
+        "--reason", "rollback", "--change-ticket", "INC-1001",
+        "--confirm-resource", "wrong-model",
+    ])
+    with pytest.raises(SystemExit):
+        cli.main()
