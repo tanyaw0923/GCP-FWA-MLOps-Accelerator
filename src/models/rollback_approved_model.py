@@ -14,6 +14,7 @@ from src.config.load_config import load_config
 from src.models.approval_ledger import (
     ledger_table_from_state,
     rollback_sql,
+    select_previous_model,
     validate_approval_target,
     validate_resource,
 )
@@ -66,7 +67,9 @@ def load_active(bq, table, state_key, bigquery):
         bigquery.ScalarQueryParameter("state_key", "STRING", state_key),
     ])
     rows = list(bq.query(
-        f"""SELECT approved_model_resource, approved_run_id, candidate_status
+        f"""SELECT approved_model_resource, approved_run_id, candidate_status,
+                   approved_model_type, approved_feature_signature,
+                   approved_model_signature, last_training_data_month
             FROM `{table}` WHERE model_name = @state_key""",
         job_config=job_config,
     ).result())
@@ -79,6 +82,10 @@ def load_active(bq, table, state_key, bigquery):
         "model_resource": row["approved_model_resource"],
         "run_id": row["approved_run_id"],
         "candidate_status": row["candidate_status"],
+        "model_type": row["approved_model_type"],
+        "feature_signature": row["approved_feature_signature"],
+        "model_signature": row["approved_model_signature"],
+        "data_month": row["last_training_data_month"],
     }
 
 
@@ -107,6 +114,35 @@ def load_target(bq, table, state_key, event_id, bigquery):
     return dict(rows[0].items())
 
 
+def load_previous(bq, ledger_table, state_key, active, bigquery):
+    """Fetch the latest release transition leading to the currently approved version."""
+    params = [
+        bigquery.ScalarQueryParameter("state_key", "STRING", state_key),
+        bigquery.ScalarQueryParameter("resource", "STRING", active["model_resource"]),
+        bigquery.ScalarQueryParameter("run_id", "STRING", active["run_id"]),
+    ]
+    rows = list(bq.query(
+        f"""SELECT event_id, event_type,
+                   from_model_resource, from_run_id, from_model_type,
+                   from_feature_signature, from_model_signature, from_data_month,
+                   to_model_resource, to_run_id
+            FROM `{ledger_table}`
+            WHERE state_key = @state_key
+              AND event_type IN ('PROMOTION', 'ROLLBACK')
+              AND to_model_resource = @resource AND to_run_id = @run_id
+            ORDER BY event_time DESC LIMIT 1""",
+        job_config=bigquery.QueryJobConfig(query_parameters=params),
+    ).result())
+    if len(rows) != 1:
+        raise RuntimeError(
+            "No release transition leading to active model; "
+            "cannot safely identify previous production model"
+        )
+    return select_previous_model(
+        dict(rows[0].items()), active["model_resource"], active["run_id"]
+    )
+
+
 def list_approvals(bq, ledger_table, state_key, bigquery):
     from google.api_core.exceptions import NotFound
 
@@ -132,7 +168,7 @@ def list_approvals(bq, ledger_table, state_key, bigquery):
         print(dict(row.items()))
 
 
-def preflight_vertex_model(config, target, features):
+def preflight_vertex_model(config, target, features=None):
     # This is the actual registered artifact and serving contract, not a
     # mutable production-path copy. Do not use a candidate artifact path.
     from google.cloud import aiplatform, storage
@@ -145,11 +181,21 @@ def preflight_vertex_model(config, target, features):
     if model.resource_name != target["model_resource"]:
         raise RuntimeError("Vertex resource does not match historical approval")
     spec = model.gca_resource.container_spec
-    expected_image = config["model"][target["model_type"]]["serving_container_image_uri"].strip()
-    if spec.image_uri != expected_image:
-        raise RuntimeError("Registered Vertex serving image differs from approved YAML")
+    if not spec.image_uri:
+        raise RuntimeError("Historically approved model lacks a serving image")
     env = {item.name: item.value for item in spec.env}
-    validate_registered_features(features, env.get("FEATURE_COLUMNS_JSON"))
+    from src.config.feature_contract import validate_features
+    try:
+        registered_features = validate_features(
+            json.loads(env.get("FEATURE_COLUMNS_JSON", "null"))
+        )
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("Registered model feature contract is invalid") from exc
+    if features is not None:
+        expected_image = config["model"][target["model_type"]]["serving_container_image_uri"].strip()
+        if spec.image_uri != expected_image:
+            raise RuntimeError("Registered serving image differs from historical YAML")
+        validate_registered_features(features, env.get("FEATURE_COLUMNS_JSON"))
     artifact_uri = model.gca_resource.artifact_uri.rstrip("/")
     if not artifact_uri.startswith("gs://"):
         raise RuntimeError("Registered model does not reference a GCS artifact")
@@ -162,7 +208,11 @@ def preflight_vertex_model(config, target, features):
         f"{prefix}/{filename}"
     ).exists():
         raise RuntimeError("Historically approved model artifact is unavailable")
-    return {"artifact_uri": artifact_uri, "serving_image": spec.image_uri}
+    return {
+        "artifact_uri": artifact_uri,
+        "serving_image": spec.image_uri,
+        "features": registered_features,
+    }
 
 
 def main():
@@ -170,7 +220,12 @@ def main():
     parser.add_argument("--config-path", help="Approved historical YAML config file")
     parser.add_argument("--state-key", default="provider_fraud_model")
     parser.add_argument("--list", action="store_true", help="List historically approved targets")
-    parser.add_argument("--target-event-id", help="Exact prior PROMOTION event UUID")
+    target_group = parser.add_mutually_exclusive_group()
+    target_group.add_argument(
+        "--previous", action="store_true",
+        help="Restore the immediately previous production model",
+    )
+    target_group.add_argument("--target-event-id", help="Exact prior PROMOTION event UUID")
     parser.add_argument("--reason", help="Required incident/recovery rationale")
     parser.add_argument("--change-ticket", help="Required change/incident tracking ID")
     parser.add_argument("--actor", default=getpass.getuser())
@@ -187,12 +242,19 @@ def main():
     if args.list:
         list_approvals(bq, ledger_table, args.state_key, bigquery)
         return
-    if not args.target_event_id:
-        parser.error("--target-event-id is required unless --list")
+    if not args.target_event_id and not args.previous:
+        parser.error("--previous or --target-event-id is required unless --list")
     active = load_active(bq, state_table, args.state_key, bigquery)
-    target = load_target(bq, ledger_table, args.state_key, args.target_event_id, bigquery)
+    target = (
+        load_previous(bq, ledger_table, args.state_key, active, bigquery)
+        if args.previous else
+        load_target(bq, ledger_table, args.state_key, args.target_event_id, bigquery)
+    )
     validate_approval_target(target, active, config["project_id"], config["region"])
-    features = check_configuration(config, target)
+    # The current live YAML can differ from the old approved version.
+    # Check historical signatures only when an explicit historical YAML
+    # was supplied; otherwise use the immutable registered model contract.
+    features = check_configuration(config, target) if args.config_path else None
     validated = preflight_vertex_model(config, target, features)
 
     print("\nGOVERNED MODEL ROLLBACK PREFLIGHT")
@@ -203,6 +265,10 @@ def main():
     print(f"Target approved run: {target['run_id']}")
     print(f"Artifact: {validated['artifact_uri']}")
     print(f"Serving image: {validated['serving_image']}")
+    print(f"Registered feature order: {validated['features']}")
+    if args.config_path is None:
+        print("Historical YAML not supplied; registered feature contract used.")
+        print("Before resuming production, verify live configuration compatibility.")
     print(f"Operator: {args.actor}")
     print(f"Reason: {args.reason or '(dry run)'}")
     print(f"Change ticket: {args.change_ticket or '(dry run)'}")
@@ -228,6 +294,11 @@ def main():
         "reason": f"{args.change_ticket.strip()}: {args.reason.strip()}",
         "current_resource": active["model_resource"],
         "current_run_id": active["run_id"],
+        "current_model_type": active["model_type"],
+        "current_feature_signature": active["feature_signature"],
+        "current_model_signature": active["model_signature"],
+        "current_data_month": active["data_month"],
+        "target_direction": "from" if args.previous else "to",
         "target_event_id": target["event_id"],
         "target_resource": target["model_resource"],
         "target_run_id": target["run_id"],
@@ -238,6 +309,7 @@ def main():
     }
     types = {
         "target_data_month": "DATE",
+        "current_data_month": "DATE",
     }
     job_config = bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter(key, types.get(key, "STRING"), value)
