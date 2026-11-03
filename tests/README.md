@@ -20,6 +20,10 @@ Coverage includes:
 - `test_monitoring_schema_contract.py`: prevents reintroduction of the retired Random Forest monitor and verifies the active prediction-drift writer/reader column contract (`check_date`, `status`).
 - `test_performance_monitoring_test_mode.py`: static safeguards for the opt-in 15-case monitoring test, isolated output table, capped sample and test email prefix. These are **not** a substitute for a live GCP integration test.
 
+## Governed rollback tests
+
+`test_governed_rollback.py` covers proposed rollback SQL, safeguards, signatures, and mocked CLI behavior. **The rollback code is staged but not integrated into the production promotion, training, or scoring entry points.** Tests do not execute live GCP operations. See [staging notes](../docs/governed-rollback.md).
+
 ## BigQuery SQL regression check
 
 `sql/testing/test_insufficient_investigations.sql` builds temporary synthetic claims and investigation data and checks that 15 completed investigations, below the 20-case threshold, produce `INSUFFICIENT_DATA`. It uses **temporary** tables and does not update production monitoring status.

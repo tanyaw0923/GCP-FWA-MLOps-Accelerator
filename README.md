@@ -7,7 +7,7 @@
 [![Dependency Security](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/dependency-security.yml/badge.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/actions/workflows/dependency-security.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/tanyaw0923/GCP-FWA-MLOps-Accelerator/blob/main/LICENSE)
 
-A reusable Google Cloud MLOps framework for provider-level healthcare fraud, waste, and abuse (FWA) modeling.
+A reusable Google Cloud MLOps framework for provider-level healthcare fraud, waste, and abuse (FWA) modeling.\n\n> Governed rollback source code and offline tests are included as **unintegrated, deferred work**. Existing promotion, training, and scoring behavior remains unchanged. See [rollback staging notes](docs/governed-rollback.md).
 
 This project is designed as a shared ML accelerator for a team of data scientists. Data scientists can experiment with new data, features, model configurations, and algorithms while reusing the same governed workflow for retraining decisions, feature refresh, training, evaluation, experiment tracking, candidate registration, approval, and production promotion.
 
@@ -104,6 +104,7 @@ These checks cover code and build validation; live BigQuery, SMTP, and cloud dep
 | [Code reference](docs/code-reference.md) | Repository map, module walkthrough, suggested reading order, testing |
 | [Testing guide](tests/README.md) | Unit, SQL regression, and environment-dependent test instructions |
 | [Isolated cloud smoke test](docs/cloud-smoke-test.md) | Opt-in synthetic BigQuery → Vertex Model Registry → batch scoring and lineage check |
+| [Governed model rollback](docs/governed-rollback.md) | Audited, dry-run-first rollback to a previously promoted model |
 | [Production readiness](docs/production-readiness.md) | Known limitations and enterprise hardening roadmap |
 
 ## Production Considerations

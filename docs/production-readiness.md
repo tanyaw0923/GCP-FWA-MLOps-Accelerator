@@ -6,9 +6,9 @@
 
 This repository demonstrates an end-to-end batch MLOps lifecycle, but it is intentionally not positioned as a complete enterprise production platform. A larger production implementation would add the following controls.
 
-### 1. Automated Rollback Process
+### 1. Governed Rollback and Remaining Production Gaps
 
-The current workflow supports candidate registration, manual approval, and promotion of a model artifact to production. A production system should also support an explicit rollback path.
+The repository includes **offline-only, unintegrated rollback prototype code** and regression tests. The existing production promotion and scoring entry points are unchanged. The rollback feature is not enabled or live-tested; see [governed rollback staging notes](governed-rollback.md).
 
 A stronger rollback design would include:
 
