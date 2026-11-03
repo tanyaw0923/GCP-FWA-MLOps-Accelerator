@@ -5,7 +5,6 @@ write restrictions through IAM in production (application code cannot make
 a BigQuery table tamper-proof).
 """
 import re
-from dataclasses import dataclass
 
 _TABLE = re.compile(r"^[a-z][a-z0-9-]*\.[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$")
 _RESOURCE = re.compile(r"^projects/([0-9]+|[a-z][a-z0-9-]+)/locations/([a-z0-9-]+)/models/([0-9]+)$")
@@ -61,6 +60,10 @@ def ensure_ledger_sql(table):
       reason STRING NOT NULL,
       from_model_resource STRING,
       from_run_id STRING,
+      from_model_type STRING,
+      from_feature_signature STRING,
+      from_model_signature STRING,
+      from_data_month DATE,
       to_model_resource STRING NOT NULL,
       to_run_id STRING NOT NULL,
       to_model_type STRING NOT NULL,
@@ -69,6 +72,54 @@ def ensure_ledger_sql(table):
       to_data_month DATE
     )
     """
+
+
+def ensure_previous_columns_sql(table):
+    """Migrate an existing ledger without discarding approval history."""
+    table = validate_table_name(table)
+    return [
+        f"ALTER TABLE `{table}` ADD COLUMN IF NOT EXISTS {name} {type_}"
+        for name, type_ in (
+            ("from_model_type", "STRING"),
+            ("from_feature_signature", "STRING"),
+            ("from_model_signature", "STRING"),
+            ("from_data_month", "DATE"),
+        )
+    ]
+
+
+def select_previous_model(event, current_resource, current_run_id):
+    """Resolve the model replaced by the latest committed release transition."""
+    if event.get("to_model_resource") != current_resource:
+        raise ValueError("Release history does not match the active model")
+    if event.get("to_run_id") != current_run_id:
+        raise ValueError("Release run ID does not match the active model")
+    target = {
+        "event_id": event["event_id"],
+        "model_resource": event.get("from_model_resource"),
+        "run_id": event.get("from_run_id"),
+        "model_type": event.get("from_model_type"),
+        "feature_signature": event.get("from_feature_signature"),
+        "model_signature": event.get("from_model_signature"),
+        "data_month": event.get("from_data_month"),
+    }
+    if not all(target.get(key) for key in (
+        "model_resource", "run_id", "model_type",
+        "feature_signature", "model_signature",
+    )):
+        raise ValueError(
+            "Previous production model lacks a complete approval snapshot; "
+            "do not guess a rollback target"
+        )
+    return target
+
+
+def resolve_scoring_model(requested, approved_resource, approved_run_id):
+    """Choose the active approved version and its associated experiment run."""
+    if not approved_resource or not approved_run_id:
+        raise ValueError("No complete approved model in training state")
+    validate_scoring_approval(requested, approved_resource) if requested else None
+    return approved_resource, approved_run_id
 
 
 def promotion_sql(state_table, ledger_table):
@@ -90,12 +141,16 @@ def promotion_sql(state_table, ledger_table):
 
     INSERT INTO `{ledger_table}` (
       event_id, state_key, event_time, event_type, actor, reason,
-      from_model_resource, from_run_id, to_model_resource, to_run_id,
+      from_model_resource, from_run_id, from_model_type,
+      from_feature_signature, from_model_signature, from_data_month,
+      to_model_resource, to_run_id,
       to_model_type, to_feature_signature, to_model_signature, to_data_month
     )
     SELECT
       @event_id, model_name, CURRENT_TIMESTAMP(), 'PROMOTION',
       @actor, @reason, approved_model_resource, approved_run_id,
+      approved_model_type, approved_feature_signature,
+      approved_model_signature, last_training_data_month,
       candidate_model_resource, candidate_run_id, candidate_model_type,
       candidate_feature_signature, candidate_model_signature, candidate_data_month
     FROM `{state_table}`
@@ -138,10 +193,23 @@ def rollback_sql(state_table, ledger_table):
       SELECT COUNT(*) = 1
       FROM `{ledger_table}`
       WHERE state_key = @state_key
-        AND event_type = 'PROMOTION'
         AND event_id = @target_event_id
-        AND to_model_resource = @target_resource
-        AND to_run_id = @target_run_id
+        AND (
+          (@target_direction = 'to'
+            AND event_type = 'PROMOTION'
+            AND to_model_resource = @target_resource
+            AND to_run_id = @target_run_id)
+          OR
+          (@target_direction = 'from'
+            AND event_type IN ('PROMOTION', 'ROLLBACK')
+            AND from_model_resource = @target_resource
+            AND from_run_id = @target_run_id
+            AND from_model_type = @target_model_type
+            AND from_feature_signature = @target_feature_signature
+            AND from_model_signature = @target_model_signature
+            AND to_model_resource = @current_resource
+            AND to_run_id = @current_run_id)
+        )
     ) AS 'Target is not a unique historically promoted model';
 
     UPDATE `{state_table}`
@@ -156,6 +224,9 @@ def rollback_sql(state_table, ledger_table):
     WHERE model_name = @state_key
       AND approved_model_resource = @current_resource
       AND approved_run_id = @current_run_id
+      AND approved_model_type = @current_model_type
+      AND approved_feature_signature = @current_feature_signature
+      AND approved_model_signature = @current_model_signature
       AND COALESCE(candidate_status, '') != 'PENDING_APPROVAL';
 
     ASSERT @@row_count = 1 AS 'Active model changed or approval pending; rollback aborted';
@@ -166,7 +237,10 @@ def rollback_sql(state_table, ledger_table):
       to_model_type, to_feature_signature, to_model_signature, to_data_month
     ) VALUES (
       @event_id, @state_key, CURRENT_TIMESTAMP(), 'ROLLBACK', @actor, @reason,
-      @current_resource, @current_run_id, @target_resource, @target_run_id,
+      @current_resource, @current_run_id,
+      @current_model_type, @current_feature_signature,
+      @current_model_signature, @current_data_month,
+      @target_resource, @target_run_id,
       @target_model_type, @target_feature_signature, @target_model_signature,
       @target_data_month
     );
