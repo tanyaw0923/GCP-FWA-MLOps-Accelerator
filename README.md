@@ -106,6 +106,7 @@ These checks cover code and build validation; live BigQuery, SMTP, and cloud dep
 | [End-to-end demo runbook](docs/demo-runbook.md) | Demo datasets, full execution commands, investigations, troubleshooting |
 | [Code reference](docs/code-reference.md) | Repository map, module walkthrough, suggested reading order, testing |
 | [Testing guide](tests/README.md) | Unit, SQL regression, and environment-dependent test instructions |
+| [Isolated cloud smoke test](docs/cloud-smoke-test.md) | Opt-in synthetic BigQuery → Vertex Model Registry → batch scoring and lineage check |
 | [Production readiness](docs/production-readiness.md) | Known limitations and enterprise hardening roadmap |
 
 ## Production Considerations

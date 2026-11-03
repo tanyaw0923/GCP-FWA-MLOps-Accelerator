@@ -1,0 +1,8 @@
+# Used only for the explicit, billable GCP integration smoke test.
+# Keep sklearn aligned with the RF serving container requirements.
+google-cloud-aiplatform>=1.100,<2
+google-cloud-bigquery>=3.40,<4
+google-cloud-storage>=3.0,<4
+pandas==3.1.0
+scikit-learn==1.6.1
+joblib==1.6.0
