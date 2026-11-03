@@ -107,6 +107,7 @@ These checks cover code and build validation; live BigQuery, SMTP, and cloud dep
 | [Code reference](docs/code-reference.md) | Repository map, module walkthrough, suggested reading order, testing |
 | [Testing guide](tests/README.md) | Unit, SQL regression, and environment-dependent test instructions |
 | [Isolated cloud smoke test](docs/cloud-smoke-test.md) | Opt-in synthetic BigQuery → Vertex Model Registry → batch scoring and lineage check |
+| [Governed model rollback](docs/governed-rollback.md) | Audited, dry-run-first rollback to a previously promoted model |
 | [Production readiness](docs/production-readiness.md) | Known limitations and enterprise hardening roadmap |
 
 ## Production Considerations
