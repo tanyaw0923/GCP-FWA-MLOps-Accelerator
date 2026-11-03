@@ -15,7 +15,6 @@ from src.models.approval_ledger import (
     ledger_table_from_state,
     rollback_sql,
     validate_approval_target,
-    validate_registered_features,
     validate_resource,
 )
 
