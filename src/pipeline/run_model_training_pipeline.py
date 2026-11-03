@@ -442,11 +442,10 @@ active_promotion = (
     promotion_config[MODEL_TYPE]
 )
 
-# Version the candidate artifact by experiment run ID. A new training
-# run must never overwrite a model already referenced by Vertex Registry.
 CANDIDATE_ARTIFACT_PATH = (
-    f"{active_promotion['candidate_artifact_path'].rstrip('/')}/"
-    f"{RUN_ID}"
+    active_promotion[
+        "candidate_artifact_path"
+    ]
 )
 
 PRODUCTION_ARTIFACT_PATH = (
