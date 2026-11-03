@@ -40,6 +40,8 @@ def validate_approval_target(target, active, project_id, region):
         raise ValueError("Approval history missing model or run identity")
     if not target.get("feature_signature") or not target.get("model_signature"):
         raise ValueError("Approval history missing model signatures")
+    if not target.get("training_timestamp"):
+        raise ValueError("Approval history missing original training timestamp")
     validate_resource(target["model_resource"], project_id, region)
     if target["model_resource"] == active["model_resource"]:
         raise ValueError("Target is already the active approved model")
