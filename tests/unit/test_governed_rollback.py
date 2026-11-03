@@ -20,7 +20,10 @@ ACTIVE = {
 
 @pytest.fixture
 def cfg():
-    return copy.deepcopy(load_config())
+    config = copy.deepcopy(load_config())
+    # Independent of the active experiment's model_type in YAML.
+    config["model"]["model_type"] = "random_forest"
+    return config
 
 
 @pytest.fixture
