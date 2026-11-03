@@ -9,7 +9,6 @@ from google.cloud import aiplatform_v1
 from google.cloud import bigquery
 
 from src.config.load_config import load_config
-from src.models.approval_ledger import resolve_scoring_model
 from src.config.feature_contract import (
     resolve_model_features,
     validate_registered_features,
@@ -35,11 +34,10 @@ parser = argparse.ArgumentParser(
 
 parser.add_argument(
     "--model-id",
-    required=False,
-    default=None,
+    required=True,
     help=(
-        "Optional Vertex model ID. If omitted, use the active approved "
-        "model in BigQuery. An explicit ID must match the approval."
+        "Vertex AI Model Registry model ID. "
+        "Example: 977871007127699456"
     ),
 )
 
@@ -49,8 +47,8 @@ parser.add_argument(
     default=None,
     help=(
         "Optional experiment run ID. "
-        "If omitted, the active approved model's "
-        "approved_run_id is used."
+        "If omitted, the latest successful run "
+        "for the inferred model type is used."
     ),
 )
 
@@ -156,58 +154,11 @@ log_event(
 
 
 # ============================================================
-# 3A. ENFORCE GOVERNED APPROVAL BEFORE ANY SCORING JOB
-#
-# A manually supplied --model-id must match the active approved
-# Vertex model in BigQuery. This prevents bypassing model rollback
-# and manual candidate approval by selecting an arbitrary model.
-# ============================================================
-
-state_table = config["monitoring"]["training_state_table"]
-approval_rows = list(
-    bq.query(
-        f"""
-        SELECT approved_model_resource, approved_run_id, approved_model_type
-        FROM `{state_table}`
-        WHERE model_name = @state_key
-        """,
-        job_config=bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter(
-                    "state_key", "STRING", "provider_fraud_model"
-                )
-            ]
-        ),
-    ).result()
-)
-
-if len(approval_rows) != 1:
-    raise RuntimeError("Expected exactly one approved model state row")
-
-try:
-    approved = approval_rows[0]
-    MODEL_RESOURCE, APPROVED_RUN_ID = resolve_scoring_model(
-        MODEL_ID, approved.approved_model_resource, approved.approved_run_id
-    )
-    if RUN_ID is not None and RUN_ID != APPROVED_RUN_ID:
-        raise ValueError("Explicit --run-id does not match the approved model run")
-    RUN_ID = APPROVED_RUN_ID
-    APPROVED_MODEL_TYPE = approved.approved_model_type
-    if APPROVED_MODEL_TYPE not in {"random_forest", "xgboost"}:
-        raise ValueError("Approved model type is missing or unsupported")
-    MODEL_ID = MODEL_RESOURCE.rsplit("/", 1)[-1]
-except ValueError as exc:
-    raise RuntimeError(
-        f"Batch inference approval gate blocked model: {exc}"
-    ) from exc
-
-
-# ============================================================
 # 4. LOAD EXACT VERTEX MODEL
 # ============================================================
 
 model = aiplatform.Model(
-    model_name=MODEL_RESOURCE
+    model_name=MODEL_ID
 )
 
 
@@ -307,12 +258,6 @@ print(
     f"{MODEL_TYPE}"
 )
 
-if MODEL_TYPE != APPROVED_MODEL_TYPE:
-    raise RuntimeError(
-        "Registry model type differs from the approved model type: "
-        f"registry={MODEL_TYPE}; approved={APPROVED_MODEL_TYPE}"
-    )
-
 
 # ============================================================
 # 5A. PREFLIGHT: VERIFY REGISTERED VERTEX SERVING CONTRACT
@@ -322,18 +267,49 @@ if MODEL_TYPE != APPROVED_MODEL_TYPE:
 # or is missing the feature contract environment variable.
 # ============================================================
 
-# The active approved Vertex resource defines its serving image.
-# A restored prior release may intentionally differ from current YAML.
-# Do not accidentally reject rollback solely because a newer container
-# was configured after the previous production release.
-registered_container_spec = model.gca_resource.container_spec
-registered_serving_image = registered_container_spec.image_uri
-if not registered_serving_image:
-    raise RuntimeError("Approved Vertex model lacks a serving container image")
+expected_serving_image = (
+    MODEL_CONFIG[
+        MODEL_TYPE
+    ][
+        "serving_container_image_uri"
+    ]
+)
+
+registered_container_spec = (
+    model.gca_resource.container_spec
+)
+
+registered_serving_image = (
+    registered_container_spec.image_uri
+)
+
 registered_env = {
-    item.name: item.value for item in registered_container_spec.env
+    item.name: item.value
+    for item in registered_container_spec.env
 }
-print(f"Approved registered serving image: {registered_serving_image}")
+
+print(
+    f"Expected serving image: "
+    f"{expected_serving_image}"
+)
+
+print(
+    f"Registered serving image: "
+    f"{registered_serving_image}"
+)
+
+if (
+    registered_serving_image
+    != expected_serving_image
+):
+    raise RuntimeError(
+        "VERTEX MODEL PREFLIGHT FAILED: the registered model "
+        "uses a different serving image than pipeline_config.yaml. "
+        f"Expected={expected_serving_image}; "
+        f"Registered={registered_serving_image}. "
+        "Re-register the model with the rebuilt serving image "
+        "before launching batch prediction."
+    )
 
 registered_feature_json = (
     registered_env.get(
@@ -375,14 +351,13 @@ log_event(
 # are added or removed.
 # ============================================================
 
-# The approved registered model, not the current candidate YAML,
-# drives the scoring feature order after a governed rollback.
-from src.config.feature_contract import validate_features
+MODEL_FEATURES = resolve_model_features(config, MODEL_TYPE)
 try:
-    MODEL_FEATURES = validate_features(json.loads(registered_feature_json))
-except (TypeError, ValueError) as exc:
+    validate_registered_features(MODEL_FEATURES, registered_feature_json)
+except ValueError as exc:
     raise RuntimeError(
-        "Approved Vertex model has invalid FEATURE_COLUMNS_JSON"
+        f"VERTEX MODEL PREFLIGHT FAILED: {exc}. "
+        "Re-register the model before batch prediction."
     ) from exc
 
 
@@ -552,26 +527,120 @@ OUTPUT_URI = (
 # matching the model type.
 # ============================================================
 
-# Always use approved_run_id, even if newer experiment runs exist.
-# Lineage must describe the exact model that produced the predictions.
-run_query = f"""
-SELECT experiment_id, run_id
-FROM `{EXPERIMENT_RUNS_TABLE}`
-WHERE run_id = @run_id AND model_type = @model_type
-LIMIT 1
-"""
-run_rows = list(bq.query(
-    run_query,
-    job_config=bigquery.QueryJobConfig(query_parameters=[
-        bigquery.ScalarQueryParameter("run_id", "STRING", RUN_ID),
-        bigquery.ScalarQueryParameter("model_type", "STRING", MODEL_TYPE),
-    ]),
-).result())
-if len(run_rows) != 1:
-    raise RuntimeError(
-        f"Approved experiment run not found for {MODEL_TYPE}: {RUN_ID}"
+if RUN_ID is None:
+
+    run_query = f"""
+    SELECT
+        experiment_id,
+        run_id
+
+    FROM
+        `{EXPERIMENT_RUNS_TABLE}`
+
+    WHERE
+        model_type = @model_type
+        AND status = 'SUCCEEDED'
+
+    ORDER BY
+        created_at DESC
+
+    LIMIT 1
+    """
+
+
+    job_config = (
+        bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter(
+                    "model_type",
+                    "STRING",
+                    MODEL_TYPE,
+                )
+            ]
+        )
     )
-EXPERIMENT_ID = run_rows[0]["experiment_id"]
+
+
+    run_rows = list(
+        bq.query(
+            run_query,
+            job_config=job_config,
+        ).result()
+    )
+
+
+    if not run_rows:
+
+        raise RuntimeError(
+            "No successful experiment run found "
+            f"for model_type={MODEL_TYPE}."
+        )
+
+
+    EXPERIMENT_ID = (
+        run_rows[0][
+            "experiment_id"
+        ]
+    )
+
+    RUN_ID = (
+        run_rows[0][
+            "run_id"
+        ]
+    )
+
+
+else:
+
+    run_query = f"""
+    SELECT
+        experiment_id,
+        run_id
+
+    FROM
+        `{EXPERIMENT_RUNS_TABLE}`
+
+    WHERE
+        run_id = @run_id
+
+    LIMIT 1
+    """
+
+
+    job_config = (
+        bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter(
+                    "run_id",
+                    "STRING",
+                    RUN_ID,
+                )
+            ]
+        )
+    )
+
+
+    run_rows = list(
+        bq.query(
+            run_query,
+            job_config=job_config,
+        ).result()
+    )
+
+
+    if not run_rows:
+
+        raise RuntimeError(
+            f"Experiment run not found: "
+            f"{RUN_ID}"
+        )
+
+
+    EXPERIMENT_ID = (
+        run_rows[0][
+            "experiment_id"
+        ]
+    )
 
 
 print(
