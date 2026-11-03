@@ -122,14 +122,11 @@ def run(args):
     )
     try:
         print(f"[smoke] Creating isolated resources in project {args.project}")
-        bq.create_dataset(
-            bigquery.Dataset(dataset_full), exists_ok=False
-        )
-        # BigQuery datasets and Vertex jobs must share a compatible location.
-        # Multi-region US supports Vertex regions inside the US.
-        ds = bq.get_dataset(dataset_full)
-        ds.location = "US" if args.region.startswith("us-") else args.region
-        bq.update_dataset(ds, ["location"])
+        # BigQuery dataset location must be assigned at creation time.
+        # The US multi-region supports Vertex jobs within US regions.
+        dataset = bigquery.Dataset(dataset_full)
+        dataset.location = "US" if args.region.startswith("us-") else args.region
+        bq.create_dataset(dataset, exists_ok=False)
 
         bucket = gcs.create_bucket(bucket_name, location=args.region)
         model_bytes = io.BytesIO()
@@ -206,7 +203,7 @@ def run(args):
             raise AssertionError(f"Prediction output escaped isolated dataset: {output_table}")
         rows = [
             dict(row.items()) for row in bq.query(
-                f"SELECT * FROM \`{output_table}\`",
+                f"SELECT * FROM `{output_table}`",
                 location="US" if args.region.startswith("us-") else args.region,
             ).result()
         ]
