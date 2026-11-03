@@ -35,6 +35,7 @@ def target(cfg):
         "model_resource": "projects/123456789/locations/us-central1/models/111",
         "run_id": "approved-old", "feature_signature": feature_sig,
         "model_signature": model_sig, "data_month": "2026-09-01",
+        "training_timestamp": "2026-09-05T12:00:00Z",
     }
 
 
@@ -212,7 +213,7 @@ def test_new_governance_modules_compile_without_syntax_warnings(tmp_path):
 
 def test_existing_approval_table_migration_is_additive():
     sqls = ensure_previous_columns_sql(LEDGER)
-    assert len(sqls) == 4
+    assert len(sqls) == 6
     assert all("ADD COLUMN IF NOT EXISTS" in x for x in sqls)
     assert all("DROP" not in x.upper() for x in sqls)
 
@@ -247,6 +248,7 @@ def test_a_b_a_rollback_and_scoring_model_resolution(cfg):
         "run_id": "A-run", "model_type": "random_forest",
         "feature_signature": "features-A", "model_signature": "model-A",
         "data_month": "2026-08-01",
+        "training_timestamp": "2026-08-05T12:00:00Z",
     }
     b = {
         "model_resource": "projects/123456789/locations/us-central1/models/222",
@@ -262,6 +264,7 @@ def test_a_b_a_rollback_and_scoring_model_resolution(cfg):
         "from_feature_signature": a["feature_signature"],
         "from_model_signature": a["model_signature"],
         "from_data_month": a["data_month"],
+        "from_training_timestamp": a["training_timestamp"],
         "to_model_resource": b["model_resource"], "to_run_id": b["run_id"],
     }
     target = select_previous_model(b_promotion, b["model_resource"], b["run_id"])
@@ -326,6 +329,7 @@ def test_load_previous_uses_latest_transition_with_exact_active_identity():
         "from_run_id": "A-run", "from_model_type": "random_forest",
         "from_feature_signature": "f", "from_model_signature": "m",
         "from_data_month": "2026-08-01",
+        "from_training_timestamp": "2026-08-05T12:00:00Z",
     }
 
     class FakeQuery:
@@ -372,12 +376,14 @@ def test_rollback_operator_cli_dry_run_cancel_and_confirm(
         "run_id": "B-run", "candidate_status": "APPROVED",
         "model_type": "random_forest", "feature_signature": "sig-B",
         "model_signature": "model-B", "data_month": "2026-09-01",
+        "training_timestamp": "2026-09-05T12:00:00Z",
     }
     previous = {
         "event_id": "promotion-B", "model_resource": old_resource,
         "run_id": "A-run", "model_type": "random_forest",
         "feature_signature": "sig-A", "model_signature": "model-A",
         "data_month": "2026-08-01",
+        "training_timestamp": "2026-08-05T12:00:00Z",
     }
 
     statements = []
@@ -456,6 +462,7 @@ def test_rollback_requires_exact_target_confirmation(monkeypatch, cfg):
             "run_id": "A-run", "model_type": "random_forest",
             "feature_signature": "f", "model_signature": "m",
             "data_month": "2026-08-01",
+            "training_timestamp": "2026-08-05T12:00:00Z",
         }
     )
     monkeypatch.setattr(
