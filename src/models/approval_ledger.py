@@ -52,7 +52,7 @@ def validate_approval_target(target, active, project_id, region):
 def ensure_ledger_sql(table):
     table = validate_table_name(table)
     return f"""
-    CREATE TABLE IF NOT EXISTS \`{table}\` (
+    CREATE TABLE IF NOT EXISTS `{table}` (
       event_id STRING NOT NULL,
       state_key STRING NOT NULL,
       event_time TIMESTAMP NOT NULL,
@@ -80,7 +80,7 @@ def promotion_sql(state_table, ledger_table):
     BEGIN TRANSACTION;
     ASSERT (
       SELECT COUNT(*) = 1
-      FROM \`{state_table}\`
+      FROM `{state_table}`
       WHERE model_name = @state_key
         AND candidate_status = 'PENDING_APPROVAL'
         AND candidate_data_month = @candidate_data_month
@@ -88,7 +88,7 @@ def promotion_sql(state_table, ledger_table):
         AND candidate_model_resource = @candidate_resource
     ) AS 'Pending candidate changed; approval aborted';
 
-    INSERT INTO \`{ledger_table}\` (
+    INSERT INTO `{ledger_table}` (
       event_id, state_key, event_time, event_type, actor, reason,
       from_model_resource, from_run_id, to_model_resource, to_run_id,
       to_model_type, to_feature_signature, to_model_signature, to_data_month
@@ -98,7 +98,7 @@ def promotion_sql(state_table, ledger_table):
       @actor, @reason, approved_model_resource, approved_run_id,
       candidate_model_resource, candidate_run_id, candidate_model_type,
       candidate_feature_signature, candidate_model_signature, candidate_data_month
-    FROM \`{state_table}\`
+    FROM `{state_table}`
     WHERE model_name = @state_key
       AND candidate_status = 'PENDING_APPROVAL'
       AND candidate_data_month = @candidate_data_month
@@ -107,7 +107,7 @@ def promotion_sql(state_table, ledger_table):
 
     ASSERT @@row_count = 1 AS 'Approval audit insertion failed';
 
-    UPDATE \`{state_table}\`
+    UPDATE `{state_table}`
     SET last_training_data_month = candidate_data_month,
         last_training_timestamp = CURRENT_TIMESTAMP(),
         approved_feature_signature = candidate_feature_signature,
@@ -136,7 +136,7 @@ def rollback_sql(state_table, ledger_table):
     BEGIN TRANSACTION;
     ASSERT (
       SELECT COUNT(*) = 1
-      FROM \`{ledger_table}\`
+      FROM `{ledger_table}`
       WHERE state_key = @state_key
         AND event_type = 'PROMOTION'
         AND event_id = @target_event_id
@@ -144,7 +144,7 @@ def rollback_sql(state_table, ledger_table):
         AND to_run_id = @target_run_id
     ) AS 'Target is not a unique historically promoted model';
 
-    UPDATE \`{state_table}\`
+    UPDATE `{state_table}`
     SET approved_model_resource = @target_resource,
         approved_run_id = @target_run_id,
         approved_model_type = @target_model_type,
@@ -160,7 +160,7 @@ def rollback_sql(state_table, ledger_table):
 
     ASSERT @@row_count = 1 AS 'Active model changed or approval pending; rollback aborted';
 
-    INSERT INTO \`{ledger_table}\` (
+    INSERT INTO `{ledger_table}` (
       event_id, state_key, event_time, event_type, actor, reason,
       from_model_resource, from_run_id, to_model_resource, to_run_id,
       to_model_type, to_feature_signature, to_model_signature, to_data_month
