@@ -236,10 +236,15 @@ def copy_candidate_to_production(
         f"gs://{bucket_name}/{production_blob_name}"
     )
 
+    # Versioned destination must be create-only, even under concurrent
+    # promotion attempts. Freeze the candidate generation being promoted.
+    candidate_blob.reload()
     bucket.copy_blob(
         candidate_blob,
         bucket,
         production_blob_name,
+        if_generation_match=0,
+        if_source_generation_match=candidate_blob.generation,
     )
 
     production_blob = bucket.blob(
