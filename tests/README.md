@@ -59,6 +59,12 @@ The actual script can evaluate a capped sample of 15 matched completed investiga
 
 For at least 15 matching completed investigations, expect `evaluated_cases = 15`, `monitoring_status = 'INSUFFICIENT_DATA'`, and null precision/recall/F1. The standard minimum is 20. If email is configured, the script sends a **real** notification with a `[TEST]` subject. If sending fails, inspect the monitoring logs. The 15-case cap is an opt-in **test only**: without `FWA_MONITOR_TEST_MODE=true`, the script uses the normal production monitoring table. Do not point tests at production output or manually overwrite production monitoring records.
 
+## Isolated Vertex AI cloud smoke test (manual, billable)
+
+A synthetic end-to-end test registers a tiny Random Forest model in a **dedicated disposable GCP project**, runs Vertex batch inference on a unique BigQuery dataset, validates provider lineage and output probabilities, and attempts automatic cleanup. It does not use the demo or production datasets. **Not run automatically in GitHub Actions.**
+
+See [docs/cloud-smoke-test.md](../docs/cloud-smoke-test.md) for prerequisites, explicit cost opt-in, commands, and cleanup checks. Offline safety and lineage validation is covered by `test_cloud_smoke_contract.py` in regular unit CI.
+
 ## Container dependency integration test
 
 ```bash
