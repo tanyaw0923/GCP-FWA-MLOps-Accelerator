@@ -69,7 +69,8 @@ def load_active(bq, table, state_key, bigquery):
     rows = list(bq.query(
         f"""SELECT approved_model_resource, approved_run_id, candidate_status,
                    approved_model_type, approved_feature_signature,
-                   approved_model_signature, last_training_data_month
+                   approved_model_signature, last_training_data_month,
+                   last_training_timestamp
             FROM `{table}` WHERE model_name = @state_key""",
         job_config=job_config,
     ).result())
@@ -86,6 +87,7 @@ def load_active(bq, table, state_key, bigquery):
         "feature_signature": row["approved_feature_signature"],
         "model_signature": row["approved_model_signature"],
         "data_month": row["last_training_data_month"],
+        "training_timestamp": row["last_training_timestamp"],
     }
 
 
@@ -99,7 +101,8 @@ def load_target(bq, table, state_key, event_id, bigquery):
                 to_run_id AS run_id, to_model_type AS model_type,
                 to_feature_signature AS feature_signature,
                 to_model_signature AS model_signature,
-                to_data_month AS data_month
+                to_data_month AS data_month,
+                to_training_timestamp AS training_timestamp
             FROM `{table}`
             WHERE state_key = @state_key AND event_id = @event_id
               AND event_type = 'PROMOTION'""",
@@ -125,6 +128,7 @@ def load_previous(bq, ledger_table, state_key, active, bigquery):
         f"""SELECT event_id, event_type,
                    from_model_resource, from_run_id, from_model_type,
                    from_feature_signature, from_model_signature, from_data_month,
+                   from_training_timestamp,
                    to_model_resource, to_run_id
             FROM `{ledger_table}`
             WHERE state_key = @state_key
@@ -298,6 +302,7 @@ def main():
         "current_feature_signature": active["feature_signature"],
         "current_model_signature": active["model_signature"],
         "current_data_month": active["data_month"],
+        "current_training_timestamp": active["training_timestamp"],
         "target_direction": "from" if args.previous else "to",
         "target_event_id": target["event_id"],
         "target_resource": target["model_resource"],
@@ -306,10 +311,13 @@ def main():
         "target_feature_signature": target["feature_signature"],
         "target_model_signature": target["model_signature"],
         "target_data_month": target["data_month"],
+        "target_training_timestamp": target["training_timestamp"],
     }
     types = {
         "target_data_month": "DATE",
         "current_data_month": "DATE",
+        "current_training_timestamp": "TIMESTAMP",
+        "target_training_timestamp": "TIMESTAMP",
     }
     job_config = bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter(key, types.get(key, "STRING"), value)
