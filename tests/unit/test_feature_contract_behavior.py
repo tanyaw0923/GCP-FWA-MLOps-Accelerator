@@ -27,11 +27,20 @@ def test_models_resolve_to_their_own_configured_feature_order(config, model_type
 
 
 def test_switching_model_type_changes_active_feature_contract(config):
+    # Do not assume pipeline_config.yaml defaults to Random Forest:
+    # developers may select XGBoost for experiments.
+    config["model"]["model_type"] = "random_forest"
     rf = resolve_model_features(config)
+    assert rf == config["model"]["random_forest"]["features"]
+
     config["model"]["model_type"] = "xgboost"
     xgb = resolve_model_features(config)
-    assert rf != xgb
     assert xgb == config["model"]["xgboost"]["features"]
+
+    # Distinct configurations should be selected without stale state.
+    # Verify switching back, even when the original YAML selected XGBoost.
+    config["model"]["model_type"] = "random_forest"
+    assert resolve_model_features(config) == rf
 
 
 def test_new_configured_feature_propagates_without_hardcoded_fallback(config):
