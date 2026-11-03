@@ -64,12 +64,14 @@ def ensure_ledger_sql(table):
       from_feature_signature STRING,
       from_model_signature STRING,
       from_data_month DATE,
+      from_training_timestamp TIMESTAMP,
       to_model_resource STRING NOT NULL,
       to_run_id STRING NOT NULL,
       to_model_type STRING NOT NULL,
       to_feature_signature STRING NOT NULL,
       to_model_signature STRING NOT NULL,
-      to_data_month DATE
+      to_data_month DATE,
+      to_training_timestamp TIMESTAMP
     )
     """
 
@@ -84,6 +86,8 @@ def ensure_previous_columns_sql(table):
             ("from_feature_signature", "STRING"),
             ("from_model_signature", "STRING"),
             ("from_data_month", "DATE"),
+            ("from_training_timestamp", "TIMESTAMP"),
+            ("to_training_timestamp", "TIMESTAMP"),
         )
     ]
 
@@ -102,10 +106,11 @@ def select_previous_model(event, current_resource, current_run_id):
         "feature_signature": event.get("from_feature_signature"),
         "model_signature": event.get("from_model_signature"),
         "data_month": event.get("from_data_month"),
+        "training_timestamp": event.get("from_training_timestamp"),
     }
     if not all(target.get(key) for key in (
         "model_resource", "run_id", "model_type",
-        "feature_signature", "model_signature",
+        "feature_signature", "model_signature", "training_timestamp",
     )):
         raise ValueError(
             "Previous production model lacks a complete approval snapshot; "
@@ -143,16 +148,19 @@ def promotion_sql(state_table, ledger_table):
       event_id, state_key, event_time, event_type, actor, reason,
       from_model_resource, from_run_id, from_model_type,
       from_feature_signature, from_model_signature, from_data_month,
-      to_model_resource, to_run_id,
-      to_model_type, to_feature_signature, to_model_signature, to_data_month
+      from_training_timestamp, to_model_resource, to_run_id,
+      to_model_type, to_feature_signature, to_model_signature,
+      to_data_month, to_training_timestamp
     )
     SELECT
       @event_id, model_name, CURRENT_TIMESTAMP(), 'PROMOTION',
       @actor, @reason, approved_model_resource, approved_run_id,
       approved_model_type, approved_feature_signature,
       approved_model_signature, last_training_data_month,
-      candidate_model_resource, candidate_run_id, candidate_model_type,
-      candidate_feature_signature, candidate_model_signature, candidate_data_month
+      last_training_timestamp, candidate_model_resource,
+      candidate_run_id, candidate_model_type,
+      candidate_feature_signature, candidate_model_signature,
+      candidate_data_month, CURRENT_TIMESTAMP()
     FROM `{state_table}`
     WHERE model_name = @state_key
       AND candidate_status = 'PENDING_APPROVAL'
@@ -219,7 +227,7 @@ def rollback_sql(state_table, ledger_table):
         approved_feature_signature = @target_feature_signature,
         approved_model_signature = @target_model_signature,
         last_training_data_month = @target_data_month,
-        last_training_timestamp = CURRENT_TIMESTAMP(),
+        last_training_timestamp = @target_training_timestamp,
         candidate_status = 'APPROVED'
     WHERE model_name = @state_key
       AND approved_model_resource = @current_resource
@@ -235,16 +243,17 @@ def rollback_sql(state_table, ledger_table):
       event_id, state_key, event_time, event_type, actor, reason,
       from_model_resource, from_run_id, from_model_type,
       from_feature_signature, from_model_signature, from_data_month,
-      to_model_resource, to_run_id,
-      to_model_type, to_feature_signature, to_model_signature, to_data_month
+      from_training_timestamp, to_model_resource, to_run_id,
+      to_model_type, to_feature_signature, to_model_signature,
+      to_data_month, to_training_timestamp
     ) VALUES (
       @event_id, @state_key, CURRENT_TIMESTAMP(), 'ROLLBACK', @actor, @reason,
       @current_resource, @current_run_id,
       @current_model_type, @current_feature_signature,
       @current_model_signature, @current_data_month,
-      @target_resource, @target_run_id,
+      @current_training_timestamp, @target_resource, @target_run_id,
       @target_model_type, @target_feature_signature, @target_model_signature,
-      @target_data_month
+      @target_data_month, @target_training_timestamp
     );
 
     ASSERT @@row_count = 1 AS 'Rollback audit insertion failed';
