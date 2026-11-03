@@ -4,6 +4,7 @@ import uuid
 
 from src.models.approval_ledger import (
     ensure_ledger_sql,
+    ensure_previous_columns_sql,
     ledger_table_from_state,
     promotion_sql,
 )
@@ -274,6 +275,8 @@ def approve_candidate(
 
     ledger_table = ledger_table_from_state(training_state_table)
     bq_client.query(ensure_ledger_sql(ledger_table)).result()
+    for ddl in ensure_previous_columns_sql(ledger_table):
+        bq_client.query(ddl).result()
     bq_client.query(
         f"""
         ALTER TABLE `{training_state_table}`
