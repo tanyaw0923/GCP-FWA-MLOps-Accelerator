@@ -8,7 +8,7 @@ This repository demonstrates an end-to-end batch MLOps lifecycle, but it is inte
 
 ### 1. Governed Rollback and Remaining Production Gaps
 
-The repository now includes a **manual governed rollback** command and an append-only-by-application approval ledger. New promotions and model-pointer rollbacks update the model state and audit history atomically using BigQuery transactions. See [governed rollback runbook](governed-rollback.md). Automated triggers, endpoint switching, deployment restoration, post-change validation, and external IAM-enforced multi-person authorization are still production gaps.
+The repository includes **offline-only, unintegrated rollback prototype code** and regression tests. The existing production promotion and scoring entry points are unchanged. The rollback feature is not enabled or live-tested; see [governed rollback staging notes](governed-rollback.md).
 
 A stronger rollback design would include:
 
