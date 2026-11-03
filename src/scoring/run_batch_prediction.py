@@ -324,17 +324,6 @@ if not registered_feature_json:
         "Re-register it through the updated training pipeline."
     )
 
-try:
-    registered_features = json.loads(
-        registered_feature_json
-    )
-except json.JSONDecodeError as exc:
-    raise RuntimeError(
-        "VERTEX MODEL PREFLIGHT FAILED: registered "
-        "FEATURE_COLUMNS_JSON is not valid JSON."
-    ) from exc
-
-
 log_event(
     logger,
     "batch_model_resolved",
