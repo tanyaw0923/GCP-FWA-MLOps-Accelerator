@@ -1,5 +1,6 @@
 import argparse
 import getpass
+import re
 import uuid
 
 from src.models.approval_ledger import (
@@ -213,6 +214,12 @@ def copy_candidate_to_production(
         raise RuntimeError(
             "Candidate model artifact does not exist:\n"
             f"gs://{bucket_name}/{candidate_blob_name}"
+        )
+
+    if bucket.blob(production_blob_name).exists():
+        raise RuntimeError(
+            "Versioned production artifact already exists; "
+            "refusing to overwrite a prior approved model."
         )
 
     print(
@@ -442,6 +449,17 @@ def main():
         artifact_config[
             "model_filename"
         ]
+    )
+
+    # Candidate Registry model points at this run-specific GCS prefix.
+    # Both the registry artifact and production snapshot must be retained.
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", candidate.candidate_run_id):
+        raise ValueError("Unsafe candidate run ID for GCS artifact path")
+    candidate_artifact_path = (
+        f"{candidate_artifact_path.rstrip('/')}/{candidate.candidate_run_id}"
+    )
+    production_artifact_path = (
+        f"{production_artifact_path.rstrip('/')}/{candidate.candidate_run_id}"
     )
 
     candidate_uri = (
