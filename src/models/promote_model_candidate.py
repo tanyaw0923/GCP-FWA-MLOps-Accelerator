@@ -1,4 +1,12 @@
 import argparse
+import getpass
+import uuid
+
+from src.models.approval_ledger import (
+    ensure_ledger_sql,
+    ledger_table_from_state,
+    promotion_sql,
+)
 from datetime import datetime, timezone
 
 from google.cloud import bigquery
@@ -256,9 +264,16 @@ def approve_candidate(
     training_state_table,
     state_key,
     candidate_data_month,
+    candidate_run_id,
+    candidate_resource,
+    actor,
+    reason,
 ):
-    # Preserve the exact Vertex model resource that was approved.
-    # Older training-state tables may not have this column yet.
+    """Atomically record approval history and activate the candidate."""
+    from google.cloud import bigquery
+
+    ledger_table = ledger_table_from_state(training_state_table)
+    bq_client.query(ensure_ledger_sql(ledger_table)).result()
     bq_client.query(
         f"""
         ALTER TABLE `{training_state_table}`
@@ -266,71 +281,25 @@ def approve_candidate(
         """
     ).result()
 
-    query = f"""
-    UPDATE `{training_state_table}`
-
-    SET
-      last_training_data_month =
-        candidate_data_month,
-
-      last_training_timestamp =
-        CURRENT_TIMESTAMP(),
-
-      approved_feature_signature =
-        candidate_feature_signature,
-
-      approved_model_signature =
-        candidate_model_signature,
-
-      approved_model_type =
-        candidate_model_type,
-
-      approved_model_resource =
-        candidate_model_resource,
-
-      approved_run_id =
-        candidate_run_id,
-
-      candidate_status =
-        'APPROVED'
-
-    WHERE
-      model_name = @state_key
-
-      AND candidate_status =
-        'PENDING_APPROVAL'
-
-      AND candidate_data_month =
-        @candidate_data_month
-    """
-
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
+            bigquery.ScalarQueryParameter("state_key", "STRING", state_key),
             bigquery.ScalarQueryParameter(
-                "state_key",
-                "STRING",
-                state_key,
+                "candidate_data_month", "DATE", candidate_data_month
             ),
-            bigquery.ScalarQueryParameter(
-                "candidate_data_month",
-                "DATE",
-                candidate_data_month,
-            ),
+            bigquery.ScalarQueryParameter("candidate_run_id", "STRING", candidate_run_id),
+            bigquery.ScalarQueryParameter("candidate_resource", "STRING", candidate_resource),
+            bigquery.ScalarQueryParameter("event_id", "STRING", str(uuid.uuid4())),
+            bigquery.ScalarQueryParameter("actor", "STRING", actor),
+            bigquery.ScalarQueryParameter("reason", "STRING", reason),
         ]
     )
-
-    job = bq_client.query(
-        query,
+    bq_client.query(
+        promotion_sql(training_state_table, ledger_table),
         job_config=job_config,
-    )
+    ).result()
 
-    job.result()
 
-    if job.num_dml_affected_rows != 1:
-        raise RuntimeError(
-            "Training state was not updated. "
-            "Expected exactly one pending candidate."
-        )
 
 
 # ============================================================
@@ -352,6 +321,17 @@ def main():
             "Stable training-state key for the "
             "fraud ML product."
         ),
+    )
+
+    parser.add_argument(
+        "--reason",
+        default="Manual candidate approval",
+        help="Reason recorded in the permanent approval ledger.",
+    )
+    parser.add_argument(
+        "--actor",
+        default=getpass.getuser(),
+        help="Operator recorded in the approval ledger. IAM controls actual access.",
     )
 
     parser.add_argument(
@@ -630,6 +610,10 @@ def main():
         candidate_data_month=(
             candidate.candidate_data_month
         ),
+        candidate_run_id=candidate.candidate_run_id,
+        candidate_resource=candidate.candidate_model_resource,
+        actor=args.actor,
+        reason=args.reason,
     )
 
     promoted_at = (
