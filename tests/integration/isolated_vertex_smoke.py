@@ -14,14 +14,7 @@ import sys
 import time
 import uuid
 
-import joblib
-import numpy as np
-import pandas as pd
-from google.api_core.exceptions import NotFound
-from google.cloud import aiplatform, aiplatform_v1, bigquery, storage
-from sklearn.ensemble import RandomForestClassifier
-
-
+ 
 FEATURES = ["high_acuity_pct", "referral_rate"]
 SAMPLES = [
     {"provider_id": "SMOKE001", "high_acuity_pct": 0.12, "referral_rate": 0.03},
@@ -31,14 +24,6 @@ SAMPLES = [
 PRODUCTION_PROJECT = "fwa-mlops-accelerator-demo"
 REGION_RE = re.compile(r"^[a-z]+-[a-z]+\d+$")
 PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
-TERMINAL = {
-    aiplatform_v1.JobState.JOB_STATE_SUCCEEDED,
-    aiplatform_v1.JobState.JOB_STATE_FAILED,
-    aiplatform_v1.JobState.JOB_STATE_CANCELLED,
-    aiplatform_v1.JobState.JOB_STATE_PAUSED,
-}
-
-
 def validate_args(args):
     if not PROJECT_RE.fullmatch(args.project):
         raise ValueError("Invalid GCP project ID")
@@ -59,6 +44,9 @@ def validate_args(args):
 
 
 def create_smoke_model():
+    import pandas as pd
+    from sklearn.ensemble import RandomForestClassifier
+
     # Fixed, synthetic inputs so feature count/order can be checked reliably.
     x = pd.DataFrame(
         [[0.05, 0.01], [0.20, 0.05], [0.68, 0.32], [0.95, 0.44]],
@@ -104,6 +92,15 @@ def verify_prediction_rows(rows):
 
 
 def run(args):
+    import joblib
+    from google.cloud import aiplatform, aiplatform_v1, bigquery, storage
+
+    terminal = {
+        aiplatform_v1.JobState.JOB_STATE_SUCCEEDED,
+        aiplatform_v1.JobState.JOB_STATE_FAILED,
+        aiplatform_v1.JobState.JOB_STATE_CANCELLED,
+        aiplatform_v1.JobState.JOB_STATE_PAUSED,
+    }
     validate_args(args)  # Must complete BEFORE any cloud resource is created.
     suffix = uuid.uuid4().hex[:12]
     dataset_id = f"fwa_smoke_{suffix}"
@@ -185,7 +182,7 @@ def run(args):
         )
         job_name = job.name
         deadline = time.monotonic() + args.timeout_minutes * 60
-        while job.state not in TERMINAL:
+        while job.state not in terminal:
             if time.monotonic() > deadline:
                 jobs.cancel_batch_prediction_job(name=job_name)
                 raise TimeoutError(f"Batch job exceeded {args.timeout_minutes} minutes")
@@ -195,10 +192,19 @@ def run(args):
         if job.state != aiplatform_v1.JobState.JOB_STATE_SUCCEEDED:
             raise RuntimeError(f"Batch prediction failed: {job.state.name} {job.error}")
 
-        output_table = job.output_info.bigquery_output_table
-        if not output_table:
-            raise RuntimeError("Vertex did not report a BigQuery output table")
-        output_table = output_table.removeprefix("bq://")
+        output_name = job.output_info.bigquery_output_table
+        output_dataset = job.output_info.bigquery_output_dataset.removeprefix("bq://")
+        if not output_name or output_dataset != dataset_full:
+            raise AssertionError(
+                f"Unexpected Vertex output location: {output_dataset}.{output_name}"
+            )
+        # Vertex output_info.bigquery_output_table is normally just the table
+        # name (e.g. predictions_20261102), not a fully qualified ID.
+        output_table = (
+            output_name.removeprefix("bq://")
+            if "." in output_name
+            else f"{output_dataset}.{output_name}"
+        )
         if not output_table.startswith(dataset_full + "."):
             raise AssertionError(f"Prediction output escaped isolated dataset: {output_table}")
         rows = [
