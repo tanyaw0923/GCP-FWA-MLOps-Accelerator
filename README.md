@@ -94,6 +94,17 @@ python -m pytest tests/unit -v
 
 These checks cover code and build validation; live BigQuery, SMTP, and cloud deployment validation are separate. See [Testing reference](tests/README.md) and [Code reference](docs/code-reference.md).
 
+## Optional Fraud Investigation AI Assistant (RAG)
+
+A separate, opt-in **Fraud Investigation AI Assistant** retrieves provider-level prediction and feature evidence plus curated investigation guidance, then produces a source-labeled investigation brief. The offline demo uses synthetic data and needs no GCP access; optional live BigQuery and Vertex AI Gemini modes are available. The existing training, approval, scoring, and monitoring workflows are unchanged.
+
+```bash
+python -m src.investigation_assistant.assistant --provider-id P00175
+python -m pytest tests/unit/test_investigation_assistant.py -v
+```
+
+See [Fraud Investigation AI Assistant guide](docs/fraud-investigation-assistant.md) for architecture, optional cloud setup, costs, and privacy limitations. This is an investigative aid, **not a fraud determination**.
+
 ## Documentation
 
 | Guide | What's inside |
