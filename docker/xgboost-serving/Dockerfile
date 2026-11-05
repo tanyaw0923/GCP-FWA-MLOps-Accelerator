@@ -1,5 +1,10 @@
 FROM python:3.10-slim
 
+# Apply available Debian security fixes, including apt/libapt-pkg7.0.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY docker/xgboost-serving/requirements.txt ./requirements.txt
