@@ -13,7 +13,7 @@ from pathlib import Path
 CONFIG = Path(__file__).resolve().parents[1] / "config" / "pipeline_config.yaml"
 GUIDANCE = Path(__file__).with_name("investigation_guidance.md")
 PROVIDER_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-TABLE_RE = re.compile(r"^[A-Za-z0-9_-]+\\.[A-Za-z0-9_]+\\.[A-Za-z0-9_]+$")
+TABLE_RE = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$")
 
 
 def validate_provider_id(provider_id):
